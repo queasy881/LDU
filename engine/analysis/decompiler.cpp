@@ -260,6 +260,7 @@ struct Expr {
 
     std::string text;          /* Str : already-formatted literal text */
     bool hex_hint = false;      /* Const: render as hex (a bitmask/magic in a bitwise op) */
+    bool char_hint = false;     /* Const: render as a char literal ('A') — a byte comparison */
 };
 
 ExprP mkConst(int64_t v, int w = 4, bool u = false) {
@@ -849,6 +850,24 @@ struct Decompiler {
             if (e->imports[i].iat_rva == rva && e->imports[i].name[0])
                 return sani(e->imports[i].name);
         return "sub_" + hex(rva).substr(2);
+    }
+
+    /* CLASS RECONSTRUCTION: if `addr` (an RVA or VA) is a recovered RTTI vtable — the
+     * scanner seeds `<Class>__vftable` at the vtable rva — return the class name. Used to
+     * recognize that a struct whose field_0 holds a vtable address IS that C++ class, so
+     * the struct emits as `struct <Class> { ... }` (Hex-Rays "class" reconstruction). */
+    std::string class_for_vtable(uint64_t addr) {
+        if (!e) return "";
+        static const std::string suf = "__vftable";
+        for (uint64_t r : { addr, (addr >= e->base ? addr - e->base : addr) }) {
+            for (size_t i = 0; i < e->symbol_len; ++i) {
+                if (e->symbols[i].rva != r || !e->symbols[i].name[0]) continue;
+                std::string n = e->symbols[i].name;
+                if (n.size() > suf.size() && n.compare(n.size()-suf.size(), suf.size(), suf) == 0)
+                    return sani(n.substr(0, n.size() - suf.size()));
+            }
+        }
+        return "";
     }
 
     /* A `xrefs: called by NAME (N sites)` header comment for THIS function, built
@@ -3186,6 +3205,7 @@ struct Decompiler {
         std::map<int64_t,bool> fu, ff, fptr; /* offset -> unsigned / float / pointer */
         std::map<int64_t,std::string> fptr_tag; /* offset -> nested struct tag (field is `struct T*`) */
         int64_t stride = 0;                  /* >0: array-element struct, padded to this size */
+        bool is_class = false;               /* tag is an RTTI class name -> guard the typedef */
     };
     std::map<std::string, ParamStruct> param_structs;   /* param name -> layout */
     std::map<std::string, std::set<int64_t>> struct_field_ptr;  /* param -> offsets whose value is used as an address */
@@ -3476,6 +3496,7 @@ struct Decompiler {
         for (auto& a : e->args) collect_var_struct(a, fw, fu, ff);
     }
     std::set<std::string> struct_excluded_params;   /* array-indexed -> not a struct */
+    std::set<std::string> array_accessed_params;     /* G2: variable-indexed params; excluded only if they have <4 fixed fields (else a struct w/ a trailing array) */
     /* A param used with a VARIABLE index (`a1[i]`, `*(T*)((char*)a1 + i*s)`) is an
      * ARRAY, not a struct — exclude it (retyping it `struct*` would break `a1[i]`). */
     void note_array_param(const ExprP& addr) {
@@ -3485,13 +3506,13 @@ struct Decompiler {
         if (addr->a && addr->a->kind == EK::Const) return;
         while (base && base->kind == EK::Cast) base = base->a;
         if (base && base->kind == EK::Var && is_ptr_param_name(base->name))
-            struct_excluded_params.insert(base->name);
+            array_accessed_params.insert(base->name);   /* G2: defer exclusion to field-count check */
         /* also `idx*scale + param` shapes: check both operands for a param base */
         ExprP other = addr->b;
         while (other && other->kind == EK::Cast) other = other->a;
         if (other && other->kind == EK::Var && is_ptr_param_name(other->name) &&
             addr->a && addr->a->kind != EK::Const)
-            struct_excluded_params.insert(other->name);
+            array_accessed_params.insert(other->name);
     }
     void collect_struct_access(const ExprP& e,
             std::map<std::string,std::map<int64_t,int>>& fw,
@@ -3550,6 +3571,54 @@ struct Decompiler {
          * needs a render pass that treats any is_struct_ptr_field operand uniformly;
          * until then scan_field_ptr stays unrun so every field keeps its width type
          * and the output stays compile-clean. */
+        /* G2: a variable-indexed param is normally an array. But if it ALSO has >=4
+         * distinct fixed-offset fields it is really a STRUCT (a constructor/initializer),
+         * and Hex-Rays recovers those fields — the one variable access just stays byte-
+         * cast (is_ptr_base excludes param_structs). Only exclude the ambiguous few-field
+         * case. Computed here (after collect) so the field counts are final. */
+        for (auto& p : array_accessed_params) {
+            int nfixed = 0; auto it = fw.find(p);
+            if (it != fw.end()) for (auto& o : it->second) if (o.second > 0) ++nfixed;
+            if (nfixed < 4) struct_excluded_params.insert(p);
+        }
+        /* CLASS RECONSTRUCTION: a struct whose field_0 is WRITTEN a known RTTI vtable
+         * address (`*obj = &<Class>__vftable`, i.e. a constructor) IS that C++ class.
+         * Name its tag after the class (`struct GameManager`) instead of `s_<fn>_<param>`,
+         * so decompiled output reads like Hex-Rays class recovery. class_for_vtable maps the
+         * stored constant back to the class via the `<Class>__vftable` symbol rtti.cpp seeded.
+         * The base var need not be a recovered param/struct_var yet (a ctor's object is a
+         * fresh `operator new` temp), so extract the base name directly. */
+        std::map<std::string,std::string> struct_class;
+        auto vtable_base = [](const ExprP& lhs, std::string& base) -> bool {
+            if (!lhs || lhs->kind != EK::Mem || !lhs->a) return false;
+            ExprP a = lhs->a;
+            while (a && a->kind == EK::Cast) a = a->a;
+            if (a && a->kind == EK::Var) { base = a->name; return true; }   /* *(T*)base */
+            if (a && a->kind == EK::Binary && a->op == "+" && a->b &&
+                a->b->kind == EK::Const && a->b->cval == 0) {               /* *(T*)(base+0) */
+                ExprP bb = a->a; while (bb && bb->kind == EK::Cast) bb = bb->a;
+                if (bb && bb->kind == EK::Var) { base = bb->name; return true; }
+            }
+            return false;
+        };
+        {
+            auto scan_vt = [&](const ExprP& lhs, const ExprP& rhs) {
+                if (!lhs || !rhs) return;
+                ExprP r = rhs; while (r && r->kind == EK::Cast) r = r->a;
+                if (!r || r->kind != EK::Const) return;
+                std::string cls = class_for_vtable((uint64_t)r->cval);
+                if (cls.empty()) return;
+                std::string base;
+                if (vtable_base(lhs, base)) struct_class[base] = cls;
+            };
+            for (auto& b : blocks) for (auto& s : b.stmts)
+                if (s.kind == SK::Assign) scan_vt(s.lhs, s.rhs);
+        }
+        auto mktag = [&](const std::string& p, ParamStruct& L) {
+            auto it = struct_class.find(p);
+            if (it != struct_class.end()) { L.tag = it->second; L.is_class = true; }
+            else                            L.tag = "s_" + self_fname + "_" + p;
+        };
         for (auto& kv : fw) {
             const std::string& p = kv.first;
             if (struct_excluded_params.count(p)) continue;   /* array param, not a struct */
@@ -3568,7 +3637,7 @@ struct Decompiler {
             }
             /* tag qualified by the function name so concatenated pair-files (the corpus
              * builds one TU per DLL) don't collide on `struct s_a1`. */
-            if (L.fw.size() >= 2) { L.tag = "s_" + self_fname + "_" + p; param_structs[p] = L; }
+            if (L.fw.size() >= 2) { mktag(p, L); param_structs[p] = L; }
         }
         /* SECOND PASS: nested struct-pointer fields (a1->field_d0->field_K). Runs AFTER the
          * top-level structs exist (nested_base_offset validates the parent field against
@@ -3603,7 +3672,7 @@ struct Decompiler {
                         prev_end = o + w;
                     }
                     if (L.fw.size() >= 2) {
-                        L.tag = "s_" + self_fname + "_" + p; param_structs[p] = L; added++;
+                        mktag(p, L); param_structs[p] = L; added++;
                         /* RETYPE the parent field as `struct <thisTag>*` so accesses through
                          * it render as clean arrows (a1->f_28->f_K) instead of inline casts.
                          * The synthetic name is `<parent>_<offHex>`; the parent is already a
@@ -3654,7 +3723,7 @@ struct Decompiler {
                 }
                 /* require >=2 distinct fields OR the stride would just be a scalar array. */
                 if (L.fw.size() >= 2 && prev_end <= astr[p]) {
-                    L.tag = "s_" + self_fname + "_" + p; L.stride = astr[p];
+                    mktag(p, L); L.stride = astr[p];
                     param_structs[p] = L;
                 }
             }
@@ -3691,7 +3760,7 @@ struct Decompiler {
                     prev_end = o + w;
                 }
                 if (L.fw.size() >= 2) {
-                    L.tag = "s_" + self_fname + "_" + p; param_structs[p] = L; struct_var.insert(p);
+                    mktag(p, L); param_structs[p] = L; struct_var.insert(p);
                 }
             }
         }
@@ -3726,7 +3795,16 @@ struct Decompiler {
         }
     }
     std::string struct_typedef_str(const ParamStruct& L) {
-        std::string s = "#pragma pack(push, 1)\nstruct " + L.tag + " {\n";
+        /* A class-named struct (RTTI recovery) uses the bare class name as its tag, so
+         * concatenating many decompiled functions into one TU would redefine it (C2011).
+         * Guard the definition like the __DS_FABS_DEFINED intrinsics: first definition wins,
+         * later identical ones are skipped. (Per-function `s_<fn>_<param>` tags are already
+         * unique, so they are never guarded.) */
+        std::string guard;
+        if (L.is_class) { guard = "__DS_CLS_" + L.tag; }
+        std::string s;
+        if (!guard.empty()) s += "#ifndef " + guard + "\n#define " + guard + "\n";
+        s += "#pragma pack(push, 1)\nstruct " + L.tag + " {\n";
         int64_t pos = 0;
         for (auto& kv : L.fw) {
             int64_t off = kv.first; int w = kv.second;
@@ -3745,6 +3823,7 @@ struct Decompiler {
         if (L.stride > pos)
             s += "    char _pad_end[" + std::to_string((long long)(L.stride - pos)) + "];\n";
         s += "};\n#pragma pack(pop)\n";
+        if (!guard.empty()) s += "#endif\n";
         return s;
     }
     /* Render `*(T*)((char*)p + K)` as `p->field_K` when p is a recovered struct pointer
@@ -3814,9 +3893,16 @@ struct Decompiler {
                 out = lit->second + "->field_" + hex(off).substr(2);
             else
                 out = "((struct " + it->second.tag + "*)" + disp(p) + ")->field_" + hex(off).substr(2);
-        } else if (struct_var.count(p))                    /* pointer temp / stack local: inline cast */
-            out = "((struct " + it->second.tag + "*)" + disp(p) + ")->field_" + hex(off).substr(2);
-        else
+        } else if (struct_var.count(p)) {                  /* pointer temp / stack local */
+            /* A POINTER temp is declared `struct <tag>*` (decl_type puts every param_structs
+             * name there), so the inline `(struct <tag>*)` cast is redundant — emit a bare
+             * arrow. A STACK BUFFER (`char sN[20]`, in array_locals) is NOT a struct pointer,
+             * so it still needs the cast to decay+reinterpret the array as the struct ptr. */
+            if (!array_locals.count(p) && decl_type(p) == "struct " + it->second.tag + "*")
+                out = disp(p) + "->field_" + hex(off).substr(2);
+            else
+                out = "((struct " + it->second.tag + "*)" + disp(p) + ")->field_" + hex(off).substr(2);
+        } else
             out = disp(p) + "->field_" + hex(off).substr(2);
         return true;
     }
@@ -3849,9 +3935,12 @@ struct Decompiler {
                 out = "&" + lit->second + "->field_" + hex(off).substr(2);
             else
                 out = "&((struct " + it->second.tag + "*)" + disp(p) + ")->field_" + hex(off).substr(2);
-        } else if (struct_var.count(p))
-            out = "&((struct " + it->second.tag + "*)" + disp(p) + ")->field_" + hex(off).substr(2);
-        else
+        } else if (struct_var.count(p)) {         /* pointer temp -> bare arrow; stack buffer -> keep cast */
+            if (!array_locals.count(p) && decl_type(p) == "struct " + it->second.tag + "*")
+                out = "&" + disp(p) + "->field_" + hex(off).substr(2);
+            else
+                out = "&((struct " + it->second.tag + "*)" + disp(p) + ")->field_" + hex(off).substr(2);
+        } else
             out = "&" + disp(p) + "->field_" + hex(off).substr(2);
         return true;
     }
@@ -7791,6 +7880,14 @@ struct Decompiler {
             (e->a->kind == EK::Var || e->a->kind == EK::Mem) &&
             e->a->width == e->width && e->is_unsigned == e->a->is_unsigned)
             return e->a;
+        /* A2: `(char*)((char*)p + off)` -> `(char*)p + off`. A `(char*)` cast over a `+`/`-`
+         * whose base operand is ALREADY a `(char*)` is redundant — the byte-pointer sum is
+         * already char*. Drop the outer cast so nested byte-arithmetic doesn't stack casts. */
+        if (e->kind == EK::Cast && e->op == "(char*)" && e->a &&
+            e->a->kind == EK::Binary && (e->a->op == "+" || e->a->op == "-")) {
+            auto is_charptr = [](const ExprP& x){ return x && x->kind == EK::Cast && x->op == "(char*)"; };
+            if (is_charptr(e->a->a) || is_charptr(e->a->b)) return e->a;
+        }
         if (e->kind == EK::Binary && e->a && e->b) {
             const std::string& op = e->op;
             /* x + (-K) -> x - K  (integers only; guard INT64_MIN) */
@@ -7832,6 +7929,26 @@ struct Decompiler {
                         auto c = std::make_shared<Expr>(*k); c->hex_hint = true;
                         if (e->width == 4) { c->cval = (int64_t)(int32_t)k->cval; c->width = 4; }
                         k = c;
+                    }
+                }
+            }
+            /* H4: a printable-ASCII constant compared against a BYTE value -> char literal
+             * (`c == 'A'`). The other operand must be byte-typed (a width-1 Var/Mem or a
+             * `(char)`/`(unsigned char)` cast) so a real integer 0x41 is never turned into
+             * a char. Value-identical (`'A'` == 0x41). */
+            if (op == "==" || op == "!=" || op == "<" || op == "<=" || op == ">" || op == ">=") {
+                auto byteish = [](const ExprP& x) -> bool {
+                    if (!x || x->is_float) return false;
+                    if (x->kind == EK::Cast && x->width == 1) return true;
+                    ExprP c = x; int g = 0; while (c && c->kind == EK::Cast && g++ < 6) c = c->a;
+                    return c && (c->kind == EK::Mem || c->kind == EK::Var) && c->width == 1 && !c->is_float;
+                };
+                for (int sw = 0; sw < 2; ++sw) {
+                    ExprP& k   = sw ? e->b : e->a;
+                    ExprP& sib = sw ? e->a : e->b;
+                    if (k && k->kind == EK::Const && !k->is_float && !k->char_hint &&
+                        k->cval >= 0x20 && k->cval <= 0x7e && byteish(sib)) {
+                        auto c = std::make_shared<Expr>(*k); c->char_hint = true; k = c;
                     }
                 }
             }
@@ -8697,6 +8814,15 @@ struct Decompiler {
     std::string render_const(const ExprP& e) {
         if (e->is_float) return fmt_float_lit(e->cval, e->width < 8);
         int64_t v = e->cval;
+        /* H4: a printable-ASCII constant compared against a byte value reads as a char
+         * literal in Hex-Rays (`c == 'A'` not `c == 0x41`). char_hint is set only for a
+         * printable value in a byte comparison, so it never mis-renders a real number. */
+        if (e->char_hint && v >= 0x20 && v <= 0x7e) {
+            char b[8];
+            if (v == '\\' || v == '\'') { b[0]='\''; b[1]='\\'; b[2]=(char)v; b[3]='\''; b[4]=0; }
+            else { b[0]='\''; b[1]=(char)v; b[2]='\''; b[3]=0; }
+            return b;
+        }
         /* A bitmask/magic in a bitwise op reads far better in hex (Hex-Rays style):
          * `& 0x8000000000000000uLL`, `& 0x7FFFFFFF` — signedness is irrelevant to the
          * bitwise result so the unsigned suffix is safe. Set by late_peephole only for
@@ -9892,6 +10018,23 @@ struct Decompiler {
             if (dig) cand.insert(n);
         }
         if (cand.empty()) return;
+        /* A candidate whose EVERY explicit def reads ITSELF (`v = f(v)`, e.g. a loop-carried
+         * `v = (ull)v >> 8`) has an IMPLICIT initial value from OUTSIDE the SK::Assigns — a
+         * param-home alias like `v = a1` that is materialized only as the decl initializer,
+         * not a stmt. The fixpoint can't width-check that hidden init, so narrowing would
+         * truncate a 64-bit initial value (byte_swap64/varint: v holds the 64-bit param).
+         * Require >=1 ROOT def (an SK::Assign whose rhs does NOT read v) — its width IS
+         * checked by the fixpoint. */
+        {
+            std::set<std::string> has_root;
+            for (auto& b : blocks) for (auto& s : b.stmts)
+                if (s.kind == SK::Assign && s.lhs && s.lhs->kind == EK::Var && cand.count(s.lhs->name) &&
+                    count_var_reads(s.rhs, s.lhs->name) == 0)
+                    has_root.insert(s.lhs->name);
+            for (auto it = cand.begin(); it != cand.end(); )
+                if (!has_root.count(*it)) it = cand.erase(it); else ++it;
+            if (cand.empty()) return;
+        }
         std::map<std::string,char> fits; for (auto& n : cand) fits[n] = 1;
         std::function<bool(const ExprP&)> f32 = [&](const ExprP& e) -> bool {
             if (!e) return true;
@@ -10807,7 +10950,28 @@ struct Decompiler {
     /* Render a return value with a ptr<->int coercion so the `return` is not C4047:
      * an int-returning fn returning a pointer value gets `(long long)`; a pointer-
      * returning fn returning a non-pointer/mismatched value gets the return ptr cast. */
+    /* E4: `(X & K) | Y` where K clears the low byte (K & 0xFF == 0) — the high bytes are
+     * stale caller-preserved bits and only the low byte (Y) is the real value. Returns Y
+     * (recursing). Used ONLY when the return type is a single byte, so this is provably
+     * observable-bits-neutral (the caller reads only AL). */
+    ExprP strip_ret_byte_mask(const ExprP& e) {
+        if (!e || e->kind != EK::Binary || e->op != "|" || !e->a || !e->b) return e;
+        auto low_masked = [](const ExprP& s)->bool {
+            return s && s->kind == EK::Binary && s->op == "&" && s->b &&
+                   s->b->kind == EK::Const && ((uint64_t)s->b->cval & 0xFFu) == 0;
+        };
+        if (low_masked(e->a)) return strip_ret_byte_mask(e->b);
+        if (low_masked(e->b)) return strip_ret_byte_mask(e->a);
+        return e;
+    }
     std::string render_return_expr(const ExprP& rhs) {
+        /* E4: a byte (bool/char) return keeps only AL meaningful, so a stale-high-byte
+         * merge `(v3 & -256) | 1` is just `1`. Strip it BEFORE rendering. Gated on the
+         * single-byte return type => the dropped high bytes are unobservable. */
+        if (rhs && !ret_is_float && !ret_is_pointer && (ret_small_w == 1 || ret_byte_return)) {
+            ExprP s = strip_ret_byte_mask(rhs);
+            if (s != rhs) return render_return_expr(s);
+        }
         std::string rv = render(rhs);
         if (!rhs) return rv;
         bool wrap = rhs->kind == EK::Binary || rhs->kind == EK::Ternary;

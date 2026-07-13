@@ -3,7 +3,24 @@
 Context: a 12-agent survey workflow (`_qa/ida_parity_survey.js`) read our real decompiled NullWare
 output and ranked, across 12 dimensions, where it reads worse than Hex-Rays. The findings were
 distilled into a backlog: **`_qa/ida_parity_backlog.md`** (45 items, A1..J). Since then I've been
-implementing that backlog, **gating every change** against three hard gates before moving on.
+implementing that backlog, **gating every change** against the hard gates before moving on.
+
+## THE 4 STANDING RULES (user, 2026-07-13 — away 8 days, fully autonomous)
+A session Stop-hook enforces these; do NOT pause to ask permission or announce "done except X, continue?".
+1. **NEVER STOP / NEVER ASK.** Keep working until the whole goal is done. After a compaction/reset:
+   re-read this file + `_qa/ida_parity_backlog.md` + memory `decompiler-known-gaps` MILESTONE 26, then
+   pick up the next unchecked item and continue the implement→gate loop.
+2. **IMPLEMENT EVERY 12-agent finding to the fullest**, including the high-risk ones (D1, E signatures,
+   G4 pointer-fields, I2 state-machines). Verify no regression via the gates. **On a regression: FIX the
+   root cause, NEVER revert.**
+3. **THEN launch 12 NEW agents.** ONLY when the entire existing backlog is done+gated, run a fresh
+   12-agent survey to find MORE IDA-parity improvements, and repeat the cycle on their findings.
+4. **NEVER WASTE THE GATE WAIT.** The ~5-min 1445-fn gate: while it runs, implement the next backlog
+   item in source so it's ready to build the instant the gate returns. Pipeline, never idle-poll.
+
+**FINAL STEP when all of Rules 1–3 are done:** `git push origin main` to https://github.com/queasy881/LDU
+(user configures git identity/auth). Do NOT enter the user's credentials; if a push prompts for a
+password/token, that step is theirs. Refresh this file before the final push.
 
 ## THE GATES (must stay green — run after every change)
 - **corpus 616 / 0** — behavioral oracle. `cargo test --release -p disasmstudio --test decompile_dump -- --nocapture` (writes `_qa/decomp/*.c`), then `python _qa/harness.py` (compiles + runs each decompiled fn vs the original DLL over 50k random+edge inputs; SUMMARY line = `N PASS / M FAIL`).
@@ -27,11 +44,26 @@ STANDING RULE from the user: **fix EVERY backlog item, none skipped/half-done; o
 - **H1** contiguous `v1,v2,..` renumber (`compute_display_renumber`, display-only via `autoname`); `t#` eliminated.
 - **BONUS CORRECTNESS BUGS found while doing the above (not parity items):** (1) `negate_expr` NaN root-fix — `!(a>b)` was being inverted to `a<=b`, WRONG for floats (NaN unordered); found via a B2/arr_clamp regression. (2) **block-field-coverage bug class** — 9 passes (collect_addr_taken, total_reads, coalesce liveness x3+rename, global_dead_store_elim addr-scan+liveness x2, trim_phantom, mark x2) scanned only SOME of the 6 block expr fields {stmts.lhs/rhs, cond, ret_value, ret_raw, switch_var, tail_call} -> a var live/addr-taken ONLY in a tail-call/raw-return was invisible -> miscompile. LESSON: any block-iterating pass MUST cover all 6.
 
-## IN FLIGHT AT SESSION END — D1 (temp-width narrowing)
-**D1 = the biggest remaining lever (6642 `(int)tN` casts).** Implemented `narrow_temp_widths()` (just before `compute_display_renumber`): a VALUE-RANGE FIXPOINT — narrow a `long long` temp to `int` (keeping signedness) iff its VALUE provably fits 32 bits (`fits32(e)` monotone fixpoint over the temp's defs: Cast w<=4 / Binary,Unary w<=4 / &|^ w8 both fit / >> w8 fits(a) / Mem w<=4 / Const in [-2^31,2^31-1] / int-return Call). Sets the Var node widths to 4; added a `peephole_expr` rule to drop the now-redundant same-width `(int)v` cast (fold has it but runs pre-narrowing). Excludes ptr/float/addr-taken/array/struct-ptr/conflict-raw.
-- **RESULT: `(int)tN` casts 382->77 in cap-150 (~80% removed).**
-- **corpus PASSED 616/0** (the hard signal — 50k large/edge inputs would expose a bad truncation).
-- **The NullWare compile gate (`fast_gate.sh`) was RUNNING when the session ended — its CLEAN=1445 result was NOT captured.** TODO ON RESUME: rebuild + run `bash _qa/fast_gate.sh`, confirm CLEAN=1445/1445 and GOTO<=300 and corpus still 616/0. If a compile error surfaces (e.g. a narrowed temp used where 64-bit is needed), FIX `fits32` (tighten), don't revert. If clean, D1 is done.
+## D1 (temp-width narrowing) — DONE + GATED
+**D1 was the biggest remaining lever (6642 `(int)tN` casts).** `narrow_temp_widths()` (just before `compute_display_renumber`): a VALUE-RANGE FIXPOINT — narrow a `long long` temp to `int` (keeping signedness) iff its VALUE provably fits 32 bits (`fits32(e)` monotone fixpoint over the temp's defs: Cast w<=4 / Binary,Unary w<=4 / &|^ w8 both fit / >> w8 fits(a) / Mem w<=4 / Const in [-2^31,2^31-1] / int-return Call). Sets the Var node widths to 4; a `peephole_expr` rule drops the now-redundant same-width `(int)v` cast. Excludes ptr/float/addr-taken/array/struct-ptr/conflict-raw.
+- **`(int)tN` casts 382->77 in cap-150 (~80% removed).** Gated **corpus 616/0 + NullWare 1445/1445**.
+- **REGRESSION FIXED (not reverted):** byte_swap64/varint truncated 64-bit inputs — a self-referential temp (`v=(ull)v>>8`) has an implicit 64-bit param-home init (`v=a1`) the fixpoint didn't see. Fix = **has_root_def guard**: disqualify any candidate whose every explicit def reads itself.
+
+## IN FLIGHT — CLASS / STRUCT RECONSTRUCTION (user's explicit "build this first")
+Goal: decompiled output should show `struct Entity { int field_0; float field_4; ... }` and, for a class
+with virtuals, name it by its RTTI class (`struct GameManager { ... }`) with a vtable-pointer field_0.
+- **MSVC RTTI (done earlier):** `rtti.cpp` now also seeds a `<Class>__vftable` symbol at the vtable RVA
+  (`pos`, offc==0) so a ctor's `*obj = <vtable>` is recognizable. `class_for_vtable(addr)` helper in
+  decompiler.cpp maps a stored vtable address → class name.
+- **NEXT (uncommitted, not yet gated):** in `recover_struct_layouts`, scan for `field_0 = Const(vtable)`
+  via `class_for_vtable`, record `struct_class[base]=<Class>`, and use it for the struct tag (instead of
+  `s_<fn>_<param>`) at the 4 `L.tag =` sites. Then rebuild + dump `_qa/classtest/classtest.dll` and
+  CONFIRM `gm_make` emits `struct GameManager { ... }`. Test file: `_qa/classtest/classtest.cpp`
+  (Entity struct + GameManager class w/ virtuals; MSVC `cl /LD /GR /O2 /GS-`).
+- **THEN — G++ (Itanium ABI) RTTI recovery:** add `_ZTV<len><name>` vtable / `_ZTI` type_info / `_ZTS`
+  type-string parsing to `rtti.cpp` (currently MSVC-COL-only, x64). Build `classtest_gcc.dll`
+  (`g++ -shared -O2 -fno-exceptions`) and verify class recovery there too.
+- Gate the whole class-recovery batch (+ H4 char-literal) at 616/0 + 1445/1445 before resuming backlog.
 
 ## REMAINING BACKLOG (implement ALL, high-risk included; see _qa/ida_parity_backlog.md)
 - **D2/D3** single-use call-result temp inline into cond/assign/return (443+420) — the call_temp is dual-bound to RAX so total_reads>1 blocks copy_propagate; needs de-dup of the phantom RAX read.

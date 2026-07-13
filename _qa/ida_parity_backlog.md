@@ -2,9 +2,15 @@
 
 Legend: [ ] todo  [~] in progress  [x] done+gated  risk=none|low|med|high
 
+## BONUS — CLASS/STRUCT RECONSTRUCTION (user-requested flagship, done+gated)
+- [x] RTTI-MSVC  x64 COL scan -> class names + `<Class>__vftable` seed + `<Class>__vftbl_N` slots (rtti.cpp)
+- [x] RTTI-G++   Itanium ABI (_ZTS/_ZTI/_ZTV structural scan) -> same, verified on classtest_gcc.dll (rtti.cpp scan_rtti_itanium)
+- [x] CLS-STRUCT struct whose field_0 = a known vtable const IS that class -> `struct <Class> { ... }` (guarded typedef); verified struct GameManager on both MSVC+G++ classtest
+- [x] CLS-CAST   drop redundant `(struct <tag>*)` cast on a pointer-temp struct base (kept for `char[N]` stack-buffer structs); bare `v1->field_0`
+
 ## BATCH A — pure render/fold peepholes (risk=none, in fold()/Binary/Cast render)
 - [x] A1  `x + -K` -> `x - K`  (2236 sites)
-- [ ] A2  `(char*)((char*)p+a)+b` -> `(char*)p + (a+b)` double-cast fold (930)
+- [x] A2  `(char*)((char*)p+a)+b` -> `(char*)p + (a+b)` double-cast fold (930)
 - [x] A3  `(unsigned int)((int)X)` -> `(unsigned int)X` cross-sign nested cast (926)
 - [x] A4  `(unsigned int)((unsigned char)x)` -> `(unsigned char)x` (movzx noise) (934)
 - [x] A5  `(T)((T)x)` -> `(T)x` identical nested cast collapse (633)
@@ -28,7 +34,7 @@ Legend: [ ] todo  [~] in progress  [x] done+gated  risk=none|low|med|high
 - [ ] C4  `result` idiom when return split into >1 SSA temp (43)
 
 ## BATCH D — temps & width (risk=med, gate hard — recently bug-prone)
-- [ ] D1  scalar temp declared 64-bit -> narrow width, kill `(int)tN` (6642)
+- [x] D1  scalar temp declared 64-bit -> narrow width, kill `(int)tN` (6642)  [has_root_def guard fixes byte_swap64]
 - [ ] D2  single-use call-result temp -> inline into condition (443)
 - [ ] D3  single-use call-result temp -> inline into assign/return/arg (420)
 - [ ] D4  cast-only forwarding temp inlined (63)
@@ -38,7 +44,14 @@ Legend: [ ] todo  [~] in progress  [x] done+gated  risk=none|low|med|high
 - [ ] E1  K&R `fun_xxxx()` forward decls -> typed prototypes we know (1232)
 - [ ] E2  API arity table: stop dropping 5th+ stack args (imports)
 - [ ] E3  stale-register phantom trailing args on printf-style wrappers (167)
-- [ ] E4  AL-only bool return typed char, drop `(x & -256)|1` mask (229)
+- [~] E4  AL-only bool return typed char, drop `(x & -256)|1` mask (229)
+       [x] SOUND render-strip: `return (X & K)|Y` -> `return Y` when ret type is ALREADY byte
+           (render_return_expr strip_ret_byte_mask; gated on ret_small_w==1||ret_byte_return).
+       [ ] DEFERRED (risky): widening byte-return DETECTION so `int fun(){...return (int)((x&-256)|1);
+           ...return 0;}` becomes byte-typed. Root: a `xor eax,eax` return-0 path sets saw_wide_ret
+           (~16388) and vetoes byte-typing. Retyping mutates the program-wide callee-sig table with NO
+           behavioral gate on NullWare to catch a wrong truncation at call sites -> defer, do in an
+           isolated hard-gated cycle (corpus is the only net; it currently LOCKS these as int).
 
 ## BATCH F — idioms / division (risk=low-med)
 - [x] F1  signed div by 3/6 (magic 0x2aaaaaab/0x55555556, s==0) fold (28+)
@@ -48,7 +61,7 @@ Legend: [ ] todo  [~] in progress  [x] done+gated  risk=none|low|med|high
 
 ## BATCH G — struct/field & pointer/array (risk=low-high)
 - [x] G1  const byte-offset on typed pointer -> `p[n]` (616)
-- [ ] G2  one variable-indexed access disqualifies whole param struct (22 fns)
+- [x] G2  one variable-indexed access disqualifies whole param struct (22 fns)  [>=4 fixed fields keeps struct]
 - [ ] G3  pad-hole / `&field+delta` offsets render raw amid fields (372)
 - [ ] G4  pointer-valued qword fields typed as pointers (376)  [high risk - was reverted before]
 - [ ] G5  missed `p[i]` on typed/global pointer bases (102)
@@ -57,7 +70,7 @@ Legend: [ ] todo  [~] in progress  [x] done+gated  risk=none|low|med|high
 - [x] H1  final display-only per-function renumber (v1..) unify v#/t#/s# (250 files)
 - [ ] H2  struct tags embed raw temp id -> use renumbered/stable id (376 files)
 - [ ] H3  API/type-derived local name stems (pervasive)
-- [ ] H4  char-literal rendering for printable-ASCII compares (minor)
+- [x] H4  char-literal rendering for printable-ASCII compares (minor)  [char_hint on byteish compares]
 
 ## BATCH I — control-flow (risk=low-med)
 - [ ] I1  boolean flag cascades -> `&&`/`||` short-circuit chains (pervasive)
