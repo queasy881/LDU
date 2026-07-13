@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>DisasmStudio</title>
+  <link rel="stylesheet" href="css/main.css" />
+  <link rel="stylesheet" href="css/disasm.css" />
+</head>
+<body>
+  <div id="ws">
+
+    <!-- toolbar -->
+    <header id="ws-bar">
+      <button id="ws-back" class="btn-icon" title="Back  (Alt+Left)">&larr;</button>
+      <button id="ws-goto" class="btn btn-sm btn-ghost" title="Goto address  (g)">goto</button>
+      <button id="ws-decompile" class="btn btn-sm btn-ghost" title="Decompile current function  (F5)">decompile</button>
+      <span id="ws-loc" class="mono"></span>
+      <span class="ws-grow"></span>
+      <span id="ws-meta" class="mono"></span>
+      <button id="ws-help" class="btn-icon" title="Keyboard shortcuts  (?)">?</button>
+    </header>
+
+    <!-- body: sidebar + listing -->
+    <div id="ws-body">
+      <aside id="ws-side">
+        <div id="side-tabs" class="side-tabs">
+          <button class="side-tab active" data-tab="functions">Funcs</button>
+          <button class="side-tab" data-tab="imports">Imports</button>
+          <button class="side-tab" data-tab="exports">Exports</button>
+          <button class="side-tab" data-tab="strings">Strings</button>
+          <button class="side-tab" data-tab="segments">Segs</button>
+        </div>
+        <div class="side-filter">
+          <input id="fn-filter" class="input" type="text" spellcheck="false"
+                 autocomplete="off" placeholder="filter   /" />
+          <span id="side-count" class="side-count"></span>
+        </div>
+        <div id="side-list" class="side-list"></div>
+      </aside>
+
+      <main id="ws-main">
+        <div id="disasm-view"></div>
+        <div id="decomp-resizer" title="Drag to resize" hidden></div>
+        <aside id="decomp-overlay" hidden>
+          <div class="decomp-head">
+            <span class="eyebrow">Pseudocode</span>
+            <span id="decomp-title" class="mono"></span>
+            <span class="ws-grow"></span>
+            <span id="decomp-live" class="decomp-live" title="Live: follows the selected function">live</span>
+            <button id="decomp-copy" class="btn btn-sm btn-ghost" title="Copy">copy</button>
+            <button id="decomp-close" class="btn-icon" title="Close (Esc / F5)">&#10005;</button>
+          </div>
+          <pre id="decomp-code" class="decomp-code"></pre>
+        </aside>
+      </main>
+    </div>
+
+    <!-- cross-references bar -->
+    <div id="xref-bar" class="collapsed">
+      <div id="xref-head">
+        <span id="xref-tog">&#9652;</span>
+        <span class="xref-label">Cross-references</span>
+        <span id="xref-to" class="mono"></span>
+        <span id="xref-count" class="pane-count"></span>
+      </div>
+      <div id="xref-chips"></div>
+    </div>
+
+  </div>
+
+  <!-- analysis progress overlay (covers everything until analysis_done) -->
+  <div id="analysis-overlay">
+    <div class="an-box">
+      <div id="an-target" class="an-target mono"></div>
+      <div id="an-running">
+        <div id="analysis-stage" class="an-stage">Preparing&hellip;</div>
+        <div class="an-track"><div id="analysis-bar" class="an-bar"></div></div>
+        <div class="an-foot">
+          <span id="analysis-pct" class="mono">0%</span>
+          <button id="analysis-cancel" class="btn btn-sm">Cancel</button>
+        </div>
+      </div>
+      <div id="analysis-error" hidden>
+        <div class="an-err-label">Analysis failed</div>
+        <div id="analysis-error-msg" class="an-err-msg mono"></div>
+        <div class="an-foot">
+          <button id="analysis-retry" class="btn btn-sm btn-primary">Retry</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- shortcuts help -->
+  <div id="help-overlay" class="overlay" hidden>
+    <div class="modal">
+      <div class="modal-head">Keyboard Shortcuts</div>
+      <div class="modal-body" id="help-grid"></div>
+    </div>
+  </div>
+
+  <script defer src="js/ipc.js"></script>
+  <script defer src="js/util.js"></script>
+  <script defer src="js/vlist.js"></script>
+  <script defer src="js/core.js"></script>
+  <script defer src="js/disasm.js"></script>
+</body>
+</html>

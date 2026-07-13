@@ -1,0 +1,10 @@
+math_ops.cpp
+   Creating library math_ops.lib and object math_ops.exp
+array_ops.cpp
+   Creating library array_ops.lib and object array_ops.exp
+string_ops.cpp
+   Creating library string_ops.lib and object string_ops.exp
+control_flow.cpp
+   Creating library control_flow.lib and object control_flow.exp
+struct_ops.cpp
+   Creating library struct_ops.lib and object struct_ops.exp

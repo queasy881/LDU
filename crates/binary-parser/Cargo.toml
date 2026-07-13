@@ -1,0 +1,13 @@
+[package]
+name = "binparser"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "DisasmStudio hand-rolled PE/ELF binary parser (std-only, no deps)"
+
+[lib]
+name = "binparser"
+path = "src/lib.rs"
+
+[dependencies]

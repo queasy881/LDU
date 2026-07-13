@@ -1,0 +1,16734 @@
+/*
+ * decompiler.cpp — Ghidra-quality pseudo-C decompiler for x86-64 (MSVC /Od).
+ *
+ * Pipeline (helper components, in order):
+ *   1. Disassembler   : capstone cs_disasm over [rva, rva+size) with detail on.
+ *   2. CfgBuilder     : leaders -> basic blocks -> succ/pred edges, plus
+ *                       jump-table dispatch recovery (rip-relative .rdata table).
+ *   3. Symbolic exec  : per-block forward symbolic execution over a value model
+ *                       (reg->Expr, stackslot->Expr). Register writes only update
+ *                       the map (no statement); a statement is emitted only when
+ *                       writing a recovered variable (stack local / param / mem),
+ *                       calling, or returning. This is what folds
+ *                       `mov eax,[a]; add eax,[b]; mov [c],eax` to `c = a + b;`
+ *                       with no eax anywhere in the output.
+ *   4. Phi / temps    : registers live across a CFG join with differing values
+ *                       get a materialized temp (t1..). Minimized via liveness.
+ *   5. Dominators     : Cooper-Harvey-Kennedy dominators + post-dominators,
+ *                       natural-loop / back-edge detection.
+ *   6. Structurer     : recursive region structuring -> if/else, while, do-while,
+ *                       for, switch; goto only for genuinely irreducible regions.
+ *   7. Emitter        : pretty-printer respecting C precedence with minimal
+ *                       parentheses/casts, recovered typed locals and params.
+ *
+ * Correctness over prettiness: arithmetic widths, comparison signedness, branch
+ * directions and memory access sizes are preserved exactly. When a structuring
+ * transform cannot be proven correct we emit a correct goto for THAT region only;
+ * we never emit semantically wrong structure, and never emit a raw register name.
+ *
+ * The real work compiles only when DS_USE_CAPSTONE is defined. Without it we
+ * still provide ds_decompile / ds_free_string so the TU always links.
+ */
+
+#include "decompiler.h"
+#include "disasm.h"
+#include "engine_internal.h"
+
+#include <cstdint>
+#include <cstdlib>
+#include <cstring>
+#include <cstdio>
+#include <cmath>
+#include <string>
+#include <vector>
+#include <map>
+#include <unordered_map>
+#include <set>
+#include <algorithm>
+#include <memory>
+#include <functional>
+#include <array>
+
+#ifdef DS_USE_CAPSTONE
+#include <capstone/capstone.h>
+#endif
+
+/* ====================================================================== */
+/*  malloc'd-string helper (shared by both build configurations)          */
+/* ====================================================================== */
+
+static char* dup_to_c(const std::string& s) {
+    char* out = (char*)std::malloc(s.size() + 1);
+    if (!out) return nullptr;
+    std::memcpy(out, s.data(), s.size());
+    out[s.size()] = '\0';
+    return out;
+}
+
+extern "C" void ds_free_string(char* s) {
+    if (s) std::free(s);
+}
+
+#ifndef DS_USE_CAPSTONE
+/* ---------------------------------------------------------------------- */
+/*  No capstone backend: emit a harmless stub so the engine still links.   */
+/* ---------------------------------------------------------------------- */
+extern "C" char* ds_decompile(ds_engine* e, uint64_t func_rva) {
+    if (!e) return nullptr;
+    const ds_func* f = nullptr;
+    for (size_t i = 0; i < e->func_len; ++i)
+        if (e->funcs[i].rva == func_rva) { f = &e->funcs[i]; break; }
+    if (!f) return nullptr;
+    std::string name = (f->name[0] ? std::string(f->name)
+                                   : "sub_" + std::to_string(func_rva));
+    std::string s = "/* decompilation unavailable: built without capstone */\n";
+    s += "void " + name + "(void) {\n}\n";
+    return dup_to_c(s);
+}
+
+#else /* DS_USE_CAPSTONE ================================================= */
+
+namespace {
+
+/* ====================================================================== */
+/*  Small utilities                                                        */
+/* ====================================================================== */
+
+std::string hex(uint64_t v) {
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "0x%llx", (unsigned long long)v);
+    return buf;
+}
+
+std::string sani(const std::string& in) {
+    /* Make an identifier safe for C: keep [A-Za-z0-9_], map the rest to '_'. */
+    std::string out;
+    out.reserve(in.size());
+    for (char c : in) {
+        if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+            (c >= '0' && c <= '9') || c == '_')
+            out.push_back(c);
+        else
+            out.push_back('_');
+    }
+    if (out.empty() || (out[0] >= '0' && out[0] <= '9'))
+        out = "_" + out;
+    return out;
+}
+
+/* ====================================================================== */
+/*  Register model: canonical 64-bit register id + access width            */
+/* ====================================================================== */
+
+enum Reg {
+    R_NONE = 0,
+    R_RAX, R_RCX, R_RDX, R_RBX, R_RSP, R_RBP, R_RSI, R_RDI,
+    R_R8, R_R9, R_R10, R_R11, R_R12, R_R13, R_R14, R_R15,
+    R_XMM0, R_XMM1, R_XMM2, R_XMM3, R_XMM4, R_XMM5, R_XMM6, R_XMM7,
+    R_XMM8, R_XMM9, R_XMM10, R_XMM11, R_XMM12, R_XMM13, R_XMM14, R_XMM15,
+    R_RIP,
+    R_COUNT
+};
+
+void map_reg(unsigned cr, Reg& out, int& width) {
+    out = R_NONE; width = 0;
+    switch (cr) {
+        case X86_REG_RAX: out = R_RAX; width = 8; break;
+        case X86_REG_RCX: out = R_RCX; width = 8; break;
+        case X86_REG_RDX: out = R_RDX; width = 8; break;
+        case X86_REG_RBX: out = R_RBX; width = 8; break;
+        case X86_REG_RSP: out = R_RSP; width = 8; break;
+        case X86_REG_RBP: out = R_RBP; width = 8; break;
+        case X86_REG_RSI: out = R_RSI; width = 8; break;
+        case X86_REG_RDI: out = R_RDI; width = 8; break;
+        case X86_REG_R8:  out = R_R8;  width = 8; break;
+        case X86_REG_R9:  out = R_R9;  width = 8; break;
+        case X86_REG_R10: out = R_R10; width = 8; break;
+        case X86_REG_R11: out = R_R11; width = 8; break;
+        case X86_REG_R12: out = R_R12; width = 8; break;
+        case X86_REG_R13: out = R_R13; width = 8; break;
+        case X86_REG_R14: out = R_R14; width = 8; break;
+        case X86_REG_R15: out = R_R15; width = 8; break;
+        case X86_REG_RIP: out = R_RIP; width = 8; break;
+        case X86_REG_EAX: out = R_RAX; width = 4; break;
+        case X86_REG_ECX: out = R_RCX; width = 4; break;
+        case X86_REG_EDX: out = R_RDX; width = 4; break;
+        case X86_REG_EBX: out = R_RBX; width = 4; break;
+        case X86_REG_ESP: out = R_RSP; width = 4; break;
+        case X86_REG_EBP: out = R_RBP; width = 4; break;
+        case X86_REG_ESI: out = R_RSI; width = 4; break;
+        case X86_REG_EDI: out = R_RDI; width = 4; break;
+        case X86_REG_R8D: out = R_R8;  width = 4; break;
+        case X86_REG_R9D: out = R_R9;  width = 4; break;
+        case X86_REG_R10D: out = R_R10; width = 4; break;
+        case X86_REG_R11D: out = R_R11; width = 4; break;
+        case X86_REG_R12D: out = R_R12; width = 4; break;
+        case X86_REG_R13D: out = R_R13; width = 4; break;
+        case X86_REG_R14D: out = R_R14; width = 4; break;
+        case X86_REG_R15D: out = R_R15; width = 4; break;
+        case X86_REG_AX: out = R_RAX; width = 2; break;
+        case X86_REG_CX: out = R_RCX; width = 2; break;
+        case X86_REG_DX: out = R_RDX; width = 2; break;
+        case X86_REG_BX: out = R_RBX; width = 2; break;
+        case X86_REG_SP: out = R_RSP; width = 2; break;
+        case X86_REG_BP: out = R_RBP; width = 2; break;
+        case X86_REG_SI: out = R_RSI; width = 2; break;
+        case X86_REG_DI: out = R_RDI; width = 2; break;
+        case X86_REG_R8W: out = R_R8; width = 2; break;
+        case X86_REG_R9W: out = R_R9; width = 2; break;
+        case X86_REG_R10W: out = R_R10; width = 2; break;
+        case X86_REG_R11W: out = R_R11; width = 2; break;
+        case X86_REG_R12W: out = R_R12; width = 2; break;
+        case X86_REG_R13W: out = R_R13; width = 2; break;
+        case X86_REG_R14W: out = R_R14; width = 2; break;
+        case X86_REG_R15W: out = R_R15; width = 2; break;
+        case X86_REG_AL: out = R_RAX; width = 1; break;
+        case X86_REG_CL: out = R_RCX; width = 1; break;
+        case X86_REG_DL: out = R_RDX; width = 1; break;
+        case X86_REG_BL: out = R_RBX; width = 1; break;
+        case X86_REG_SIL: out = R_RSI; width = 1; break;
+        case X86_REG_DIL: out = R_RDI; width = 1; break;
+        case X86_REG_SPL: out = R_RSP; width = 1; break;
+        case X86_REG_BPL: out = R_RBP; width = 1; break;
+        case X86_REG_R8B: out = R_R8; width = 1; break;
+        case X86_REG_R9B: out = R_R9; width = 1; break;
+        case X86_REG_R10B: out = R_R10; width = 1; break;
+        case X86_REG_R11B: out = R_R11; width = 1; break;
+        case X86_REG_R12B: out = R_R12; width = 1; break;
+        case X86_REG_R13B: out = R_R13; width = 1; break;
+        case X86_REG_R14B: out = R_R14; width = 1; break;
+        case X86_REG_R15B: out = R_R15; width = 1; break;
+        case X86_REG_AH: out = R_RAX; width = 1; break;
+        case X86_REG_CH: out = R_RCX; width = 1; break;
+        case X86_REG_DH: out = R_RDX; width = 1; break;
+        case X86_REG_BH: out = R_RBX; width = 1; break;
+        /* SSE registers (width 16 = full xmm; scalar float ops use the low 4/8). */
+        case X86_REG_XMM0: out = R_XMM0; width = 16; break;
+        case X86_REG_XMM1: out = R_XMM1; width = 16; break;
+        case X86_REG_XMM2: out = R_XMM2; width = 16; break;
+        case X86_REG_XMM3: out = R_XMM3; width = 16; break;
+        case X86_REG_XMM4: out = R_XMM4; width = 16; break;
+        case X86_REG_XMM5: out = R_XMM5; width = 16; break;
+        case X86_REG_XMM6: out = R_XMM6; width = 16; break;
+        case X86_REG_XMM7: out = R_XMM7; width = 16; break;
+        case X86_REG_XMM8: out = R_XMM8; width = 16; break;
+        case X86_REG_XMM9: out = R_XMM9; width = 16; break;
+        case X86_REG_XMM10: out = R_XMM10; width = 16; break;
+        case X86_REG_XMM11: out = R_XMM11; width = 16; break;
+        case X86_REG_XMM12: out = R_XMM12; width = 16; break;
+        case X86_REG_XMM13: out = R_XMM13; width = 16; break;
+        case X86_REG_XMM14: out = R_XMM14; width = 16; break;
+        case X86_REG_XMM15: out = R_XMM15; width = 16; break;
+        default: out = R_NONE; width = 0; break;
+    }
+}
+
+/* ====================================================================== */
+/*  Expression IR                                                          */
+/* ====================================================================== */
+
+enum class EK {
+    Const, Reg, Var, Mem, Unary, Binary, Cast, Call, AddrOf, Ternary, Str
+};
+
+struct Expr;
+using ExprP = std::shared_ptr<Expr>;
+
+struct Expr {
+    EK kind;
+
+    int64_t cval = 0;          /* Const */
+
+    Reg     reg = R_NONE;      /* Reg : transient symbolic register read */
+    int     width = 4;         /* operation/value byte width: 1,2,4,8 */
+    bool    is_unsigned = false;
+    bool    is_float = false;  /* FP-typed: Const holds the IEEE-754 bit pattern in
+                                * cval (width 4 -> float, 8 -> double); Binary marks
+                                * a scalar SSE op so constants under it print as
+                                * float literals and int folding is suppressed. */
+
+    std::string name;          /* Var : recovered local/param name */
+
+    ExprP a, b, c;             /* operands; c used by Ternary */
+
+    std::string op;            /* Unary/Binary/Cast/Ternary op or cast text */
+
+    std::string callee;        /* Call */
+    std::vector<ExprP> args;
+    bool indirect = false;
+    int  ret_kind = 0;         /* call return kind (0 void,1 int,2 ll) */
+
+    std::string text;          /* Str : already-formatted literal text */
+    bool hex_hint = false;      /* Const: render as hex (a bitmask/magic in a bitwise op) */
+};
+
+ExprP mkConst(int64_t v, int w = 4, bool u = false) {
+    auto e = std::make_shared<Expr>(); e->kind = EK::Const; e->cval = v;
+    e->width = w; e->is_unsigned = u; return e;
+}
+ExprP mkReg(Reg r, int w) {
+    auto e = std::make_shared<Expr>(); e->kind = EK::Reg;
+    e->reg = r; e->width = w; return e;
+}
+ExprP mkVar(const std::string& n, int w = 4, bool u = false) {
+    auto e = std::make_shared<Expr>(); e->kind = EK::Var; e->name = n;
+    e->width = w; e->is_unsigned = u; return e;
+}
+ExprP mkMem(ExprP addr, int w, bool u = false) {
+    auto e = std::make_shared<Expr>(); e->kind = EK::Mem; e->a = addr;
+    e->width = w; e->is_unsigned = u; return e;
+}
+ExprP mkUnary(const std::string& op, ExprP x, int w) {
+    auto e = std::make_shared<Expr>(); e->kind = EK::Unary; e->op = op;
+    e->a = x; e->width = w; return e;
+}
+ExprP mkBinary(const std::string& op, ExprP l, ExprP r, int w, bool u = false) {
+    auto e = std::make_shared<Expr>(); e->kind = EK::Binary; e->op = op;
+    e->a = l; e->b = r; e->width = w; e->is_unsigned = u; return e;
+}
+ExprP mkCast(const std::string& cast, ExprP x, int w, bool u = false) {
+    /* Collapse an immediately-redundant identical nested cast: (T)(T)y == (T)y.
+     * Only fires when the inner node is a Cast with the SAME cast text, width
+     * and signedness, so a genuine narrowing/widening or sign-change cast is
+     * never dropped. Behavior-preserving and reduces (int)(int)x noise toward
+     * Hex-Rays quality. Generalizes to any binary. */
+    if (x && x->kind == EK::Cast && x->op == cast &&
+        x->width == w && x->is_unsigned == u) {
+        return x;
+    }
+    auto e = std::make_shared<Expr>(); e->kind = EK::Cast; e->op = cast;
+    e->a = x; e->width = w; e->is_unsigned = u; return e;
+}
+ExprP mkAddrOf(ExprP x) {
+    auto e = std::make_shared<Expr>(); e->kind = EK::AddrOf; e->a = x;
+    e->width = 8; return e;
+}
+ExprP mkTernary(ExprP cond, ExprP t, ExprP f, int w) {
+    auto e = std::make_shared<Expr>(); e->kind = EK::Ternary;
+    e->a = cond; e->b = t; e->c = f; e->width = w; return e;
+}
+ExprP mkText(const std::string& t, int w = 8) {
+    auto e = std::make_shared<Expr>(); e->kind = EK::Str; e->text = t;
+    e->width = w; return e;
+}
+
+bool isConst(const ExprP& e) { return e && e->kind == EK::Const; }
+
+ExprP clone(const ExprP& e) {
+    if (!e) return nullptr;
+    auto c = std::make_shared<Expr>(*e);
+    c->a = clone(e->a);
+    c->b = clone(e->b);
+    c->c = clone(e->c);
+    c->args.clear();
+    for (auto& ar : e->args) c->args.push_back(clone(ar));
+    return c;
+}
+
+bool reads_reg(const ExprP& e, Reg r) {
+    if (!e) return false;
+    if (e->kind == EK::Reg && e->reg == r) return true;
+    if (reads_reg(e->a, r) || reads_reg(e->b, r) || reads_reg(e->c, r)) return true;
+    for (auto& ar : e->args) if (reads_reg(ar, r)) return true;
+    return false;
+}
+bool reads_any_reg(const ExprP& e) {
+    if (!e) return false;
+    if (e->kind == EK::Reg) return true;
+    if (reads_any_reg(e->a) || reads_any_reg(e->b) || reads_any_reg(e->c)) return true;
+    for (auto& ar : e->args) if (reads_any_reg(ar)) return true;
+    return false;
+}
+bool reads_mem(const ExprP& e) {
+    if (!e) return false;
+    if (e->kind == EK::Mem) return true;
+    if (reads_mem(e->a) || reads_mem(e->b) || reads_mem(e->c)) return true;
+    for (auto& ar : e->args) if (reads_mem(ar)) return true;
+    return false;
+}
+bool has_call(const ExprP& e) {
+    if (!e) return false;
+    if (e->kind == EK::Call) return true;
+    if (has_call(e->a) || has_call(e->b) || has_call(e->c)) return true;
+    for (auto& ar : e->args) if (has_call(ar)) return true;
+    return false;
+}
+/* Like has_call but IGNORES pure compiler intrinsics (__bsr / __umulh /
+ * __pmovmskb / __mulh ...): they are value-producing, side-effect-free reads, so
+ * a subexpression containing one is safe to hoist/CSE. Only a real callee
+ * (fun_x / import / rand) blocks CSE. Used by the CSE passes so an intrinsic-
+ * bearing address reused across an unrolled access collapses to one temp instead
+ * of a multi-KB re-inlined line. */
+bool has_impure_call(const ExprP& e) {
+    if (!e) return false;
+    if (e->kind == EK::Call && e->callee.rfind("__", 0) != 0) return true;
+    if (has_impure_call(e->a) || has_impure_call(e->b) || has_impure_call(e->c)) return true;
+    for (auto& ar : e->args) if (has_impure_call(ar)) return true;
+    return false;
+}
+int count_impure_calls(const ExprP& e) {
+    if (!e) return 0;
+    int n = (e->kind == EK::Call && e->callee.rfind("__", 0) != 0) ? 1 : 0;
+    n += count_impure_calls(e->a) + count_impure_calls(e->b) + count_impure_calls(e->c);
+    for (auto& ar : e->args) n += count_impure_calls(ar);
+    return n;
+}
+/* Does `nm` occur at a position NOT nested inside a Call's arguments? A value
+ * nested in another call's args (`g(nm)`) evaluates BEFORE that call, so an
+ * impure-call value inlined there keeps its order; a sibling (`nm + g()`) does
+ * not. A Call's callee/indirect-target (e->a) IS a sibling, so it is checked. */
+bool reads_var_outside_call_args(const ExprP& e, const std::string& nm) {
+    if (!e) return false;
+    if (e->kind == EK::Var) return e->name == nm;
+    if (e->kind == EK::Call) return reads_var_outside_call_args(e->a, nm);  /* args nested */
+    if (reads_var_outside_call_args(e->a, nm)) return true;
+    if (reads_var_outside_call_args(e->b, nm)) return true;
+    if (reads_var_outside_call_args(e->c, nm)) return true;
+    for (auto& ar : e->args) if (reads_var_outside_call_args(ar, nm)) return true;
+    return false;
+}
+bool reads_named_var(const ExprP& e, const std::string& nm) {
+    if (!e) return false;
+    if (e->kind == EK::Var && e->name == nm) return true;
+    if (reads_named_var(e->a, nm) || reads_named_var(e->b, nm) ||
+        reads_named_var(e->c, nm)) return true;
+    for (auto& ar : e->args) if (reads_named_var(ar, nm)) return true;
+    return false;
+}
+/* Replace every Var node named `nm` with a clone of `repl` (used to break a phi
+ * copy cycle by redirecting reads to a saved temp). */
+ExprP subst_named_var(const ExprP& e, const std::string& nm, const ExprP& repl) {
+    if (!e) return e;
+    if (e->kind == EK::Var && e->name == nm) return clone(repl);
+    auto c = std::make_shared<Expr>(*e);
+    c->a = subst_named_var(e->a, nm, repl);
+    c->b = subst_named_var(e->b, nm, repl);
+    c->c = subst_named_var(e->c, nm, repl);
+    c->args.clear();
+    for (auto& ar : e->args) c->args.push_back(subst_named_var(ar, nm, repl));
+    return c;
+}
+/* Replace every subtree exprEqual to `target` with a clone of `repl`. Used to
+ * rebind a loop-exit/return/switch expression built from the PRE-increment value
+ * of an induction var (`i+1`) to the phi variable after `i = i+1` is emitted. */
+bool exprEqual(const ExprP& a, const ExprP& b);   /* defined just below */
+ExprP subst_subtree(const ExprP& e, const ExprP& target, const ExprP& repl) {
+    if (!e) return e;
+    if (exprEqual(e, target)) return clone(repl);
+    auto c = std::make_shared<Expr>(*e);
+    c->a = subst_subtree(e->a, target, repl);
+    c->b = subst_subtree(e->b, target, repl);
+    c->c = subst_subtree(e->c, target, repl);
+    c->args.clear();
+    for (auto& ar : e->args) c->args.push_back(subst_subtree(ar, target, repl));
+    return c;
+}
+/* True when `e` provably evaluates to 0 or 1 (a setcc/comparison/logical result,
+ * or a widening cast thereof). Used to drop the `& 0xff` the movzx of a setcc
+ * byte lifts to, and similar no-op masks. */
+bool is_bool_value(const ExprP& e) {
+    if (!e) return false;
+    if (e->kind == EK::Binary) {
+        const std::string& o = e->op;
+        return o=="=="||o=="!="||o=="<"||o=="<="||o==">"||o==">="||o=="&&"||o=="||";
+    }
+    if (e->kind == EK::Unary && e->op == "!") return true;
+    if (e->kind == EK::Cast) return is_bool_value(e->a);
+    if (e->kind == EK::Const) return e->cval == 0 || e->cval == 1;
+    return false;
+}
+/* Total node count of an expression tree (for CSE size thresholds). */
+int node_count(const ExprP& e) {
+    if (!e) return 0;
+    int n = 1 + node_count(e->a) + node_count(e->b) + node_count(e->c);
+    for (auto& ar : e->args) n += node_count(ar);
+    return n;
+}
+/* Count DISTINCT nodes in the expression DAG — a shared_ptr subtree reused N
+ * times counts ONCE. node_count flattens the DAG, so a value shared across an
+ * unrolled access explodes its count and cse_expr then bails on exactly the trees
+ * that most need collapsing (an 81x-shared cmov index rendered as a 5 KB line).
+ * The distinct-node count stays small for such DAGs, letting CSE proceed. */
+void dag_nodes(const ExprP& e, std::set<const Expr*>& seen) {
+    if (!e || seen.count(e.get())) return;
+    seen.insert(e.get());
+    dag_nodes(e->a, seen); dag_nodes(e->b, seen); dag_nodes(e->c, seen);
+    for (auto& ar : e->args) dag_nodes(ar, seen);
+}
+int dag_node_count(const ExprP& e) { std::set<const Expr*> s; dag_nodes(e, s); return (int)s.size(); }
+/* Collect every internal (non-leaf) subexpression — CSE candidates. */
+void collect_subs(const ExprP& e, std::vector<ExprP>& out) {
+    if (!e) return;
+    if (e->kind==EK::Binary || e->kind==EK::Unary || e->kind==EK::Cast ||
+        e->kind==EK::Mem || e->kind==EK::Ternary)
+        out.push_back(e);
+    collect_subs(e->a, out); collect_subs(e->b, out); collect_subs(e->c, out);
+    for (auto& ar : e->args) collect_subs(ar, out);
+}
+/* Collect the names of all Var leaves referenced by `e`. */
+void collect_var_names(const ExprP& e, std::set<std::string>& out) {
+    if (!e) return;
+    if (e->kind == EK::Var) out.insert(e->name);
+    collect_var_names(e->a, out); collect_var_names(e->b, out); collect_var_names(e->c, out);
+    for (auto& ar : e->args) collect_var_names(ar, out);
+}
+/* Count non-overlapping occurrences of `target` within `e`. */
+int count_occ(const ExprP& e, const ExprP& target) {
+    if (!e) return 0;
+    if (exprEqual(e, target)) return 1;
+    int n = count_occ(e->a,target)+count_occ(e->b,target)+count_occ(e->c,target);
+    for (auto& ar : e->args) n += count_occ(ar, target);
+    return n;
+}
+/* True when `e` references an `in_<REG>` backstop placeholder (an unrecovered
+ * value). Used to refuse a switch-selector rebind that would leak one. */
+bool expr_has_in_backstop(const ExprP& e) {
+    if (!e) return false;
+    if (e->kind == EK::Var && e->name.size() > 3 && e->name.compare(0,3,"in_") == 0)
+        return true;
+    if (expr_has_in_backstop(e->a) || expr_has_in_backstop(e->b) ||
+        expr_has_in_backstop(e->c)) return true;
+    for (auto& ar : e->args) if (expr_has_in_backstop(ar)) return true;
+    return false;
+}
+/* True when `e` contains a memory load whose address exprEquals `addr` — i.e. a
+ * cached register value that a store to `addr` would silently clobber. */
+bool expr_loads_addr(const ExprP& e, const ExprP& addr) {
+    if (!e) return false;
+    if (e->kind == EK::Mem && e->a && exprEqual(e->a, addr)) return true;
+    if (expr_loads_addr(e->a, addr) || expr_loads_addr(e->b, addr) ||
+        expr_loads_addr(e->c, addr)) return true;
+    for (auto& ar : e->args) if (expr_loads_addr(ar, addr)) return true;
+    return false;
+}
+
+bool exprEqual(const ExprP& a, const ExprP& b) {
+    if (!a || !b) return a == b;
+    if (a->kind != b->kind) return false;
+    switch (a->kind) {
+        case EK::Const: return a->cval == b->cval;
+        case EK::Reg:   return a->reg == b->reg;
+        case EK::Var:   return a->name == b->name;
+        case EK::Mem:   return exprEqual(a->a, b->a) && a->width == b->width;
+        case EK::Unary: return a->op == b->op && exprEqual(a->a, b->a);
+        case EK::Binary:return a->op == b->op && exprEqual(a->a, b->a) &&
+                               exprEqual(a->b, b->b);
+        case EK::Cast:  return a->op == b->op && exprEqual(a->a, b->a);
+        case EK::AddrOf:return exprEqual(a->a, b->a);
+        case EK::Str:   return a->text == b->text;
+        case EK::Ternary: return exprEqual(a->a, b->a) && exprEqual(a->b, b->b) &&
+                                 exprEqual(a->c, b->c);
+        case EK::Call: {
+            /* Only PURE compiler intrinsics (__bsr/__umulh/__pmovmskb/...) compare
+             * equal — they are side-effect-free reads, so treating two identical
+             * ones as the SAME value is sound (lets CSE collapse an intrinsic-bearing
+             * address recomputed N times). A real callee (rand/fun_x) stays UNequal
+             * so `rand() - rand()` is never folded to 0 nor CSE-merged. */
+            if (a->callee != b->callee || a->indirect != b->indirect) return false;
+            if (a->callee.rfind("__", 0) != 0) return false;
+            if (a->args.size() != b->args.size()) return false;
+            for (size_t i = 0; i < a->args.size(); ++i)
+                if (!exprEqual(a->args[i], b->args[i])) return false;
+            return true;
+        }
+        default: return false;
+    }
+}
+
+/* ====================================================================== */
+/*  Condition codes                                                        */
+/* ====================================================================== */
+
+enum class CC { NONE, E, NE, L, LE, G, GE, B, BE, A, AE, S, NS, P, NP, O, NO };
+
+CC jcc_of(unsigned id) {
+    switch (id) {
+        case X86_INS_JE:  return CC::E;  case X86_INS_JNE: return CC::NE;
+        case X86_INS_JL:  return CC::L;  case X86_INS_JLE: return CC::LE;
+        case X86_INS_JG:  return CC::G;  case X86_INS_JGE: return CC::GE;
+        case X86_INS_JB:  return CC::B;  case X86_INS_JBE: return CC::BE;
+        case X86_INS_JA:  return CC::A;  case X86_INS_JAE: return CC::AE;
+        case X86_INS_JS:  return CC::S;  case X86_INS_JNS: return CC::NS;
+        case X86_INS_JP:  return CC::P;  case X86_INS_JNP: return CC::NP;
+        case X86_INS_JO:  return CC::O;  case X86_INS_JNO: return CC::NO;
+        default: return CC::NONE;
+    }
+}
+CC setcc_of(unsigned id) {
+    switch (id) {
+        case X86_INS_SETE:  return CC::E;  case X86_INS_SETNE: return CC::NE;
+        case X86_INS_SETL:  return CC::L;  case X86_INS_SETLE: return CC::LE;
+        case X86_INS_SETG:  return CC::G;  case X86_INS_SETGE: return CC::GE;
+        case X86_INS_SETB:  return CC::B;  case X86_INS_SETBE: return CC::BE;
+        case X86_INS_SETA:  return CC::A;  case X86_INS_SETAE: return CC::AE;
+        case X86_INS_SETS:  return CC::S;  case X86_INS_SETNS: return CC::NS;
+        case X86_INS_SETP:  return CC::P;  case X86_INS_SETNP: return CC::NP;
+        case X86_INS_SETO:  return CC::O;  case X86_INS_SETNO: return CC::NO;
+        default: return CC::NONE;
+    }
+}
+CC cmovcc_of(unsigned id) {
+    switch (id) {
+        case X86_INS_CMOVE:  return CC::E;  case X86_INS_CMOVNE: return CC::NE;
+        case X86_INS_CMOVL:  return CC::L;  case X86_INS_CMOVLE: return CC::LE;
+        case X86_INS_CMOVG:  return CC::G;  case X86_INS_CMOVGE: return CC::GE;
+        case X86_INS_CMOVB:  return CC::B;  case X86_INS_CMOVBE: return CC::BE;
+        case X86_INS_CMOVA:  return CC::A;  case X86_INS_CMOVAE: return CC::AE;
+        case X86_INS_CMOVS:  return CC::S;  case X86_INS_CMOVNS: return CC::NS;
+        default: return CC::NONE;
+    }
+}
+CC negate_cc(CC c) {
+    switch (c) {
+        case CC::E:  return CC::NE; case CC::NE: return CC::E;
+        case CC::L:  return CC::GE; case CC::GE: return CC::L;
+        case CC::G:  return CC::LE; case CC::LE: return CC::G;
+        case CC::B:  return CC::AE; case CC::AE: return CC::B;
+        case CC::A:  return CC::BE; case CC::BE: return CC::A;
+        case CC::S:  return CC::NS; case CC::NS: return CC::S;
+        case CC::P:  return CC::NP; case CC::NP: return CC::P;
+        case CC::O:  return CC::NO; case CC::NO: return CC::O;
+        default: return CC::NONE;
+    }
+}
+
+/* ====================================================================== */
+/*  Statement IR (structured tree)                                         */
+/* ====================================================================== */
+
+enum class SK {
+    Assign,     /* lhs = rhs;  (lhs is Var/Mem) */
+    Call,       /* call();  (expr-statement holding a Call) */
+    Return,     /* return rhs?; */
+    Goto,       /* goto label; */
+    Label,      /* label: */
+    Comment,    /* /​* text *​/  (unmodeled instruction) */
+};
+
+struct Stmt {
+    SK kind = SK::Comment;
+    ExprP lhs, rhs;
+    std::string label;
+    bool ret_void = true;
+    uint64_t addr = 0;
+};
+
+/* ====================================================================== */
+/*  Instruction wrapper                                                    */
+/* ====================================================================== */
+
+struct Insn {
+    uint64_t addr = 0;
+    uint32_t size = 0;
+    unsigned id = 0;
+    std::string mnem;
+    std::string ops;
+    cs_x86 x86;
+    bool is_jcc = false;
+    bool is_jmp = false;
+    bool is_ret = false;
+    bool is_call = false;
+    uint64_t branch_target = 0;
+    bool has_branch_target = false;
+};
+
+/* ====================================================================== */
+/*  Basic block                                                            */
+/* ====================================================================== */
+
+struct Block {
+    uint64_t addr = 0;
+    int      id = -1;
+    std::vector<int> insn_idx;
+    std::vector<int> succ;
+    std::vector<int> pred;
+    int  fall = -1;
+    int  taken = -1;
+    CC   cc = CC::NONE;
+    bool ends_jmp = false;
+    bool ends_ret = false;
+    bool ends_jcc = false;
+    /* the terminating jcc was a redundant SSE NaN-guard (`jp T` paired with a
+     * following lone `jne T`): its branch is dropped and the block falls through,
+     * so exec_block must NOT re-derive a condition from the trailing jp. */
+    bool drop_branch = false;
+
+    /* jump-table switch dispatch (recovered) */
+    bool is_switch = false;
+    ExprP switch_var;                 /* the index expression */
+    std::vector<int> case_succ;       /* case index -> successor block id */
+    int default_succ = -1;
+    /* a `cmp idx,K; ja default` guard that falls through to a switch block */
+    bool is_switch_guard = false;
+    int  guard_switch_blk = -1;       /* the switch block this guard precedes */
+
+    /* statements emitted by symbolic execution (excludes the terminator) */
+    std::vector<Stmt> stmts;
+    /* branch condition selecting `taken` (true => goto taken) */
+    ExprP cond;
+    /* live-out register expressions at block exit (for phi resolution) */
+    ExprP reg_out[R_COUNT];
+    /* live-out high 64-bit lane of each XMM (for cross-block packed-SIMD lanes,
+     * e.g. a loop-invariant broadcast set up in a preheader). */
+    ExprP reg_out_hi[R_COUNT];
+    /* live-out 4 packed-FLOAT lanes of each XMM + real flag, so a loop-invariant
+     * broadcast (`shufps xmm,xmm,0` in a preheader) survives into the loop body
+     * where the packed-float op (mulps/addps) consumes it. */
+    ExprP reg_out_f[R_COUNT][4];
+    bool  reg_out_f_real[R_COUNT] = {false};
+    /* live-out 4 packed-INT lanes of each XMM + real flag (the packed-int analog:
+     * a `movd;pshufd` broadcast in the guard block survives into the SSE body). */
+    ExprP reg_out_i[R_COUNT][4];
+    bool  reg_out_i_real[R_COUNT] = {false};
+    /* return value expression (rax at a ret), if any */
+    ExprP ret_value;
+    bool  has_ret_value = false;
+    /* untruncated rax expression at the ret (for late return-type recovery) */
+    ExprP ret_raw;
+    /* tail-call: `jmp <func>` rendered as `return func(args);` (or `func(args);`
+     * when the function returns void) */
+    ExprP tail_call;
+};
+
+/* ====================================================================== */
+/*  Function signature table (prepass)                                     */
+/* ====================================================================== */
+
+struct FuncSig {
+    int  param_count = 0;   /* 0..4 params (integer + float positions) */
+    unsigned char float_mask = 0; /* bit p set => param position p is an XMM float/double arg */
+    unsigned char double_mask = 0; /* bit p set (within float_mask) => that arg is DOUBLE (8B), else float (4B) */
+    unsigned char float_typed_mask = 0; /* float params whose scalar WIDTH is known (4/8) — safe to type in a proto */
+    int  ret_kind = 1;      /* 0 void, 1 int, 2 long long, 3 float, 4 double */
+    bool ret_byte = false;  /* return is a byte (bool/char): the closest rax write
+                             * to a ret is byte-width al WITHOUT zero-extension —
+                             * the `xor al,al`/`mov al,..` bool-in-al contract. */
+    /* Return-provenance, used by the void fixpoint below: a function whose only
+     * return evidence is a call result (never a deliberate const/computed base
+     * case) is void when that callee resolves void — or is itself, a pure
+     * self-recursion with no base value (quicksort_range/heapify). */
+    bool ret_only_from_call = false;
+    bool saw_real_value_ret = false;
+    bool saw_prior_call = false;  /* a non-tail call happened before the tail jmp */
+    uint64_t ret_call_target = 0;
+};
+
+/* ====================================================================== */
+/*  The decompiler core                                                    */
+/* ====================================================================== */
+
+/* forward decl: defined after the class; used by detect_stack_params/detect_float_params */
+static int fp_scalar_width(unsigned id);
+
+struct Decompiler {
+    ds_engine* e;
+    const ds_func* f;
+    csh handle = 0;
+    bool handle_ok = false;
+    const std::map<uint64_t, FuncSig>* sigtab = nullptr;
+
+    std::vector<Insn> insns;
+    std::map<uint64_t, int> idx_by_addr;
+    std::vector<Block> blocks;
+    std::map<uint64_t, int> block_by_addr;
+
+    int  num_params = 0;
+    bool param_used[4] = {false, false, false, false};
+    std::map<int64_t, std::string> stack_slot_name;   /* norm offset -> vN */
+    std::map<int64_t, std::string> param_home_off;    /* norm offset -> aN */
+    std::map<int64_t, std::string> slot_init_param;   /* norm -> aN: loop-carried homed param, decl `vN = aN` */
+    std::set<uint64_t> home_store_addrs;              /* prologue arg-homing stores */
+    std::set<uint64_t> callee_save_addrs;             /* callee-saved save/restore stores */
+    std::set<uint64_t> chkstk_call_addrs;             /* prologue __chkstk stack-probe calls */
+    std::map<std::string, int>  var_width;
+    std::map<std::string, bool> var_unsigned;
+    std::map<std::string, bool> var_pointer;
+    std::map<std::string, bool> var_is_ll;            /* prefer long long */
+    std::map<std::string, bool> var_is_float;         /* declare as float/double */
+
+    /* semantic display names: canonical v<N>/t<N> -> pretty (result, i/j/k). A pure
+     * DISPLAY alias — the type maps + Expr::name stay keyed on the canonical name, so
+     * this is a zero-semantics rename applied only at the two textual leaves (a Var
+     * use in render(), and the identifier in each decl). Gated by DS_NO_AUTONAME. */
+    std::map<std::string, std::string> autoname;
+    std::string disp(const std::string& n) const {
+        auto it = autoname.find(n); return it == autoname.end() ? n : it->second;
+    }
+
+    bool used_return = false;
+    int  ret_width = 4;
+    bool ret_byte_return = false;   /* return is a byte (bool/char) — mask to al */
+
+    std::map<std::string,int> extern_callees;         /* name -> ret_kind (0/1/2) */
+    int  temp_seq = 0;
+    std::map<int, std::string> temp_name;             /* (blk<<5|reg) -> tN unused */
+
+    Decompiler(ds_engine* eng, const ds_func* fn,
+               const std::map<uint64_t, FuncSig>* st)
+        : e(eng), f(fn), sigtab(st) {}
+    ~Decompiler() { if (handle_ok) cs_close(&handle); }
+
+    /* ---- image reads (bounds-checked) ---- */
+    bool read_u8(uint64_t rva, uint8_t& out) {
+        if (!e || !e->image || rva >= e->image_size) return false;
+        out = e->image[rva]; return true;
+    }
+    bool read_i32(uint64_t rva, int32_t& out) {
+        if (!e || !e->image) return false;
+        if (rva + 4 > e->image_size) return false;
+        uint32_t v = 0;
+        for (int i = 0; i < 4; ++i) v |= (uint32_t)e->image[rva + i] << (8 * i);
+        out = (int32_t)v; return true;
+    }
+    bool read_i64(uint64_t rva, int64_t& out) {
+        if (!e || !e->image) return false;
+        if (rva + 8 > e->image_size) return false;
+        uint64_t v = 0;
+        for (int i = 0; i < 8; ++i) v |= (uint64_t)e->image[rva + i] << (8 * i);
+        out = (int64_t)v; return true;
+    }
+    /* If `rva` addresses a READ-ONLY, null-terminated, printable C string of at least
+     * MINLEN chars, return it C-escaped (no quotes). Recovers string-literal operands
+     * the compiler passed by address — Ghidra-style .rdata string recovery. */
+    bool read_cstring(uint64_t rva, std::string& out) {
+        if (!in_data_rva(rva) || addr_writable(rva)) return false;   /* read-only data only */
+        const int MINLEN = 4, MAXLEN = 4096;
+        std::string s;
+        for (int i = 0; i < MAXLEN; ++i) {
+            uint8_t b;
+            if (!read_u8(rva + (uint64_t)i, b)) return false;
+            if (b == 0) { if ((int)s.size() < MINLEN) return false; out.swap(s); return true; }
+            if (b == '\n') { s += "\\n"; continue; }
+            if (b == '\t') { s += "\\t"; continue; }
+            if (b == '\r') { s += "\\r"; continue; }
+            if (b == '"')  { s += "\\\""; continue; }
+            if (b == '\\') { s += "\\\\"; continue; }
+            if (b < 0x20 || b >= 0x7f) return false;   /* non-printable byte -> not a string */
+            s += (char)b;
+        }
+        return false;   /* unterminated within MAXLEN */
+    }
+    /* Is `rva` inside a readable, NON-executable segment (.rdata/.data)? Used to
+     * recognize a static-array access whose module-base register was lost. */
+    bool in_data_rva(uint64_t rva) {
+        if (!e) return false;
+        for (size_t i = 0; i < e->segment_len; ++i) {
+            const ds_segment& s = e->segments[i];
+            if (rva >= s.rva && rva < s.rva + s.size)
+                return (s.flags & DS_FLAG_X) == 0;   /* data, not code */
+        }
+        return false;
+    }
+
+    /* Is `rva` in a WRITABLE segment (.data/.bss)? Such a location is a mutable
+     * global — its image bytes are only the INITIAL value, so a load must be a
+     * variable reference, not an inlined constant. */
+    bool addr_writable(uint64_t rva) {
+        if (!e) return false;
+        for (size_t i = 0; i < e->segment_len; ++i) {
+            const ds_segment& s = e->segments[i];
+            if (rva >= s.rva && rva < s.rva + s.size)
+                return (s.flags & DS_FLAG_W) != 0;
+        }
+        return false;
+    }
+
+    /* ---- name resolution for a call/jmp target rva ---- */
+    std::string name_for_rva(uint64_t rva) {
+        if (!e) return "sub_" + hex(rva).substr(2);
+        for (size_t i = 0; i < e->func_len; ++i)
+            if (e->funcs[i].rva == rva && e->funcs[i].name[0])
+                return sani(e->funcs[i].name);
+        for (size_t i = 0; i < e->symbol_len; ++i)
+            if (e->symbols[i].rva == rva && e->symbols[i].name[0])
+                return sani(e->symbols[i].name);
+        for (size_t i = 0; i < e->func_len; ++i)
+            if (e->funcs[i].rva == rva)
+                return "sub_" + hex(rva).substr(2);
+        for (size_t i = 0; i < e->import_len; ++i)
+            if (e->imports[i].iat_rva == rva && e->imports[i].name[0])
+                return sani(e->imports[i].name);
+        return "sub_" + hex(rva).substr(2);
+    }
+
+    /* A `xrefs: called by NAME (N sites)` header comment for THIS function, built
+     * from the whole-program call graph (e->refs, populated once by build_xrefs).
+     * Each ref's `from` is a CALL-site rva; map it to its containing function start
+     * (funcs sorted by rva), tally sites per caller, and render the top callers by
+     * count. Empty when f has no internal callers (a leaf/export) or xrefs weren't
+     * built. Comment-only — never affects emitted C. Gated by DS_NO_XREFCOMMENT. */
+    std::string build_xref_comment() {
+        static const bool off = std::getenv("DS_NO_XREFCOMMENT") != nullptr;
+        if (off || !e || !f || e->ref_len == 0) return "";
+        auto owner_of = [&](uint64_t rva) -> uint64_t {
+            if (e->func_len == 0) return rva;
+            size_t lo = 0, hi = e->func_len;
+            while (lo < hi) { size_t mid = lo + ((hi - lo) >> 1);
+                if (e->funcs[mid].rva <= rva) lo = mid + 1; else hi = mid; }
+            if (lo == 0) return rva;
+            const ds_func& fn = e->funcs[lo - 1];
+            uint64_t next = (lo < e->func_len) ? e->funcs[lo].rva : UINT64_MAX;
+            if (rva >= fn.rva && (rva < fn.rva + fn.size || (fn.size == 0 && rva < next)))
+                return fn.rva;
+            return rva;
+        };
+        std::map<uint64_t, int> callers;   /* caller-func start -> call-site count */
+        for (size_t i = 0; i < e->ref_len; ++i) {
+            if (e->refs[i].kind != DS_XREF_CALL || e->refs[i].to != f->rva) continue;
+            uint64_t owner = owner_of(e->refs[i].from);
+            if (owner == f->rva) continue;   /* self-recursion is not an xref */
+            callers[owner]++;
+        }
+        if (callers.empty()) return "";
+        std::vector<std::pair<std::string, int>> v;
+        for (auto& kv : callers) v.push_back({ name_for_rva(kv.first), kv.second });
+        std::sort(v.begin(), v.end(), [](const std::pair<std::string, int>& a,
+                                         const std::pair<std::string, int>& b) {
+            if (a.second != b.second) return a.second > b.second;
+            return a.first < b.first;
+        });
+        std::string c = "/* xrefs: called by ";
+        const size_t cap = 8;
+        for (size_t i = 0; i < v.size() && i < cap; ++i) {
+            if (i) c += ", ";
+            c += v[i].first + " (" + std::to_string(v[i].second) +
+                 (v[i].second == 1 ? " site)" : " sites)");
+        }
+        if (v.size() > cap) c += ", +" + std::to_string(v.size() - cap) + " more";
+        c += " */\n";
+        return c;
+    }
+
+    /* =================================================================== */
+    /*  1. disassemble                                                      */
+    /* =================================================================== */
+    bool disassemble() {
+        if (!e || !f) return false;
+        if (f->rva >= e->image_size) return false;
+        uint64_t avail = e->image_size - f->rva;
+        size_t n = (size_t)((f->size && f->size <= avail) ? f->size : avail);
+        if (n == 0) return false;
+        if (n > 0x40000) n = 0x40000;   /* cap: never hang on a huge func */
+
+        cs_mode mode = (e->arch == DS_ARCH_X64) ? CS_MODE_64 : CS_MODE_32;
+        if (cs_open(CS_ARCH_X86, mode, &handle) != CS_ERR_OK)
+            return false;
+        handle_ok = true;
+        cs_option(handle, CS_OPT_DETAIL, CS_OPT_ON);
+        cs_option(handle, CS_OPT_SYNTAX, CS_OPT_SYNTAX_INTEL);
+
+        cs_insn* ci = nullptr;
+        size_t count = cs_disasm(handle, e->image + f->rva, n, f->rva, 0, &ci);
+        if (count == 0) { if (ci) cs_free(ci, count); return false; }
+        if (count > 20000) count = 20000;
+
+        for (size_t i = 0; i < count; ++i) {
+            cs_insn& c = ci[i];
+            Insn in;
+            in.addr = c.address;
+            in.size = c.size;
+            in.id   = c.id;
+            in.mnem = c.mnemonic;
+            in.ops  = c.op_str;
+            if (c.detail) in.x86 = c.detail->x86;
+            else std::memset(&in.x86, 0, sizeof(in.x86));
+
+            in.is_call = (c.id == X86_INS_CALL);
+            in.is_ret  = (c.id == X86_INS_RET || c.id == X86_INS_RETF ||
+                          c.id == X86_INS_RETFQ);
+            in.is_jmp  = (c.id == X86_INS_JMP);
+            in.is_jcc  = (jcc_of(c.id) != CC::NONE);
+
+            if ((in.is_jmp || in.is_jcc || in.is_call) && c.detail) {
+                cs_x86* x = &c.detail->x86;
+                for (int k = 0; k < x->op_count; ++k) {
+                    if (x->operands[k].type == X86_OP_IMM) {
+                        in.branch_target = (uint64_t)x->operands[k].imm;
+                        in.has_branch_target = true;
+                        break;
+                    }
+                }
+            }
+            idx_by_addr[in.addr] = (int)insns.size();
+            insns.push_back(std::move(in));
+        }
+        cs_free(ci, count);
+        return !insns.empty();
+    }
+
+    /* =================================================================== */
+    /*  Jump-table recovery (must run before CFG edge building)             */
+    /* =================================================================== */
+
+    struct JumpTable {
+        bool valid = false;
+        ExprP index;                 /* the recovered index expression */
+        Reg index_reg = R_NONE;      /* the table-index register (in the dispatch
+                                      * block), resolved to its real value post-exec */
+        uint64_t index_load_addr = 0;/* address of the `mov reg,[base+index*4+disp]`
+                                      * table load — the index reg holds the real
+                                      * selector value HERE (it is reused as the jump
+                                      * target right after), so snapshot it at this
+                                      * exact insn, not at any indexed access. */
+        std::vector<uint64_t> targets; /* case rva per index 0..n-1 */
+        uint64_t default_target = 0; /* 2-level tables: the default-arm rva (most
+                                      * index-table slots point here); such case
+                                      * slots are emitted as `default:`, not cases */
+    };
+
+    /* Recognise the MSVC /Od dispatch tail:
+     *     movsxd reg, [idxslot]            ; or mov reg32,[idxslot]
+     *     lea    base, [rip + d]           ; base = lea target rva
+     *     mov    eax, [base*1 + reg*4 + T] ; (capstone: base=basereg,index=reg,scale4,disp=T)
+     *     add    rax, base
+     *     jmp    rax
+     * The table at (lea_target_rva + T) holds n 32-bit signed entries; each case
+     * target rva = lea_target_rva + entry. n is bounded by a preceding
+     *     cmp idx, K ; ja default   (so n = K+1). We also cap by image bounds.
+     */
+    JumpTable recover_jump_table(const std::vector<int>& body_idx,
+                                 int last_insn_index, int64_t& bound_hint,
+                                 ExprP& idx_for_cmp) {
+        JumpTable jt;
+        /* find the indirect jmp reg */
+        const Insn& jmpi = insns[last_insn_index];
+        if (!jmpi.is_jmp || jmpi.x86.op_count < 1) return jt;
+        if (jmpi.x86.operands[0].type != X86_OP_REG) return jt;
+        Reg jreg; int jw; map_reg(jmpi.x86.operands[0].reg, jreg, jw);
+        if (jreg == R_NONE) return jt;
+
+        /* scan backwards within the block for the pattern */
+        int n = (int)body_idx.size();
+        if (n < 3) return jt;
+        /* position of jmp in body */
+        int jpos = -1;
+        for (int i = 0; i < n; ++i) if (body_idx[i] == last_insn_index) { jpos = i; break; }
+        if (jpos < 0) return jt;
+
+        Reg base_reg = R_NONE; int64_t lea_target = -1;
+        Reg index_reg = R_NONE; int64_t table_disp = 0; bool table_found = false;
+        int scale = 4; uint64_t index_load_addr = 0;
+
+        /* expected: add jreg, base_reg ; before it the mov that loads jreg from table.
+         * Scan the WHOLE dispatch block backward (not just 8 insns): MSVC /O2 schedules
+         * the operand-decode ALU ops BETWEEN the table load and the `jmp`, so the table
+         * load can be 10+ instructions before the jmp (big_vm's 41-way opcode switch put
+         * 7 shr/and ops in between → the 8-insn window missed it → mis-lowered as a
+         * tail-call, severing the interpreter loop). First-wins (closest to jmp) guards
+         * keep every existing recovery identical. */
+        for (int i = jpos - 1; i >= 0; --i) {
+            const Insn& in = insns[body_idx[i]];
+            const cs_x86& x = in.x86;
+            if (in.id == X86_INS_ADD && x.op_count == 2 &&
+                x.operands[0].type == X86_OP_REG && x.operands[1].type == X86_OP_REG) {
+                Reg d, s; int wd, ws;
+                map_reg(x.operands[0].reg, d, wd); map_reg(x.operands[1].reg, s, ws);
+                if (d == jreg && base_reg == R_NONE) base_reg = s;
+                continue;
+            }
+            if (!table_found &&
+                (in.id == X86_INS_MOV || in.id == X86_INS_MOVSXD) &&
+                x.op_count == 2 && x.operands[0].type == X86_OP_REG &&
+                x.operands[1].type == X86_OP_MEM) {
+                Reg d; int wd; map_reg(x.operands[0].reg, d, wd);
+                if (d != jreg) continue;
+                const x86_op_mem& m = x.operands[1].mem;
+                /* the table load is the indexed form [base + index*4 + disp] */
+                if (m.index == X86_REG_INVALID) continue;
+                Reg mb = R_NONE, mi = R_NONE; int t;
+                if (m.base != X86_REG_INVALID) map_reg(m.base, mb, t);
+                map_reg(m.index, mi, t);
+                table_disp = m.disp; scale = m.scale ? m.scale : 1;
+                index_reg = mi; table_found = true;
+                index_load_addr = in.addr;   /* snapshot the selector reg HERE */
+                if (mb != R_NONE && base_reg == R_NONE) base_reg = mb;
+                continue;
+            }
+            if (in.id == X86_INS_LEA && x.op_count == 2 &&
+                x.operands[0].type == X86_OP_REG && x.operands[1].type == X86_OP_MEM) {
+                Reg d; int wd; map_reg(x.operands[0].reg, d, wd);
+                const x86_op_mem& m = x.operands[1].mem;
+                if (m.base == X86_REG_RIP) {
+                    uint64_t t = in.addr + in.size + (uint64_t)m.disp;
+                    if (d == base_reg) { if (lea_target < 0) lea_target = (int64_t)t; }
+                    else if (base_reg == R_NONE && (jpos - i) <= 8) {
+                        /* "the base IS this lea'd reg" heuristic — only trust it near the
+                         * jmp; distant base leas are handled by the whole-fn backfill below */
+                        base_reg = d; lea_target = (int64_t)t;
+                    }
+                }
+                continue;
+            }
+        }
+        /* The base register (the image/section base the table is relative to) is
+         * commonly loaded ONCE in the prologue — `lea rdx, [rip - func_rva]` gives
+         * RVA 0 — far from the dispatch jmp. The 8-instruction local window misses
+         * it, so a whole switch (0x57760's 16-way InputText cursor dispatcher) was
+         * mis-recovered as an indirect TAIL CALL, disconnecting every case block
+         * and dropping the object pointer to `(char*)(0)`. Search the whole
+         * function (nearest definition before the jmp) for base_reg's lea. */
+        if (table_found && base_reg != R_NONE && lea_target < 0) {
+            for (int i = last_insn_index - 1; i >= 0; --i) {
+                const Insn& in = insns[i];
+                const cs_x86& x = in.x86;
+                if (x.op_count >= 1 && x.operands[0].type == X86_OP_REG) {
+                    Reg d; int wd; map_reg(x.operands[0].reg, d, wd);
+                    if (d == base_reg) {
+                        if (in.id == X86_INS_LEA && x.op_count == 2 &&
+                            x.operands[1].type == X86_OP_MEM &&
+                            x.operands[1].mem.base == X86_REG_RIP) {
+                            lea_target = (int64_t)(in.addr + in.size +
+                                         (uint64_t)x.operands[1].mem.disp);
+                        }
+                        break;   /* nearest def of base_reg decides */
+                    }
+                }
+            }
+        }
+        if (!table_found || base_reg == R_NONE || lea_target < 0 || scale != 4)
+            return jt;
+
+        uint64_t table_rva = (uint64_t)(lea_target + table_disp);
+        /* determine count bound */
+        int64_t count = bound_hint;
+        if (count <= 0 || count > 4096) count = 256;   /* clamp */
+        /* read entries, bounded by image and by a plausible code range */
+        uint64_t lo = f->rva;
+        uint64_t hi = f->rva + (f->size ? f->size : 0);
+        if (hi <= lo && !insns.empty()) hi = insns.back().addr + insns.back().size;
+        std::vector<uint64_t> targets;
+        for (int64_t i = 0; i < count; ++i) {
+            int32_t entry;
+            if (!read_i32(table_rva + (uint64_t)i * 4, entry)) break;
+            uint64_t tgt = (uint64_t)(lea_target + entry);
+            if (tgt < lo || tgt >= hi) break;       /* outside function: stop */
+            if (!idx_by_addr.count(tgt)) break;     /* not an instruction start */
+            targets.push_back(tgt);
+        }
+        if (targets.size() < 2) return jt;
+
+        /* 2-level (sparse) table: the jump-table index is itself loaded from a
+         * BYTE index table — `movzx index_reg, byte [ibase + v*1 + d]` — so the
+         * jump-table position is NOT the switch value. Read the byte table and
+         * EXPAND targets to one-per-real-value, so case labels are the actual
+         * switch keys (parse_bool/classify_char/best_caesar_shift were labelling
+         * cases by jump-table rank instead of the real char value). */
+        if (index_reg != R_NONE) {
+            Reg itab_base = R_NONE; int64_t itab_disp = 0;
+            Reg real_idx = R_NONE; bool itab_found = false;
+            for (int i = jpos - 1; i >= 0; --i) {
+                const Insn& in = insns[body_idx[i]];
+                const cs_x86& x = in.x86;
+                if ((in.id==X86_INS_MOVZX||in.id==X86_INS_MOVSX||in.id==X86_INS_MOV) &&
+                    x.op_count==2 && x.operands[0].type==X86_OP_REG &&
+                    x.operands[1].type==X86_OP_MEM) {
+                    Reg d; int dw; map_reg(x.operands[0].reg, d, dw);
+                    if (d != index_reg) continue;
+                    const x86_op_mem& m = x.operands[1].mem;
+                    if (m.index == X86_REG_INVALID) break;        /* non-indexed def: stop */
+                    if ((m.scale ? m.scale : 1) != 1) continue;   /* the scale-4 jump-table load itself — skip past it to the byte index table */
+                    Reg mb=R_NONE, mi=R_NONE; int t;
+                    if (m.base != X86_REG_INVALID) map_reg(m.base, mb, t);
+                    map_reg(m.index, mi, t);
+                    itab_base = mb; itab_disp = m.disp; real_idx = mi; itab_found = true;
+                    break;
+                }
+            }
+            int64_t itab_lea = -1;
+            if (itab_found) {
+                for (int i = jpos - 1; i >= 0; --i) {
+                    const Insn& in = insns[body_idx[i]];
+                    const cs_x86& x = in.x86;
+                    if (in.id==X86_INS_LEA && x.op_count==2 &&
+                        x.operands[0].type==X86_OP_REG && x.operands[1].type==X86_OP_MEM) {
+                        Reg d; int dw; map_reg(x.operands[0].reg, d, dw);
+                        const x86_op_mem& m = x.operands[1].mem;
+                        if (d==itab_base && m.base==X86_REG_RIP)
+                            itab_lea = (int64_t)(in.addr + in.size + (uint64_t)m.disp);
+                    }
+                }
+            }
+            if (itab_lea >= 0) {
+                uint64_t itab_rva = (uint64_t)(itab_lea + itab_disp);
+                std::vector<uint64_t> expanded;
+                int64_t cnt = bound_hint; if (cnt <= 0 || cnt > 4096) cnt = 256;
+                std::map<uint64_t,int> freq;
+                for (int64_t v = 0; v < cnt; ++v) {
+                    uint8_t ix;
+                    if (!read_u8(itab_rva + (uint64_t)v, ix)) break;
+                    if ((size_t)ix >= targets.size()) break;
+                    expanded.push_back(targets[ix]);
+                    freq[targets[ix]]++;
+                }
+                if (expanded.size() >= 2) {
+                    uint64_t deflt = 0; int best = -1;
+                    for (auto& kv : freq) if (kv.second > best) { best = kv.second; deflt = kv.first; }
+                    targets = expanded;
+                    jt.default_target = deflt;
+                    index_reg = (real_idx != R_NONE) ? real_idx : index_reg;
+                    idx_for_cmp = nullptr;   /* re-trace from the real index reg */
+                }
+            }
+        }
+
+        jt.valid = true;
+        jt.targets = targets;
+        /* Recover the index expression. Prefer the cmp-derived index; otherwise
+         * trace index_reg back to the slot it was loaded from in this block. */
+        ExprP idx = idx_for_cmp;
+        if (!idx && index_reg != R_NONE) {
+            Reg trace = index_reg;
+            for (int i = jpos - 1; i >= 0; --i) {
+                const Insn& in = insns[body_idx[i]];
+                const cs_x86& x = in.x86;
+                if ((in.id == X86_INS_MOV || in.id == X86_INS_MOVSXD ||
+                     in.id == X86_INS_MOVZX || in.id == X86_INS_MOVSX) &&
+                    x.op_count == 2 && x.operands[0].type == X86_OP_REG) {
+                    Reg d; int dw; map_reg(x.operands[0].reg, d, dw);
+                    if (d != trace) continue;
+                    if (x.operands[1].type == X86_OP_MEM) {
+                        const x86_op_mem& mm = x.operands[1].mem;
+                        /* skip the table load itself (indexed mem) */
+                        if (mm.index != X86_REG_INVALID) continue;
+                        idx = symbolic_operand_static(x.operands[1]);
+                        break;
+                    } else if (x.operands[1].type == X86_OP_REG) {
+                        Reg s; int sw; map_reg(x.operands[1].reg, s, sw);
+                        trace = s; continue;
+                    } else break;
+                }
+            }
+        }
+        jt.index = idx;
+        jt.index_reg = index_reg;   /* dispatch-block register, resolved post-exec */
+        jt.index_load_addr = index_load_addr;
+        return jt;
+    }
+
+    /* =================================================================== */
+    /*  2. CFG                                                              */
+    /* =================================================================== */
+
+    std::map<int, JumpTable> block_jt;   /* block id -> recovered jump table */
+
+    void build_cfg() {
+        uint64_t lo = f->rva;
+        uint64_t hi = f->rva + (f->size ? f->size : 0);
+        if (hi <= lo && !insns.empty())
+            hi = insns.back().addr + insns.back().size;
+
+        /* First pass: find leaders from direct branches + collect jump tables. */
+        std::set<uint64_t> leaders;
+        leaders.insert(f->rva);
+        for (size_t i = 0; i < insns.size(); ++i) {
+            const Insn& in = insns[i];
+            bool term = in.is_jmp || in.is_jcc || in.is_ret;
+            if ((in.is_jcc || in.is_jmp) && in.has_branch_target &&
+                in.branch_target >= lo && in.branch_target < hi)
+                leaders.insert(in.branch_target);
+            if (term && i + 1 < insns.size())
+                leaders.insert(insns[i + 1].addr);
+        }
+
+        /* Provisional blocks to find jump-table dispatch tails. We need block
+         * groupings; build a quick provisional leader list, locate switch
+         * dispatch blocks, add their case targets as leaders, then rebuild. */
+        auto build_blocks_from = [&](std::set<uint64_t>& leadset) {
+            blocks.clear(); block_by_addr.clear();
+            std::vector<uint64_t> lead;
+            for (uint64_t L : leadset) if (idx_by_addr.count(L)) lead.push_back(L);
+            std::sort(lead.begin(), lead.end());
+            for (size_t bi = 0; bi < lead.size(); ++bi) {
+                Block b; b.addr = lead[bi]; b.id = (int)bi;
+                block_by_addr[b.addr] = b.id; blocks.push_back(b);
+            }
+            for (size_t bi = 0; bi < blocks.size(); ++bi) {
+                uint64_t start = blocks[bi].addr;
+                uint64_t end = (bi + 1 < blocks.size()) ? blocks[bi + 1].addr : hi;
+                if (!idx_by_addr.count(start)) continue;
+                int si = idx_by_addr[start];
+                for (int j = si; j < (int)insns.size(); ++j) {
+                    if (insns[j].addr < start) continue;
+                    if (insns[j].addr >= end) break;
+                    blocks[bi].insn_idx.push_back(j);
+                }
+            }
+        };
+
+        build_blocks_from(leaders);
+
+        /* Detect jump tables: blocks ending in an indirect jmp reg. */
+        for (auto& b : blocks) {
+            if (b.insn_idx.empty()) continue;
+            const Insn& last = insns[b.insn_idx.back()];
+            if (!last.is_jmp || last.has_branch_target) continue;
+            if (last.x86.op_count < 1 || last.x86.operands[0].type != X86_OP_REG)
+                continue;
+            /* find a preceding `cmp idx, K ; ja` to bound the table */
+            int64_t bound = 0;
+            ExprP idxexpr = nullptr;
+            for (int i = (int)b.insn_idx.size() - 1; i >= 0; --i) {
+                const Insn& in = insns[b.insn_idx[i]];
+                if (in.id == X86_INS_CMP && in.x86.op_count == 2 &&
+                    in.x86.operands[1].type == X86_OP_IMM) {
+                    bound = in.x86.operands[1].imm + 1;
+                    idxexpr = symbolic_operand_static(in.x86.operands[0]);
+                    break;
+                }
+            }
+            JumpTable jt = recover_jump_table(b.insn_idx, b.insn_idx.back(),
+                                              bound, idxexpr);
+            if (jt.valid) {
+                block_jt[b.id] = jt;
+                for (uint64_t t : jt.targets) leaders.insert(t);
+            }
+        }
+
+        /* Rebuild blocks now that case targets are leaders. */
+        build_blocks_from(leaders);
+
+        /* edges */
+        for (size_t bi = 0; bi < blocks.size(); ++bi) {
+            Block& b = blocks[bi];
+            if (b.insn_idx.empty()) {
+                if (bi + 1 < blocks.size()) b.fall = (int)bi + 1;
+                continue;
+            }
+            const Insn& last = insns[b.insn_idx.back()];
+            uint64_t next_addr = last.addr + last.size;
+
+            /* recovered switch? (re-detect; block ids changed on rebuild) */
+            bool isjt = false;
+            if (last.is_jmp && !last.has_branch_target &&
+                last.x86.op_count >= 1 && last.x86.operands[0].type == X86_OP_REG) {
+                int64_t bound = 0; ExprP idxexpr = nullptr; Reg cmp_reg = R_NONE;
+                for (int i = (int)b.insn_idx.size() - 1; i >= 0; --i) {
+                    const Insn& in = insns[b.insn_idx[i]];
+                    if (in.id == X86_INS_CMP && in.x86.op_count == 2 &&
+                        in.x86.operands[1].type == X86_OP_IMM) {
+                        bound = in.x86.operands[1].imm + 1;
+                        idxexpr = symbolic_operand_static(in.x86.operands[0]);
+                        if (in.x86.operands[0].type == X86_OP_REG) {
+                            int cw; map_reg(in.x86.operands[0].reg, cmp_reg, cw);
+                        }
+                        break;
+                    }
+                }
+                JumpTable jt = recover_jump_table(b.insn_idx, b.insn_idx.back(),
+                                                  bound, idxexpr);
+                if (jt.valid) {
+                    isjt = true;
+                    b.is_switch = true;
+                    b.switch_var = jt.index;
+                    /* the cmp-derived index renders statically (often `0`) because
+                     * the CFG pass has no regfile; remember the dispatch register
+                     * (the jump-table index reg, in THIS block — the bound-check cmp
+                     * usually sits in a predecessor) so exec_block can rebind
+                     * switch_var to its real dataflow value (`switch(*a1)` not
+                     * `switch(0)`). Fall back to the cmp operand if no index reg. */
+                    Reg sreg = (jt.index_reg != R_NONE) ? jt.index_reg : cmp_reg;
+                    if (sreg != R_NONE) switch_cmp_reg[b.id] = sreg;
+                    if (jt.index_load_addr) switch_index_load[b.id] = jt.index_load_addr;
+                    for (uint64_t t : jt.targets) {
+                        /* a slot pointing at the 2-level default arm is NOT a case */
+                        if (jt.default_target && t == jt.default_target) {
+                            b.case_succ.push_back(-1);
+                            continue;
+                        }
+                        int sid = block_by_addr.count(t) ? block_by_addr[t] : -1;
+                        b.case_succ.push_back(sid);
+                    }
+                    if (jt.default_target && block_by_addr.count(jt.default_target))
+                        b.default_succ = block_by_addr[jt.default_target];
+                }
+            }
+
+            if (last.is_ret) {
+                b.ends_ret = true;
+            } else if (isjt) {
+                b.ends_jmp = true;
+                /* succ edges added below from case_succ + default */
+            } else if (last.is_jmp) {
+                b.ends_jmp = true;
+                if (last.has_branch_target && block_by_addr.count(last.branch_target))
+                    b.taken = block_by_addr[last.branch_target];
+            } else if (last.is_jcc) {
+                b.ends_jcc = true;
+                b.cc = jcc_of(last.id);
+                if (last.has_branch_target && block_by_addr.count(last.branch_target))
+                    b.taken = block_by_addr[last.branch_target];
+                if (block_by_addr.count(next_addr))
+                    b.fall = block_by_addr[next_addr];
+            } else {
+                if (block_by_addr.count(next_addr))
+                    b.fall = block_by_addr[next_addr];
+            }
+        }
+
+        /* succ/pred */
+        for (auto& b : blocks) {
+            std::set<int> added;
+            auto addedge = [&](int s) {
+                if (s < 0 || added.count(s)) return;
+                added.insert(s);
+                b.succ.push_back(s);
+                blocks[s].pred.push_back(b.id);
+            };
+            if (b.is_switch) {
+                for (int s : b.case_succ) addedge(s);
+                if (b.default_succ >= 0) addedge(b.default_succ);
+            } else {
+                if (b.taken >= 0) addedge(b.taken);
+                if (b.fall >= 0) addedge(b.fall);
+            }
+        }
+
+        /* Identify switch guard blocks: a block ending in an unsigned bound check
+         * (`ja`/`jae`) whose fall-through is a switch-dispatch block. The taken
+         * edge is the switch default. We attach the default to the switch block
+         * and mark the guard so the structurer emits one clean switch. */
+        for (auto& b : blocks) {
+            if (!b.ends_jcc || b.taken < 0 || b.fall < 0) continue;
+            if (!(b.cc == CC::A || b.cc == CC::AE || b.cc == CC::G || b.cc == CC::GE))
+                continue;
+            Block& fb = blocks[b.fall];
+            if (!fb.is_switch) continue;
+            /* only when the switch block's only forward entry is this guard */
+            b.is_switch_guard = true;
+            b.guard_switch_blk = b.fall;
+            if (fb.default_succ < 0) {
+                fb.default_succ = b.taken;
+                /* add default edge */
+                bool present = false;
+                for (int s : fb.succ) if (s == b.taken) present = true;
+                if (!present) {
+                    fb.succ.push_back(b.taken);
+                    blocks[b.taken].pred.push_back(fb.id);
+                }
+            }
+        }
+    }
+
+    /* Collapse the SSE float-compare NaN-guard idiom:
+     *     ucomiss a, b ; jp T ; jne T          (both jumps -> the SAME target T)
+     * The `jp` (parity / unordered = NaN) and the `jne` test one comparison and
+     * branch to the same place, so the recovered C otherwise shows TWO identical
+     * `if (a != b) goto T;` lines. The jp block's branch is fully redundant: if
+     * the condition is false we fall to the jne block, which re-tests it
+     * identically (NaN already excluded, so `!=` alone is exact). Drop the jp
+     * block's taken edge so it falls through and only the `jne` survives.
+     *
+     * Gated tightly to avoid touching the OTHER float idiom `jp L1; je L2` (an
+     * ordered-equality test to DIFFERENT targets): we require the fall-through to
+     * be a LONE `jne` to the SAME target, and the jp block's flag source to be a
+     * genuine float compare. Runs after build_cfg, before dominators, so the
+     * edge removal is reflected in the dominator tree. */
+    void collapse_fp_parity_branches() {
+        auto flagsrc_is_float_cmp = [&](const Block& b) -> bool {
+            for (int i = (int)b.insn_idx.size() - 1; i >= 0; --i) {
+                unsigned id = insns[b.insn_idx[i]].id;
+                if (id == X86_INS_COMISS || id == X86_INS_UCOMISS ||
+                    id == X86_INS_COMISD || id == X86_INS_UCOMISD) return true;
+                if (id == X86_INS_CMP || id == X86_INS_TEST) return false;
+            }
+            return false;
+        };
+        for (auto& b : blocks) {
+            if (!b.ends_jcc || b.cc != CC::P) continue;
+            if (b.taken < 0 || b.fall < 0 || b.taken == b.fall) continue;
+            if (!flagsrc_is_float_cmp(b)) continue;
+            Block& fb = blocks[b.fall];
+            /* The fall-through must be a LONE float-compare jcc that, for a NaN input,
+             * routes to the SAME place the jp does (b.taken) — then dropping the jp
+             * edge is behavior-preserving and removes the duplicate `a != b` line.
+             * Two shapes:
+             *   `jp T ; jne T`        (a != b, same target) — NaN!=  -> fb.taken==T
+             *   `jp L1; je L2`        (a != b, `if(a!=b){L1}else{L2}`) — NaN is not
+             *                          equal, so je falls through to L1==b.taken.
+             * Both collapse to a clean single `a == b`/`a != b`. The second shape was
+             * NOT handled before, leaving `*(float*)x != y || *(float*)x != y`. */
+            if (!fb.ends_jcc || fb.insn_idx.size() != 1) continue;
+            bool ok = (fb.cc == CC::NE && fb.taken == b.taken) ||
+                      (fb.cc == CC::E  && fb.fall  == b.taken);
+            if (!ok) continue;
+            /* neutralize the jp branch: unconditional fall-through to fb */
+            int t = b.taken;
+            b.taken = -1; b.cc = CC::NONE; b.ends_jcc = false;
+            b.cond = nullptr; b.drop_branch = true;
+            b.succ.erase(std::remove(b.succ.begin(), b.succ.end(), t), b.succ.end());
+            auto& tp = blocks[t].pred;
+            tp.erase(std::remove(tp.begin(), tp.end(), b.id), tp.end());
+        }
+    }
+
+    /* =================================================================== */
+    /*  Stack / param model                                                 */
+    /* =================================================================== */
+
+    int64_t frame_size = 0;
+    int64_t prologue_push_bytes = 0;   /* rsp lowered by pre-frame `push`es */
+    Reg     frame_rsp_alias = R_NONE;  /* a reg that froze rsp (`mov r11,rsp`) = frame base */
+    int64_t frame_alias_push = 0;      /* prologue_push_bytes at the alias capture */
+    bool    uses_rbp_frame = false;
+    bool    rbp_offset_known = false;
+    int64_t rbp_minus_rsp = 0;
+
+    void scan_prologue() {
+        bool sub_seen = false;
+        /* a register that froze rsp (`mov r11,rsp`) so a later `lea rbp,[r11-K]`
+         * can be resolved to a frame offset (large-frame MSVC idiom). */
+        Reg rsp_alias = R_NONE; int64_t alias_push_at_capture = 0;
+        bool alias_pre_sub = false;   /* the `mov r,rsp` froze rsp BEFORE `sub rsp,Y` */
+        bool rbp_from_alias = false; int64_t rbp_alias_disp = 0, rbp_alias_push = 0;
+        bool rbp_lea_pre_sub = false; int64_t rbp_lea_disp = 0;
+        /* last constant moved into each register, for the large-frame chkstk idiom
+         * `mov eax,IMM; call __chkstk; sub rsp,rax` where the frame size arrives in a
+         * register, not as a `sub rsp,imm` immediate. */
+        std::vector<int64_t> reg_const(R_COUNT, INT64_MIN);
+        uint64_t pending_call = 0;   /* last prologue call (the __chkstk probe candidate) */
+        for (size_t i = 0; i < insns.size() && i < 24; ++i) {
+            const Insn& in = insns[i];
+            const cs_x86& x = in.x86;
+            if (in.is_call) pending_call = in.addr;
+            /* `push reg` before the frame `sub rsp` lowers rsp by 8 each, so the
+             * incoming stack args sit 8*N higher than frame_size alone implies.
+             * Count them so arg-index recovery is not off-by-(pushes). */
+            if (!sub_seen && in.id == X86_INS_PUSH) prologue_push_bytes += 8;
+            /* track `mov reg,imm` (chkstk frame-size carrier). A call (to __chkstk)
+             * preserves rax per its contract, so do NOT invalidate across it. */
+            if (in.id == X86_INS_MOV && x.op_count == 2 &&
+                x.operands[0].type == X86_OP_REG && x.operands[1].type == X86_OP_IMM) {
+                Reg r; int w; map_reg(x.operands[0].reg, r, w);
+                if (r > R_NONE && r < R_COUNT) reg_const[r] = x.operands[1].imm;
+            }
+            if (in.id == X86_INS_SUB && x.op_count == 2 &&
+                x.operands[0].type == X86_OP_REG &&
+                x.operands[1].type == X86_OP_IMM) {
+                Reg r; int w; map_reg(x.operands[0].reg, r, w);
+                if (r == R_RSP) { frame_size = x.operands[1].imm; sub_seen = true; }
+            }
+            /* large frame: `sub rsp, rax` where rax was loaded with the size. */
+            if (in.id == X86_INS_SUB && !sub_seen && x.op_count == 2 &&
+                x.operands[0].type == X86_OP_REG &&
+                x.operands[1].type == X86_OP_REG) {
+                Reg d, s; int wd, ws;
+                map_reg(x.operands[0].reg, d, wd); map_reg(x.operands[1].reg, s, ws);
+                if (d == R_RSP && s > R_NONE && s < R_COUNT && reg_const[s] != INT64_MIN) {
+                    frame_size = reg_const[s]; sub_seen = true;
+                    /* the `call` between `mov eax,size` and `sub rsp,rax` is the
+                     * __chkstk stack probe (often an unnamed local in a DLL): elide
+                     * it so it doesn't render as a spurious `fun_xxxx();`. */
+                    if (pending_call) chkstk_call_addrs.insert(pending_call);
+                }
+            }
+            if (in.id == X86_INS_MOV && x.op_count == 2 &&
+                x.operands[0].type == X86_OP_REG &&
+                x.operands[1].type == X86_OP_REG) {
+                Reg d, s; int wd, ws;
+                map_reg(x.operands[0].reg, d, wd);
+                map_reg(x.operands[1].reg, s, ws);
+                if (d == R_RBP && s == R_RSP) {
+                    uses_rbp_frame = true; rbp_offset_known = true; rbp_minus_rsp = 0;
+                } else if (s == R_RSP && d != R_RSP && d != R_RBP) {
+                    /* `mov r11,rsp` — r11 now holds the (push-adjusted) frame base */
+                    rsp_alias = d; alias_push_at_capture = prologue_push_bytes;
+                    alias_pre_sub = !sub_seen;
+                }
+            }
+            if (in.id == X86_INS_LEA && x.op_count == 2 &&
+                x.operands[0].type == X86_OP_REG &&
+                x.operands[1].type == X86_OP_MEM) {
+                Reg d; int wd; map_reg(x.operands[0].reg, d, wd);
+                Reg mb = R_NONE; int mbw;
+                if (x.operands[1].mem.base != X86_REG_INVALID)
+                    map_reg(x.operands[1].mem.base, mb, mbw);
+                if (d == R_RBP && mb == R_RSP &&
+                    x.operands[1].mem.index == X86_REG_INVALID) {
+                    uses_rbp_frame = true;
+                    if (sub_seen) {
+                        rbp_offset_known = true;
+                        rbp_minus_rsp = x.operands[1].mem.disp;
+                    } else {
+                        /* `lea rbp,[rsp-X]` BEFORE `sub rsp,Y`: rbp points into the
+                         * mid-frame (Y-X above the final rsp), so the offset vs the
+                         * FINAL rsp is disp+frame_size. Deferred until frame_size is
+                         * known (it is set by the later sub). Without this every
+                         * rbp-relative local/arg is mis-normalized and the 5th+ stack
+                         * param is lost. */
+                        rbp_lea_pre_sub = true;
+                        rbp_lea_disp = x.operands[1].mem.disp;
+                    }
+                } else if (d == R_RBP && rsp_alias != R_NONE && mb == rsp_alias &&
+                           x.operands[1].mem.index == X86_REG_INVALID) {
+                    /* `lea rbp,[r11+disp]`: r11 froze rsp `pushes_between` bytes
+                     * before this point, so it equals `[rsp_here + disp + between]`,
+                     * matching the direct `lea rbp,[rsp+disp]` convention. Deferred
+                     * because the final push count is known only after the scan. */
+                    rbp_from_alias = true;
+                    rbp_alias_disp = x.operands[1].mem.disp;
+                    rbp_alias_push = prologue_push_bytes;
+                }
+            }
+        }
+        if (rbp_from_alias && !rbp_offset_known) {
+            uses_rbp_frame = true; rbp_offset_known = true;
+            /* NOTE: a pre-sub alias capture SHOULD also add frame_size here (mirroring
+             * rbp_lea_pre_sub below; verified correct offset for fn_00050a00). DEFERRED
+             * — the correct offset re-resolves ambiguous /O2 slots (a param slot reused
+             * as a spilled float) and surfaces a float/pointer type conflict (fn_0001e870
+             * a6) the type-inference must disambiguate FIRST. See [[decompiler-known-gaps]]. */
+            rbp_minus_rsp = rbp_alias_disp + (rbp_alias_push - alias_push_at_capture);
+        }
+        (void)alias_pre_sub;
+        if (rbp_lea_pre_sub && !rbp_offset_known) {
+            uses_rbp_frame = true; rbp_offset_known = true;
+            rbp_minus_rsp = rbp_lea_disp + frame_size;   /* offset vs the FINAL rsp */
+        }
+        /* publish the rsp-alias so the param-home / float-home passes can recognize
+         * an alias-based arg home (`mov r11,rsp; mov [r11+0x10],rdx`), not only the
+         * literal-RSP form. */
+        frame_rsp_alias = rsp_alias;
+        frame_alias_push = alias_push_at_capture;
+    }
+
+    /* Is `e` the symbolic frame base (entry RSP) plus a constant? Recognises a
+     * register that captured the frame base (`mov rax,rsp`; `lea rbp,[rax+k]`),
+     * accumulating the constant displacement. */
+    bool frame_rel(const ExprP& e, int64_t& off) const {
+        if (!e) return false;
+        if (e->kind == EK::Reg && e->reg == R_RSP) { off = 0; return true; }
+        if (e->kind == EK::Binary && (e->op == "+" || e->op == "-") && e->a && e->b) {
+            int64_t lo;
+            if (e->op == "+") {
+                if (e->b->kind == EK::Const && frame_rel(e->a, lo)) { off = lo + e->b->cval; return true; }
+                if (e->a->kind == EK::Const && frame_rel(e->b, lo)) { off = lo + e->a->cval; return true; }
+            } else { /* a - const */
+                if (e->b->kind == EK::Const && frame_rel(e->a, lo)) { off = lo - e->b->cval; return true; }
+            }
+        }
+        return false;
+    }
+
+    bool normalise_slot(Reg base, int64_t disp, int64_t& norm) {
+        if (base == R_RSP) { norm = disp; return true; }
+        if (base == R_RBP && uses_rbp_frame && rbp_offset_known) {
+            norm = disp + rbp_minus_rsp; return true;
+        }
+        /* base register holds the frame base (entry RSP) + k: `[base+disp]` is the
+         * stack slot at (k + disp) in the post-sub frame, i.e. + frame_size. */
+        if (base > R_NONE && base < R_COUNT && regfile[base]) {
+            int64_t k;
+            if (frame_rel(regfile[base], k)) { norm = disp + k + frame_size; return true; }
+        }
+        return false;
+    }
+
+    void detect_param_homes() {
+        bool sub_done = false;
+        bool argreg_written[4] = {false,false,false,false};   /* rcx/rdx/r8/r9 clobbered */
+        /* the rsp-alias (`mov r11,rsp`) is a valid frame base for arg homes only
+         * between its capture and any later reassignment of that register. */
+        bool alias_valid = false;
+        for (size_t i = 0; i < insns.size() && i < 24; ++i) {
+            const Insn& in = insns[i];
+            const cs_x86& x = in.x86;
+            /* arm/disarm the rsp-alias: `mov alias,rsp` captures the frame base; any
+             * other write to that register invalidates it for alias homing. */
+            if (frame_rsp_alias != R_NONE) {
+                for (int o = 0; o < x.op_count; ++o) {
+                    const cs_x86_op& op = x.operands[o];
+                    if (op.type != X86_OP_REG || !(op.access & CS_AC_WRITE)) continue;
+                    Reg wr; int ww; map_reg(op.reg, wr, ww);
+                    if (wr != frame_rsp_alias) continue;
+                    bool cap = (in.id == X86_INS_MOV && x.op_count == 2 &&
+                                x.operands[1].type == X86_OP_REG);
+                    if (cap) { Reg s; int sw; map_reg(x.operands[1].reg, s, sw); cap = (s == R_RSP); }
+                    alias_valid = cap;
+                }
+            }
+            if (in.id == X86_INS_SUB && x.op_count == 2 &&
+                x.operands[0].type == X86_OP_REG &&
+                x.operands[1].type == X86_OP_IMM) {
+                Reg r; int w; map_reg(x.operands[0].reg, r, w);
+                if (r == R_RSP) { sub_done = true; continue; }
+            }
+            if (in.id != X86_INS_MOV || x.op_count != 2) {
+                /* track clobbers of the arg registers so a later reuse-store of a
+                 * different value to the same slot is NOT mistaken for homing. */
+                for (int o = 0; o < x.op_count; ++o) {
+                    const cs_x86_op& op = x.operands[o];
+                    if (op.type == X86_OP_REG && (op.access & CS_AC_WRITE)) {
+                        Reg r; int w; map_reg(op.reg, r, w);
+                        int p = (r==R_RCX)?0:(r==R_RDX)?1:(r==R_R8)?2:(r==R_R9)?3:-1;
+                        if (p >= 0) argreg_written[p] = true;
+                    }
+                }
+                continue;
+            }
+            if (x.operands[0].type != X86_OP_MEM ||
+                x.operands[1].type != X86_OP_REG) {
+                if (x.operands[0].type == X86_OP_REG && (x.operands[0].access & CS_AC_WRITE)) {
+                    Reg r; int w; map_reg(x.operands[0].reg, r, w);
+                    int p = (r==R_RCX)?0:(r==R_RDX)?1:(r==R_R8)?2:(r==R_R9)?3:-1;
+                    if (p >= 0) argreg_written[p] = true;
+                }
+                continue;
+            }
+            const x86_op_mem& m = x.operands[0].mem;
+            Reg base = R_NONE; int bw;
+            if (m.base != X86_REG_INVALID) map_reg(m.base, base, bw);
+            bool via_alias = (frame_rsp_alias != R_NONE && alias_valid && base == frame_rsp_alias);
+            if ((base != R_RSP && !via_alias) || m.index != X86_REG_INVALID) continue;
+            Reg src; int sw; map_reg(x.operands[1].reg, src, sw);
+            int pidx = -1;
+            if (src == R_RCX) pidx = 0;
+            else if (src == R_RDX) pidx = 1;
+            else if (src == R_R8)  pidx = 2;
+            else if (src == R_R9)  pidx = 3;
+            else continue;
+            /* The store only HOMES the arg if the register still holds the incoming
+             * value. After `mov ecx,1` a later `mov [rsp+8],ecx` stores 1, not the
+             * arg — homing it would alias the reused local to `a1` and drop the
+             * real store (the `1 << i` -> `a1 << i` bug in parity32). */
+            if (argreg_written[pidx]) continue;
+            /* the shadow slot for arg p is entry_rsp+8+8p; a frozen rsp-alias equals
+             * (entry_rsp - alias_push), so through the alias the disp is offset by the
+             * pushes at capture. */
+            int64_t expect = 8 + 8 * pidx + (via_alias ? frame_alias_push : 0);
+            if (m.disp != expect) continue;
+            /* The home-store writes the shadow slot at ENTRY rsp (m.disp matches the
+             * shadow offset only when no rsp adjustment preceded it). In the body the
+             * same slot sits frame_size + prologue_push_bytes below the current rsp —
+             * the push bytes were MISSING here (detect_stack_params already adds them),
+             * so a /O2 frame that `push`es callee-saves before `sub rsp` mapped a4's
+             * home to the wrong offset and its later spill-reload read fell through to
+             * an undefined `v1` (csr_matvec/csr_transpose nrows loop bound). */
+            /* an alias base froze entry_rsp (minus the pushes at capture) and never
+             * moves with the sub, so its slot is always entry-relative: add the full
+             * frame adjustment and back out the capture pushes. An RSP base is
+             * body-relative once the sub ran (sub_done). */
+            int64_t norm = via_alias
+                ? (m.disp + frame_size + prologue_push_bytes - frame_alias_push)
+                : (m.disp + (sub_done ? 0 : (frame_size + prologue_push_bytes)));
+            std::string nm = "a" + std::to_string(pidx + 1);
+            param_home_off[norm] = nm;
+            home_store_addrs.insert(in.addr);   /* skip this no-op store when lifting */
+            if (pidx + 1 > num_params) num_params = pidx + 1;
+            param_used[pidx] = true;
+            if (sw >= 8) var_is_ll[nm] = true;
+            record_width(nm, sw ? sw : 8);
+        }
+    }
+
+    /* Detect callee-saved register save/restore so it can be elided. A SAVE is
+     * `mov [rsp+X], reg` (or push reg) where reg is non-volatile and has NOT yet
+     * been written — i.e. it stores the register's INCOMING value to spill it for
+     * the duration of the function. The matching RESTORE is `mov reg, [rsp+X]`
+     * from the same slot. Both are pure preservation with no observable effect;
+     * without eliding them the save reads the incoming reg value and renders the
+     * phantom `v = ctx_r14`. Keyed on raw disp so save and restore match
+     * regardless of frame/push accounting. */
+    void scan_callee_saves() {
+        std::map<int64_t, Reg> save_slot;       /* raw disp -> reg saved there */
+        bool written[R_COUNT] = {false};
+        /* registers currently holding rsp (`mov r11,rsp`/`mov rax,rsp`): large
+         * frames spill the nonvolatiles through such an alias (`mov [rax-0x28],
+         * r12`), not [rsp+X]. Without recognizing the alias those saves are not
+         * elided and leak as `v = ctx_r12`. */
+        std::set<Reg> rsp_alias;
+        auto is_frame_base = [&](Reg b){ return b == R_RSP || rsp_alias.count(b); };
+        for (auto& in : insns) {
+            const cs_x86& x = in.x86;
+            /* SAVE: mov [frame+disp], nonvol_reg, reg not yet written */
+            if (in.id == X86_INS_MOV && x.op_count == 2 &&
+                x.operands[0].type == X86_OP_MEM &&
+                x.operands[1].type == X86_OP_REG) {
+                const x86_op_mem& m = x.operands[0].mem;
+                Reg base = R_NONE; int bw;
+                if (m.base != X86_REG_INVALID) map_reg(m.base, base, bw);
+                Reg src; int sw; map_reg(x.operands[1].reg, src, sw);
+                if (is_frame_base(base) && m.index == X86_REG_INVALID &&
+                    is_nonvol_gpr(src) && !written[src] && sw >= 8) {
+                    save_slot[m.disp] = src;
+                    callee_save_addrs.insert(in.addr);
+                }
+            }
+            /* xmm6..xmm15 are callee-saved on Win64, spilled via movups/movaps/
+             * movdqu/movsd. Same SAVE elision so the prologue spill of the untouched
+             * entry value does not leak `in_XMM6` (the float sibling of ctx_<gpr>). */
+            bool xmm_mov = (in.id==X86_INS_MOVUPS||in.id==X86_INS_MOVAPS||
+                            in.id==X86_INS_MOVDQU||in.id==X86_INS_MOVDQA||
+                            in.id==X86_INS_MOVSD||in.id==X86_INS_MOVSS||
+                            in.id==X86_INS_MOVUPD||in.id==X86_INS_MOVAPD);
+            if (xmm_mov && x.op_count == 2 &&
+                x.operands[0].type == X86_OP_MEM &&
+                x.operands[1].type == X86_OP_REG) {
+                const x86_op_mem& m = x.operands[0].mem;
+                Reg base = R_NONE; int bw;
+                if (m.base != X86_REG_INVALID) map_reg(m.base, base, bw);
+                Reg src; int sw; map_reg(x.operands[1].reg, src, sw);
+                if (is_frame_base(base) && m.index == X86_REG_INVALID &&
+                    is_nonvol_xmm(src) && !written[src]) {
+                    save_slot[m.disp] = src;
+                    callee_save_addrs.insert(in.addr);
+                }
+            }
+            /* RESTORE: mov nonvol_reg, [frame+disp] from a recorded save slot */
+            if (in.id == X86_INS_MOV && x.op_count == 2 &&
+                x.operands[0].type == X86_OP_REG &&
+                x.operands[1].type == X86_OP_MEM) {
+                const x86_op_mem& m = x.operands[1].mem;
+                Reg base = R_NONE; int bw;
+                if (m.base != X86_REG_INVALID) map_reg(m.base, base, bw);
+                Reg dst; int dw; map_reg(x.operands[0].reg, dst, dw);
+                if (is_frame_base(base) && m.index == X86_REG_INVALID &&
+                    save_slot.count(m.disp) && save_slot[m.disp] == dst)
+                    callee_save_addrs.insert(in.addr);
+            }
+            /* xmm RESTORE: movups/... xmm6-15, [frame+disp] from a recorded slot */
+            if (xmm_mov && x.op_count == 2 &&
+                x.operands[0].type == X86_OP_REG &&
+                x.operands[1].type == X86_OP_MEM) {
+                const x86_op_mem& m = x.operands[1].mem;
+                Reg base = R_NONE; int bw;
+                if (m.base != X86_REG_INVALID) map_reg(m.base, base, bw);
+                Reg dst; int dw; map_reg(x.operands[0].reg, dst, dw);
+                if (is_frame_base(base) && m.index == X86_REG_INVALID &&
+                    save_slot.count(m.disp) && save_slot[m.disp] == dst &&
+                    is_nonvol_xmm(dst))
+                    callee_save_addrs.insert(in.addr);
+            }
+            /* track register writes + maintain the rsp-alias set: `mov r,rsp`
+             * captures the frame base; any other write to r invalidates it. */
+            for (int o = 0; o < x.op_count; ++o) {
+                const cs_x86_op& op = x.operands[o];
+                if (op.type == X86_OP_REG && (op.access & CS_AC_WRITE)) {
+                    Reg r; int w; map_reg(op.reg, r, w);
+                    if (r <= R_NONE || r >= R_COUNT) continue;
+                    written[r] = true;
+                    bool rsp_capture = (o == 0 && in.id == X86_INS_MOV &&
+                        x.op_count == 2 && x.operands[1].type == X86_OP_REG &&
+                        [&]{ Reg s; int sw; map_reg(x.operands[1].reg, s, sw); return s == R_RSP; }());
+                    if (rsp_capture) rsp_alias.insert(r); else rsp_alias.erase(r);
+                }
+            }
+        }
+    }
+
+    int reg_param_max = 0;   /* highest GPR-arg param count from read-before-write */
+
+    /* Recover integer/pointer arguments that are READ straight out of their arg
+     * register without being homed to a stack slot — the /O2 (release) pattern
+     * that detect_param_homes (which only sees prologue homing stores) misses.
+     * This is the 858a0-style "missing incoming arg -> uninitialized local /
+     * call f(0)" cause. Read-before-write of RCX/RDX/R8/R9 (a destination write
+     * and prologue push/pop excluded) means the register holds an incoming value.
+     * Contiguity from a1 is required so an isolated scratch read of (say) rdx in
+     * a function that takes no rcx arg cannot invent a phantom parameter.
+     * For /Od this exactly reproduces the homed count (the homing store reads the
+     * arg reg as a source), so the behavioral corpus is unaffected. */
+    void detect_reg_params() {
+        if (e->arch != DS_ARCH_X64) return;   /* GPR-arg ABI is Win64-only here */
+        /* If the prologue homed ANY argument this is a partially-/Od-style frame.
+         * Register read-before-write recovery (extending the param COUNT) is only
+         * safe for fully-unhomed /O2 frames — otherwise scratch register use (an
+         * idiv temp) would invent a phantom param the call sites don't pass (the
+         * is_prime C2198 regression). But the param-WIDTH narrowing below only sets
+         * var_width (pointers ignore it), so it stays safe even on homed frames: a
+         * partially-homed /O2 frame that homes r8/r9 but keeps an UNHOMED 32-bit
+         * `unsigned n`/`int n` in rdx (lu_decompose) must still narrow it to `int`
+         * rather than defaulting to the 64-bit slot. So: scan + narrow always; only
+         * gate reg_param_max (the count extension) on the fully-unhomed case. */
+        bool any_homed = param_used[0]||param_used[1]||param_used[2]||param_used[3];
+        bool written[4] = {false,false,false,false};
+        bool used[4]    = {false,false,false,false};
+        int  argw[4]    = {0,0,0,0};   /* max sub-register read width per arg */
+        auto argpos = [](Reg r)->int {
+            return (r==R_RCX)?0:(r==R_RDX)?1:(r==R_R8)?2:(r==R_R9)?3:-1;
+        };
+        for (auto& in : insns) {
+            if (in.id == X86_INS_PUSH || in.id == X86_INS_POP) continue;
+            const cs_x86& x = in.x86;
+            /* self-zeroing idiom (`xor r,r` / `sub r,r`) DEFINES the reg to 0;
+             * capstone still flags operand[1] as a READ, but it is NOT a use of
+             * the incoming value. Counting it marks a zeroed scratch reg (a
+             * vectorized-loop accumulator `xor r8d,r8d`) as a phantom parameter.
+             * Distinct from `or r8,r8` below, whose read IS a real test. */
+            bool self_zero = (in.id==X86_INS_XOR || in.id==X86_INS_SUB) &&
+                             x.op_count==2 && x.operands[0].type==X86_OP_REG &&
+                             x.operands[1].type==X86_OP_REG &&
+                             x.operands[0].reg==x.operands[1].reg;
+            /* READS first, against the written-state BEFORE this instruction. A
+             * read+write of the same arg reg (`or r8,r8` — the MSVC `test`-that-
+             * also-writes idiom used to check the strncpy count) would otherwise
+             * have its dest write processed first, masking the read and losing the
+             * parameter -> `if (0 == 0)`. */
+            for (int o = 0; o < x.op_count; ++o) {
+                const cs_x86_op& op = x.operands[o];
+                if (op.type == X86_OP_REG) {
+                    Reg r; int w; map_reg(op.reg, r, w);
+                    int p = argpos(r);
+                    if (p < 0) continue;
+                    /* Skip only a PURE-WRITE destination (`mov r8d,x`); a read-modify-
+                     * write of an arg reg (`not r8d`, `add r8d,eax`) genuinely reads
+                     * the incoming param and must record its (narrow) read width — else
+                     * an `unsigned init` only ever touched as `not r8d` defaults to the
+                     * full 64-bit slot (`long long a3`). A pure write has no READ flag,
+                     * so the CS_AC_READ test below already excludes it; keeping the
+                     * guard for RMW was what lost the width. */
+                    bool is_pure_write = (o == 0 && (op.access & CS_AC_WRITE) &&
+                                          !(op.access & CS_AC_READ));
+                    if ((op.access & CS_AC_READ) && !written[p] && !is_pure_write && !self_zero) {
+                        used[p] = true;
+                        /* record the sub-register width this arg is read at, so a
+                         * param only ever touched as ecx/edx narrows to `int`. */
+                        if (w > argw[p]) argw[p] = w;
+                    }
+                } else if (op.type == X86_OP_MEM) {
+                    const x86_op_mem& m = op.mem;
+                    Reg bi[2] = {R_NONE,R_NONE}; int t;
+                    if (m.base  != X86_REG_INVALID) map_reg(m.base,  bi[0], t);
+                    if (m.index != X86_REG_INVALID) map_reg(m.index, bi[1], t);
+                    /* a register feeding an address is normally a 64-bit pointer, so
+                     * keep the param wide. EXCEPT `lea r32,[a+b]` / `lea r32,[a-1]`
+                     * which the compiler uses for 32-bit ARITHMETIC, not addressing:
+                     * there the components are plain ints (avg_signed's `(a+b)/2`,
+                     * next_pow2's `x-1`), so a 32-bit lea dest means 32-bit operands. */
+                    int mem_reg_w = 8;
+                    if (in.id == X86_INS_LEA && x.op_count >= 1 &&
+                        x.operands[0].size && x.operands[0].size <= 4)
+                        mem_reg_w = 4;
+                    for (Reg r : bi) { int p = argpos(r); if (p>=0 && !written[p]) { used[p]=true; if (mem_reg_w > argw[p]) argw[p] = mem_reg_w; } }
+                }
+            }
+            /* then WRITES */
+            for (int o = 0; o < x.op_count; ++o) {
+                const cs_x86_op& op = x.operands[o];
+                if (op.type == X86_OP_REG && (op.access & CS_AC_WRITE)) {
+                    Reg r; int w; map_reg(op.reg, r, w);
+                    int p = argpos(r);
+                    if (p >= 0) written[p] = true;
+                }
+            }
+            /* Implicit-def opcodes write rdx/rax with NO explicit operand, so the
+             * operand walk above misses them. The sign-extend `cdq/cqo/cwd` sets
+             * rdx right before `idiv` reads it; without recording that write,
+             * idiv's implicit rdx read looks like a read-before-write and invents
+             * a phantom rdx parameter (the historical is_prime C2198 regression).
+             * The 1-operand mul/div family also leaves its result in rdx. */
+            switch (in.id) {
+                case X86_INS_CDQ: case X86_INS_CQO: case X86_INS_CWD:
+                    written[1] = true; break;                 /* rdx */
+                case X86_INS_DIV:  case X86_INS_IDIV:
+                case X86_INS_MUL:  case X86_INS_IMUL:
+                    if (x.op_count <= 1) written[1] = true;    /* rdx:rax result */
+                    break;
+                default: break;
+            }
+        }
+        /* Highest read-before-write arg register = the parameter count. A gap is
+         * only fatal BEFORE the first arg (an isolated scratch read of rdx in a
+         * function that takes no rcx arg must not invent a param). A gap AFTER an
+         * arg is just an UNUSED positional parameter (`fun(a1, [unused rdx], char
+         * flag)` reads rcx and r8b but never rdx) — the higher arg reg being read
+         * incoming proves the slot exists, so keep scanning. */
+        /* The highest GENUINELY read-before-write arg position is the parameter
+         * count; MS x64 args are positional, so every LOWER slot is a parameter
+         * too even if unused. An unused rcx with a read rdx is `fun(undefined a1,
+         * T* a2)`, NOT scratch rdx — the old `break` on the position-0 gap dropped
+         * a2 entirely and collapsed every [rdx+off] deref to `(char*)0` (0x17320,
+         * 0x5cf90, 0x7a628, ... — the dominant null-base family). The read-before-
+         * write gating + implicit-def handling above already exclude idiv/scratch
+         * false positives, so filling the lower slots is safe. */
+        int maxp = -1;
+        for (int p = 0; p < 4; ++p)
+            if (used[p] || param_used[p]) maxp = p;
+        /* Extend the param COUNT only on fully-unhomed frames (C2198 guard); on a
+         * homed frame the count is already established by the homing/finalize pass. */
+        if (!any_homed) reg_param_max = maxp + 1;
+        /* Narrow a param that is only ever read at a 32-bit-or-narrower sub-
+         * register (ecx/edx/r8d/...) to `int`. /O2 frames read args straight from
+         * registers, so without this the declared type defaults to the 64-bit
+         * slot (long long) and every use is buried under an `(int)` cast
+         * (`int gcd(long long a1, long long a2){ return (int)a1 ... }`). A 64-bit
+         * read (rcx) or any address-base use (a pointer) already set argw[p]=8 and
+         * is left wide. Only narrows the un-homed /O2 path; /Od returned above. */
+        for (int p = 0; p <= maxp; ++p) {
+            if ((used[p] || param_used[p]) && argw[p] >= 1 && argw[p] <= 4)
+                var_width["a" + std::to_string(p + 1)] = 4;
+        }
+    }
+
+    /* 32-bit cdecl/stdcall: ALL arguments are on the stack — there is no register
+     * arg model. With an `ebp` frame (`push ebp; mov ebp,esp`) arg k sits at
+     * [ebp + 8 + 4*(k-1)] (after the saved ebp at +0 and return address at +4);
+     * frameless, at [esp + frame + 4*k]. The x64 detector misses these entirely
+     * (it only looks above the 0x28 shadow), which is why a 32-bit `int add(int,
+     * int)` decompiled to `void` with uninitialized locals. Map every read arg
+     * slot to a1, a2, ... (read-before-write gated so a spill isn't counted). */
+    void detect_cdecl_params() {
+        if (e->arch != DS_ARCH_X86) return;
+        /* Incoming args are addressed off the FRAME POINTER (ebp) for an ebp frame,
+         * or off esp for a frameless one. Outgoing call args are written off esp
+         * even in an ebp frame, so keying strictly on the frame base separates the
+         * two and avoids miscounting an outgoing slot as an incoming param. */
+        Reg want_base = uses_rbp_frame ? R_RBP : R_RSP;
+        int64_t arg_base = uses_rbp_frame ? (8 + rbp_minus_rsp)
+                                          : (frame_size + 4);
+        std::map<int,int> found; std::set<int64_t> written;
+        for (auto& in : insns) {
+            const cs_x86& x = in.x86;
+            for (int o = 0; o < x.op_count; ++o) {
+                if (x.operands[o].type != X86_OP_MEM) continue;
+                const x86_op_mem& m = x.operands[o].mem;
+                if (m.index != X86_REG_INVALID) continue;
+                Reg base = R_NONE; int bw;
+                if (m.base != X86_REG_INVALID) map_reg(m.base, base, bw);
+                if (base != want_base) continue;
+                int64_t norm;
+                if (!normalise_slot(base, m.disp, norm)) continue;
+                int64_t rel = norm - arg_base;
+                if (rel < 0 || (rel % 4) != 0) continue;
+                int k = (int)(rel / 4) + 1;        /* 1-based arg index */
+                if (k < 1 || k > 32) continue;
+                bool is_w = (x.operands[o].access & CS_AC_WRITE) != 0;
+                bool is_r = (x.operands[o].access & CS_AC_READ)  != 0;
+                if (is_r && !written.count(norm)) {
+                    int w = x.operands[o].size ? x.operands[o].size : 4;
+                    if (w > found[k]) found[k] = w;
+                }
+                if (is_w) written.insert(norm);
+            }
+        }
+        if (found.empty()) return;
+        int maxk = found.rbegin()->first;
+        for (int k = 1; k <= maxk; ++k) {
+            int64_t norm = arg_base + 4 * (int64_t)(k - 1);
+            std::string nm = "a" + std::to_string(k);
+            if (!param_home_off.count(norm)) param_home_off[norm] = nm;
+            int w = found.count(k) ? found[k] : 4;
+            record_width(nm, w ? w : 4);
+            if (w >= 8) var_is_ll[nm] = true;
+        }
+        if (maxk > num_params) num_params = maxk;
+    }
+
+    /* x64 args 5+ are passed on the stack, just above the 32-byte shadow space
+     * and the return address. Under /Od they are NOT homed — the callee reads
+     * them directly from normalized offset (frame_size + 8*k) for the k-th
+     * argument (k>=5). Detect those read sites and map them to a5, a6, ... so
+     * they become real parameters instead of uninitialized locals (the cause of
+     * `v6`/`v7` appearing in any function with more than four arguments). */
+    void detect_stack_params() {
+        if (e->arch != DS_ARCH_X64) return;   /* 32-bit args handled by detect_cdecl_params */
+        /* incoming args are at entry_rsp + 8*k (k>=5); in the body that is
+         * frame_size + push_bytes + 8*k below the current rsp. Omitting the push
+         * bytes shifted every arg index up by the push count (over-counting). */
+        int64_t base_off = frame_size + prologue_push_bytes;
+        std::map<int,int> found;   /* 1-based arg index -> max access width seen */
+        std::set<int> float_arg;   /* args loaded via movss/movsd -> float/double */
+        std::set<int64_t> written; /* normalized slots written first (spills/locals) */
+        for (auto& in : insns) {
+            const cs_x86& x = in.x86;
+            for (int o = 0; o < x.op_count; ++o) {
+                if (x.operands[o].type != X86_OP_MEM) continue;
+                const x86_op_mem& m = x.operands[o].mem;
+                if (m.index != X86_REG_INVALID) continue;
+                Reg base = R_NONE; int bw;
+                if (m.base != X86_REG_INVALID) map_reg(m.base, base, bw);
+                int64_t norm;
+                if (!normalise_slot(base, m.disp, norm)) continue;
+                int64_t rel = norm - base_off;
+                if (rel < 0x28 || (rel % 8) != 0) continue;   /* above shadow only */
+                int k = (int)(rel / 8);                       /* 1-based arg index */
+                if (k < 5 || k > 32) continue;
+                bool is_w = (x.operands[o].access & CS_AC_WRITE) != 0;
+                bool is_r = (x.operands[o].access & CS_AC_READ)  != 0;
+                /* only a slot read before the function writes it is a real
+                 * incoming arg; a write-first slot is a local/spill. */
+                if (is_r && !written.count(norm)) {
+                    int w = x.operands[o].size ? x.operands[o].size : 8;
+                    if (w > found[k]) found[k] = w;
+                    /* ANY scalar-FP op reading the slot (mulsd/addss/divsd/comisd/…)
+                     * makes it a float/double param — not just an explicit movss/movsd
+                     * load. poly_horner's 5th arg is consumed directly by `mulsd
+                     * [rsp+0x28]`, so the movss/movsd-only test missed it (long long). */
+                    int fw = fp_scalar_width(in.id);
+                    if (fw) { float_arg.insert(k); if (fw > found[k]) found[k] = fw; }
+                }
+                if (is_w) written.insert(norm);
+            }
+        }
+        if (found.empty()) return;
+        int maxk = found.rbegin()->first;
+        for (int k = 5; k <= maxk; ++k) {
+            int64_t norm = base_off + 8 * (int64_t)k;
+            if (param_home_off.count(norm)) continue;
+            std::string nm = "a" + std::to_string(k);
+            param_home_off[norm] = nm;
+            int w = found.count(k) ? found[k] : 8;
+            if (float_arg.count(k)) {
+                var_is_float[nm] = true;
+                record_width(nm, w >= 8 ? 8 : 4);
+            } else {
+                record_width(nm, w ? w : 8);
+                if (w >= 8) var_is_ll[nm] = true;
+            }
+        }
+        if (maxk > num_params) num_params = maxk;
+    }
+
+    bool is_float_param[4] = {false,false,false,false};
+
+    /* Float / double arguments are passed in XMM0..XMM3 by POSITION (the same
+     * slot the integer reg would occupy): f(int a1, float a2) -> a1 in RCX,
+     * a2 in XMM1. The integer-home scan never sees these, so without this they
+     * read as 0 ("if (0 > a2)") and float constants leak as raw bit patterns.
+     * An XMM register that is READ before the function writes it is an incoming
+     * float param at that position; one written first (xorps/movss/return value)
+     * is a local, not a param. */
+    /* True for SSE ops that FULLY define their destination (its prior value is
+     * discarded). For these, a capstone READ on the dest is only upper-bits
+     * preservation, not a use. Read-modify-write ops (addss/mulss/...) are NOT
+     * here, so their dest read counts as a genuine value use. */
+    static bool fp_def_only(unsigned id) {
+        switch (id) {
+            case X86_INS_MOVSS: case X86_INS_MOVSD: case X86_INS_MOVAPS:
+            case X86_INS_MOVUPS: case X86_INS_MOVD: case X86_INS_MOVQ:
+            case X86_INS_MOVLPS: case X86_INS_MOVDQA: case X86_INS_MOVDQU:
+            case X86_INS_CVTSI2SS: case X86_INS_CVTSI2SD:
+            case X86_INS_CVTSS2SD: case X86_INS_CVTSD2SS:
+            case X86_INS_CVTTSS2SI: case X86_INS_CVTTSD2SI:
+            case X86_INS_CVTSS2SI: case X86_INS_CVTSD2SI:
+                return true;
+            default: return false;
+        }
+    }
+    void detect_float_params() {
+        bool written[4] = {false,false,false,false};
+        int float_param_w[4] = {0,0,0,0};   /* 8 if used in a double (*sd) op */
+        int maxp = -1;
+        for (size_t ii = 0; ii < insns.size(); ++ii) {
+            const Insn& in = insns[ii];
+            const cs_x86& x = in.x86;
+            bool wrote[4] = {false,false,false,false};   /* deferred: reads-before-writes */
+            /* a self-xor that is IMMEDIATELY followed by a ret is a `return 0.0`
+             * on an early-exit path, NOT a scratch init — it must NOT mark the reg
+             * written, else the real param read on the fall-through path (`xorps
+             * xmm0,xmm0; ret` vs `divsd xmm0,xmm1; ret` in d_div/f_div) is suppressed
+             * and the dividend param is mistyped long long. */
+            bool sx_before_ret = false;
+            /* `xorps/xorpd/pxor xmm,xmm` (same reg) is the zero idiom — a pure
+             * DEFINITION to 0, not a read of the register's incoming value, even
+             * though xor lists both operands as READ. Without this, the zeroing of
+             * a scratch xmm0 marks position 0 as a float param (mistyping the int
+             * color arg in the alpha-scale routine). */
+            bool self_xor = (in.id==X86_INS_XORPS||in.id==X86_INS_XORPD||
+                             in.id==X86_INS_PXOR) && x.op_count>=2 &&
+                            x.operands[0].type==X86_OP_REG &&
+                            x.operands[1].type==X86_OP_REG &&
+                            x.operands[0].reg==x.operands[1].reg;
+            if (self_xor && ii + 1 < insns.size()) {
+                unsigned nid = insns[ii + 1].id;
+                if (nid == X86_INS_RET || nid == X86_INS_RETF) sx_before_ret = true;
+            }
+            for (int o = 0; o < x.op_count; ++o) {
+                const cs_x86_op& op = x.operands[o];
+                if (op.type != X86_OP_REG) continue;
+                Reg r; int w; map_reg(op.reg, r, w);
+                if (r < R_XMM0 || r > R_XMM3) continue;
+                int p = r - R_XMM0;
+                /* Operand 0 with WRITE is the destination. For a REPLACING op
+                 * (movss/cvtsi2sd/...) its prior value is discarded — the capstone
+                 * READ flag is only upper-bits preservation, NOT a read of an
+                 * incoming value (counting it mistyped arr_avg's int count `a2`).
+                 * For a READ-MODIFY-WRITE op (mulss/addss/subss/divss/max/min) the
+                 * destination's prior value IS used, so a read-before-write of it
+                 * IS an incoming float param (e.g. `mulss xmm1, ctx->alpha` — xmm1
+                 * is the float factor argument). Only the replacing case is skipped. */
+                bool is_dst = self_xor || (o == 0 && (op.access & CS_AC_WRITE) &&
+                               fp_def_only(in.id));
+                if ((op.access & CS_AC_READ) && !written[p] && !is_dst &&
+                    !param_used[p]) {   /* never override a homed integer param */
+                    is_float_param[p] = true;
+                    if (p > maxp) maxp = p;
+                    /* width: a param consumed by a DOUBLE-precision op (movsd/
+                     * addsd/mulsd/comisd/...) is `double`, not the float default —
+                     * fixes every numerical routine (alpha/coeff args typed float
+                     * and the matching double return mis-sized). */
+                    unsigned iid = in.id;
+                    if (iid==X86_INS_MOVSD||iid==X86_INS_ADDSD||iid==X86_INS_SUBSD||
+                        iid==X86_INS_MULSD||iid==X86_INS_DIVSD||iid==X86_INS_MAXSD||
+                        iid==X86_INS_MINSD||iid==X86_INS_SQRTSD||iid==X86_INS_COMISD||
+                        iid==X86_INS_UCOMISD||iid==X86_INS_CVTSD2SI||iid==X86_INS_CVTTSD2SI||
+                        iid==X86_INS_CVTSD2SS)
+                        float_param_w[p] = 8;
+                    /* the andps/andpd ABS idiom (`andps xmm,[sign-mask]`) carries the
+                     * precision in its .rdata mask — a DOUBLE mask ({0xffffffff,
+                     * 0x7fffffff}) makes the param double (d_abs's `double x`). */
+                    else if ((iid==X86_INS_ANDPS||iid==X86_INS_ANDPD) && x.op_count>=2 &&
+                             x.operands[1].type==X86_OP_MEM &&
+                             x.operands[1].mem.base==X86_REG_RIP &&
+                             x.operands[1].mem.index==X86_REG_INVALID) {
+                        uint64_t a = in.addr + in.size + (uint64_t)x.operands[1].mem.disp;
+                        int32_t l2, h2;
+                        if (read_i32(a, l2) && read_i32(a + 4, h2)) {
+                            uint32_t lo=(uint32_t)l2, hi=(uint32_t)h2;
+                            if (lo==0xffffffffu && hi==0x7fffffffu) float_param_w[p] = 8;
+                            else if (lo==0x7fffffffu && hi==0x7fffffffu && iid==X86_INS_ANDPD)
+                                float_param_w[p] = 8;
+                        }
+                    }
+                }
+                if (op.access & CS_AC_WRITE) wrote[p] = true;
+            }
+            /* apply deferred writes AFTER the read checks (so a same-instruction
+             * dest write does not suppress a read of the SAME reg — cvtsd2ss
+             * xmm0,xmm0 reads a double param into a float dest). A self-xor that is
+             * a `return 0.0` early exit never marks its reg written. */
+            for (int p = 0; p < 4; ++p)
+                if (wrote[p] && !(self_xor && sx_before_ret)) written[p] = true;
+            /* a CALL clobbers the volatile xmm0-5 (and returns a float in xmm0),
+             * so an xmm0-3 READ after a call is the call's RESULT, not an incoming
+             * float param. Without this, `call f; movaps xmm6, xmm0` (saving the
+             * result) mistyped arg0 as `float`, unmapping the real integer rcx
+             * object pointer -> `rsi=0` and 500+ `(char*)(0)` null derefs. */
+            if (in.is_call) for (int p = 0; p < 4; ++p) written[p] = true;
+        }
+        if (maxp + 1 > num_params) num_params = maxp + 1;
+        refine_float_param_widths(float_param_w);
+        for (int p = 0; p <= maxp; ++p) {
+            if (!is_float_param[p]) continue;
+            std::string nm = "a" + std::to_string(p + 1);
+            record_width(nm, float_param_w[p] >= 8 ? 8 : 4);   /* double vs float */
+            var_is_float[nm] = true;
+        }
+        register_float_homes();
+    }
+
+    /* The width inference in detect_float_params only sees ops that read the param
+     * register DIRECTLY. /O2 routinely copies the incoming xmm arg to a scratch xmm
+     * (`movaps xmm3,xmm0`) and runs all the double-precision math on the COPY, so the
+     * param's direct uses are ambiguous and it defaulted to float even though every
+     * real use is mulsd/divsd (nr_sqrt's `double x` mistyped `float`, which injects a
+     * narrowing convert on recompile). Track param value across register copies and
+     * pin the width from the precision of the op that consumes it. */
+    void refine_float_param_widths(int* float_param_w) {
+        int alias[16]; for (int i = 0; i < 16; ++i) alias[i] = -1;
+        for (int p = 0; p < 4; ++p) if (is_float_param[p]) alias[p] = p;
+        bool pinned[4] = {false,false,false,false};
+        auto xi = [](Reg r) -> int {
+            return (r >= R_XMM0 && r <= R_XMM15) ? (int)(r - R_XMM0) : -1;
+        };
+        for (auto& in : insns) {
+            const cs_x86& x = in.x86;
+            unsigned id = in.id;
+            bool copy16 = (id==X86_INS_MOVAPS||id==X86_INS_MOVUPS||id==X86_INS_MOVAPD||
+                           id==X86_INS_MOVUPD||id==X86_INS_MOVDQA||id==X86_INS_MOVDQU);
+            bool cmovsd = (id==X86_INS_MOVSD), cmovss = (id==X86_INS_MOVSS);
+            if ((copy16||cmovsd||cmovss) && x.op_count==2 &&
+                x.operands[0].type==X86_OP_REG && x.operands[1].type==X86_OP_REG) {
+                Reg d,s; int dw,sw; map_reg(x.operands[0].reg,d,dw); map_reg(x.operands[1].reg,s,sw);
+                int di=xi(d), si=xi(s);
+                if (di>=0) {
+                    int sp = (si>=0) ? alias[si] : -1;
+                    if (sp>=0 && !pinned[sp]) {
+                        if (cmovss) { float_param_w[sp]=4; pinned[sp]=true; }
+                        else if (cmovsd) { float_param_w[sp]=8; pinned[sp]=true; }
+                    }
+                    alias[di] = sp;
+                }
+                continue;
+            }
+            int prec = 0;   /* 8 = double-precision op, 4 = single-precision op */
+            switch (id) {
+                case X86_INS_MULSD: case X86_INS_ADDSD: case X86_INS_SUBSD:
+                case X86_INS_DIVSD: case X86_INS_COMISD: case X86_INS_UCOMISD:
+                case X86_INS_SQRTSD: case X86_INS_MAXSD: case X86_INS_MINSD:
+                case X86_INS_CVTSD2SS: case X86_INS_CVTSD2SI: case X86_INS_CVTTSD2SI:
+                    prec = 8; break;
+                case X86_INS_MULSS: case X86_INS_ADDSS: case X86_INS_SUBSS:
+                case X86_INS_DIVSS: case X86_INS_COMISS: case X86_INS_UCOMISS:
+                case X86_INS_SQRTSS: case X86_INS_MAXSS: case X86_INS_MINSS:
+                case X86_INS_CVTSS2SD: case X86_INS_CVTSS2SI: case X86_INS_CVTTSS2SI:
+                    prec = 4; break;
+                default: break;
+            }
+            if (prec) {
+                for (int o = 0; o < x.op_count; ++o) {
+                    const cs_x86_op& op = x.operands[o];
+                    if (op.type!=X86_OP_REG || !(op.access & CS_AC_READ)) continue;
+                    Reg r; int w; map_reg(op.reg,r,w);
+                    int ri=xi(r); if (ri<0) continue;
+                    int p = alias[ri];
+                    if (p>=0 && !pinned[p]) { float_param_w[p]=prec; pinned[p]=true; }
+                }
+            }
+            /* a write to an xmm that isn't a tracked copy destroys its param alias */
+            for (int o = 0; o < x.op_count; ++o) {
+                const cs_x86_op& op = x.operands[o];
+                if (op.type!=X86_OP_REG || !(op.access & CS_AC_WRITE)) continue;
+                Reg r; int w; map_reg(op.reg,r,w);
+                int ri=xi(r); if (ri>=0) alias[ri] = -1;
+            }
+        }
+    }
+
+    /* Register the home stack slot for each XMM float/double parameter, mirroring
+     * the integer homing in detect_param_homes. Under /Od MSVC spills every xmm arg
+     * to its shadow slot (`movsd [rsp+8],xmm0`) and reloads it (`movsd xmm1,[rsp+8]`);
+     * without registering the slot, the reload resolved to a fresh, never-assigned
+     * `long long` local (`v2`/`v4`) instead of the parameter, leaving the double/float
+     * argument completely unrecovered (nr_sqrt/convert_chain/poly_eval read garbage).
+     * The shadow slot for parameter position p is [rsp+8+8p] at entry. */
+    void register_float_homes() {
+        bool sub_done = false;
+        bool xmm_written[4] = {false,false,false,false};
+        for (size_t i = 0; i < insns.size() && i < 24; ++i) {
+            const Insn& in = insns[i];
+            const cs_x86& x = in.x86;
+            if (in.id == X86_INS_SUB && x.op_count == 2 &&
+                x.operands[0].type == X86_OP_REG && x.operands[1].type == X86_OP_IMM) {
+                Reg r; int w; map_reg(x.operands[0].reg, r, w);
+                if (r == R_RSP) { sub_done = true; continue; }
+            }
+            bool is_movss = (in.id == X86_INS_MOVSS);
+            bool is_movsd = (in.id == X86_INS_MOVSD);
+            if ((is_movss || is_movsd) && x.op_count == 2 &&
+                x.operands[0].type == X86_OP_MEM && x.operands[1].type == X86_OP_REG) {
+                const x86_op_mem& m = x.operands[0].mem;
+                Reg base = R_NONE; int bw;
+                if (m.base != X86_REG_INVALID) map_reg(m.base, base, bw);
+                Reg src; int sw; map_reg(x.operands[1].reg, src, sw);
+                int p = (src >= R_XMM0 && src <= R_XMM3) ? (int)(src - R_XMM0) : -1;
+                if (base == R_RSP && m.index == X86_REG_INVALID && p >= 0 &&
+                    is_float_param[p] && !xmm_written[p] && m.disp == 8 + 8 * (int64_t)p) {
+                    int64_t norm = m.disp + (sub_done ? 0 : (frame_size + prologue_push_bytes));
+                    if (!param_home_off.count(norm)) {
+                        std::string nm = "a" + std::to_string(p + 1);
+                        param_home_off[norm] = nm;
+                        home_store_addrs.insert(in.addr);
+                        var_is_float[nm] = true;
+                        record_width(nm, is_movsd ? 8 : 4);
+                        /* the home slot holds the float param's BITS: a later GP read
+                         * `mov rax,[home]` is the union/bit-reinterpret idiom (d_signbit/
+                         * copysign/frexp inlined at /O2), not a value conversion. Mark it
+                         * a float slot so the MOV handler reinterprets `*(long long*)&aN`
+                         * instead of truncating `(unsigned long long)(aN)`. An int store
+                         * to the slot (compiler slot reuse) erases it via the int path. */
+                        float_slots[norm] = is_movsd ? 8 : 4;
+                        if (p + 1 > num_params) num_params = p + 1;
+                    }
+                    xmm_written[p] = true;
+                    continue;
+                }
+            }
+            for (int o = 0; o < x.op_count; ++o) {
+                const cs_x86_op& op = x.operands[o];
+                if (op.type == X86_OP_REG && (op.access & CS_AC_WRITE)) {
+                    Reg r; int w; map_reg(op.reg, r, w);
+                    if (r >= R_XMM0 && r <= R_XMM3) xmm_written[r - R_XMM0] = true;
+                }
+            }
+        }
+    }
+
+    void record_width(const std::string& nm, int w) {
+        auto it = var_width.find(nm);
+        if (it == var_width.end() || w > it->second) var_width[nm] = w;
+    }
+
+    /* Mark an SSE operand expression as floating-point: a raw .rdata bit pattern
+     * Const becomes a float/double literal at render; a named var records its
+     * float type. w = 4 (single) or 8 (double). Idempotent and cheap. */
+    ExprP as_float(ExprP e, int w) {
+        if (!e) return e;
+        /* A Const (raw .rdata bit pattern) becomes a float literal; a Mem deref in
+         * a float context (a movss load or an scalar-FP operand) is a float deref,
+         * so it renders `*(float*)` and propagates `float*` to its pointer. We do
+         * NOT taint Vars: a variable's float-ness comes from the reliable XMM param
+         * detection, not "it flowed into a float op" (which mistyped arr_avg's int
+         * count — that reaches a float op only via a cvtsi2sd `(double)` cast). */
+        if (e->kind == EK::Const) { e->is_float = true; e->width = w; }
+        else if (e->kind == EK::Mem) { e->is_float = true; if (w) e->width = w; }
+        return e;
+    }
+
+    /* A static (no RegFile) form of operand->Expr, for the CFG/switch prepass.
+     * Registers stack slots so the recovered switch index names a real local. */
+    ExprP symbolic_operand_static(const cs_x86_op& op) {
+        if (op.type == X86_OP_IMM) return mkConst(op.imm, op.size ? op.size : 4);
+        if (op.type == X86_OP_MEM) {
+            const x86_op_mem& m = op.mem;
+            Reg base = R_NONE, index = R_NONE; int t;
+            if (m.base != X86_REG_INVALID) map_reg(m.base, base, t);
+            if (m.index != X86_REG_INVALID) map_reg(m.index, index, t);
+            int64_t norm;
+            if (index == R_NONE && base != R_RIP &&
+                normalise_slot(base, m.disp, norm)) {
+                int w = op.size ? op.size : 4;
+                std::string nm = slot_name(norm, w);
+                record_width(nm, w);
+                return mkVar(nm, w);
+            }
+        }
+        return nullptr;
+    }
+
+    /* Map a memory operand to a param Expr, a local Var, or a generic deref.
+     * Uses the current symbolic register values to fold the address. */
+    ExprP mem_to_expr(const cs_x86_op& op, int width, ExprP* regvals) {
+        const x86_op_mem& m = op.mem;
+        /* gs:/fs: TEB/TLS access — model as __readgsqword/__readfsqword, never an
+         * absolute `*(0x58)` near-null deref (mirrors resolve_mem; this is the
+         * cross-block/regfile lift path the state-machine functions hit). */
+        {
+            bool gs = (m.segment == X86_REG_GS) || cur_insn_seg == 1;
+            bool fs = (m.segment == X86_REG_FS) || cur_insn_seg == 2;
+            if ((gs || fs) && m.base == X86_REG_INVALID) {
+                auto rd = std::make_shared<Expr>();
+                rd->kind = EK::Call; rd->callee = gs ? "__readgsqword" : "__readfsqword";
+                rd->width = 8; rd->ret_kind = 2;
+                rd->args.push_back(mkConst(m.disp, 8, true));
+                used_segread = true;
+                if (m.index == X86_REG_INVALID) return rd;
+                Reg ir; int iw; map_reg(m.index, ir, iw);
+                ExprP idx = regvals && regvals[ir] ? clone(regvals[ir]) : unknown_reg_value(ir, 8);
+                if (m.scale > 1) idx = mkBinary("*", idx, mkConst((int64_t)m.scale, 8), 8);
+                return mkMem(mkBinary("+", rd, idx, 8), width);
+            }
+        }
+        Reg base = R_NONE, index = R_NONE; int t;
+        if (m.base != X86_REG_INVALID) map_reg(m.base, base, t);
+        if (m.index != X86_REG_INVALID) map_reg(m.index, index, t);
+        int64_t disp = m.disp;
+
+        /* Pure stack slot (no index): param or local */
+        if (index == R_NONE && base != R_RIP) {
+            int64_t norm;
+            if (normalise_slot(base, disp, norm)) {
+                std::string nm = slot_name(norm, width);
+                record_width(nm, width);
+                return mkVar(nm, width);
+            }
+        }
+
+        /* General memory: build (base + index*scale + disp) using reg values */
+        ExprP addr;
+        auto regval = [&](Reg r) -> ExprP {
+            if (regvals && regvals[r]) return clone(regvals[r]);
+            /* An untracked base/index register read straight here BYPASSES
+             * reg_value's backstop, so its old `mkReg` fallback rendered as a
+             * literal-0 base (`*(char*)0`). Route it through the same invariant:
+             * a declared in_<REG> local, never a null deref. */
+            return unknown_reg_value(r, 8);
+        };
+        if (base != R_NONE && base != R_RIP) {
+            addr = regval(base);
+            ExprP fb = fold(clone(addr));
+            bool base_zero = (fb && fb->kind == EK::Const && fb->cval == 0);
+            /* A base that folds to a PAGE-ZERO constant (0 < v < 0x1000) is never a
+             * valid x64 pointer (page zero is unmapped) — it is a lost object base
+             * whose real value the fixpoint dropped, leaving a stray small constant
+             * (a COM `this` collapsed to a nearby `mov r8d,0x7a` error code renders
+             * `*(long long*)(0x7a)`). Route it through the backstop like a literal 0
+             * so it reads as a declared in_<REG> instead of a bogus near-null deref. */
+            bool base_pagezero = (fb && fb->kind == EK::Const &&
+                                  fb->cval > 0 && fb->cval < 0x1000);
+            bool base_backstop = expr_has_in_backstop(addr);
+            /* LOST MODULE-BASE static array: an indexed access `[base + idx*s + disp]`
+             * where `disp` is a large in-image DATA RVA is a static table indexed off
+             * the module base (`lea rsi,[rip-X]` = RVA 0). Whether that base survived
+             * as the constant 0 or was dropped to an `in_<REG>` live-in, the access is
+             * `*(T*)(idx*s + disp)` — the real `mdays[i]`. Gated on a >=4KB disp so
+             * struct-field offsets are never affected. */
+            bool static_array = index != R_NONE && disp >= 0x1000 &&
+                                (uint64_t)disp < e->image_size && in_data_rva((uint64_t)disp);
+            if (static_array && (base_zero || base_backstop)) {
+                addr = nullptr;   /* base = module base 0 */
+            } else if (base_zero || base_pagezero) {
+                /* SECOND HALF OF THE NULL-BASE INVARIANT. A base register whose tracked
+                 * value collapsed to literal 0 is a LOST pointer — a loop-carried object
+                 * pointer the phi never materialized, a value folded away across a merge
+                 * — NOT a genuine null dereference. Route it through the backstop so it
+                 * renders as a declared in_<REG> local instead of `*(0 + off)`. */
+                addr = unknown_reg_value(base, 8);
+            }
+        }
+        if (index != R_NONE) {
+            ExprP ie = regval(index);
+            if (m.scale > 1) ie = mkBinary("*", ie, mkConst((int64_t)m.scale, 8), 8);
+            addr = addr ? mkBinary("+", addr, ie, 8) : ie;
+        }
+        if (disp != 0 || !addr) {
+            ExprP de = mkConst(disp, 8);
+            addr = addr ? mkBinary("+", addr, de, 8) : de;
+        }
+        return mkMem(addr, width, false);
+    }
+
+    std::string cast_str(int w, bool uns) {
+        switch (w) {
+            case 1: return uns ? "(unsigned char)" : "(signed char)";
+            case 2: return uns ? "(unsigned short)" : "(short)";
+            case 4: return uns ? "(unsigned int)" : "(int)";
+            case 8: return uns ? "(unsigned long long)" : "(long long)";
+            default: return uns ? "(unsigned int)" : "(int)";
+        }
+    }
+    std::string typ_str(int w, bool uns, bool ptr) {
+        if (ptr) return "long long";   /* pointers modeled as 64-bit ints */
+        switch (w) {
+            case 1: return uns ? "unsigned char" : "signed char";
+            case 2: return uns ? "unsigned short" : "short";
+            case 4: return uns ? "unsigned int" : "int";
+            case 8: return uns ? "unsigned long long" : "long long";
+            default: return uns ? "unsigned int" : "int";
+        }
+    }
+
+    /* Declared C type for a recovered variable. A pointer whose element width is
+     * known (because it was dereferenced with a typed/scaled access) is declared
+     * as `T*` so `base[i]` subscripts compile; otherwise pointers fall back to
+     * the 64-bit-int model (`long long`). */
+    std::string decl_type(const std::string& nm) {
+        /* a recovered struct param renders `struct s_aN* aN` */
+        { auto si = param_structs.find(nm);
+          if (si != param_structs.end()) return "struct " + si->second.tag + "*"; }
+        /* A GP var holding a packed 2-float struct (Vec2 by value) is the raw 8-byte
+         * bit pattern; the lanes are read via `*(float*)&v`, so it must stay a plain
+         * `long long` — never a float or pointer type (its lane reinterprets would
+         * otherwise mis-infer one). */
+        if (packed_gp_vars.count(nm)) return "long long";
+        /* a pointer-mistyped temp that also receives a float value (mis-merged gp
+         * pointer + xmm float register): the raw 8-byte register — makes both the
+         * float and pointer assignments compile as conversions instead of C2440. */
+        if (conflict_raw_vars.count(nm)) return "long long";
+        if (force_float_vars.count(nm)) return (var_width.count(nm) && var_width[nm] >= 8) ? "double" : "float";
+        bool ptr = var_pointer.count(nm) && var_pointer[nm];
+        bool ll  = var_is_ll.count(nm) && var_is_ll[nm];
+        int w = var_width.count(nm) ? var_width[nm] : 8;
+        /* A var PROVEN SIGNED by a `x < 0` / `x >= 0` sign-test cannot be a pointer
+         * (an unsigned pointer is never < 0). mark_ptr_in_addr sometimes mis-picks a
+         * signed index/return as the pointer base of a `Var + field` address; if the
+         * signedness pass proved it signed, veto the pointer type and fall through to
+         * the integer path so `if (t678 < 0)` stays a real signed test (not the
+         * always-false pointer<0 that silently deletes an error path). Address uses
+         * already carry explicit (long long) casts, so arithmetic is unchanged. */
+        if (ptr && zero_signed_vars.count(nm) && !ptr_elem_float.count(nm)) ptr = false;
+        /* float/double params (and locals proven float) — gated strictly on the
+         * XMM-read detection so integer code is never affected. Float WINS over a
+         * conflicting pointer inference: a variable that is ASSIGNED a float value
+         * cannot be a pointer, and `int* v = <float>` is a hard error (C2440) that
+         * — unlike int<->ptr — has NO valid cast. The mis-typed side is always the
+         * pointer here (float-ness comes from an unambiguous XMM/scalar-FP read),
+         * so a value carrying float coordinates through pointer-typed temps
+         * (fn_00011470's min/max point search: t10/t11/t2/t3) declares as float. */
+        if (var_is_float.count(nm) && var_is_float[nm] && !ptr_elem_float.count(nm))
+            return (w >= 8) ? "double" : "float";
+        if (ptr) {
+            if (ptr_elem_float.count(nm) && ptr_elem_float[nm]) {
+                /* prefer the MIN-wins float width (a movss single-precision access
+                 * makes it `float*` even if a packed movsd also wrote 8 bytes). */
+                int ew = ptr_elem_float_w.count(nm) ? ptr_elem_float_w[nm]
+                       : (ptr_elem_width.count(nm) ? ptr_elem_width[nm] : 4);
+                return (ew >= 8 ? "double" : "float") + std::string("*");
+            }
+            auto it = ptr_elem_width.find(nm);
+            if (it != ptr_elem_width.end()) {
+                bool eu = ptr_elem_uns.count(nm) && ptr_elem_uns[nm];
+                return typ_str(it->second, eu, false) + "*";
+            }
+            return "long long";
+        }
+        bool uns = var_unsigned.count(nm) && var_unsigned[nm];
+        if (ll || w >= 8) return uns ? "unsigned long long" : "long long";
+        return typ_str(w ? w : 4, uns, false);
+    }
+
+    /* =================================================================== */
+    /*  3. Symbolic execution per block                                     */
+    /* =================================================================== */
+
+    /* register file: current symbolic value of each canonical register */
+    ExprP regfile[R_COUNT];
+
+    /* High 64-bit lane (bits[127:64]) of each XMM register, for modeling packed
+     * 64-bit-element SIMD (auto-vectorized element-wise maps: a[i]*=c, a[i]+=b[i],
+     * abs, clamp). regfile[r] holds lane 0 (bits[63:0]); regfile_hi[r] holds lane 1.
+     * Non-null ONLY immediately after a packed op that produced a known 2-lane
+     * value; any scalar write to an xmm (set_reg) clears it. A 128-bit store only
+     * splits into two clean 8-byte lane stores when BOTH lanes are tracked and
+     * backstop-free — otherwise it falls back to the prior scalar behavior, so the
+     * model never fabricates a half-known vector. */
+    ExprP regfile_hi[R_COUNT];
+
+    /* Packed 32-bit FLOAT lanes (4 per xmm): the scalar 2x64 model above cannot
+     * express element-wise float vector math (mulps/addps/shufps on {x,y,z,w}).
+     * xmm_f[r][0..3] hold the four float lanes when tracked; xmm_f_real[r] is set
+     * once a definite float OP (arith/shuffle) produced them (so a 128-bit store
+     * commits four `*(float*)` lanes). Block-LOCAL (cleared at each block entry and
+     * on any scalar/integer write); consumed only by the packed-float handlers, so
+     * integer code and the corpus (no floats) are entirely unaffected. */
+    ExprP xmm_f[R_COUNT][4];
+    bool  xmm_f_real[R_COUNT] = {false};
+
+    /* Packed 32-bit INTEGER lanes (4 per xmm): the analog of xmm_f for auto-
+     * vectorized element-wise INT maps (`a[i] *= k` -> movdqu/pmulld/movdqu,
+     * `a[i] += b[i]` -> paddd). xmm_i[r][0..3] hold the four int lanes; xmm_i_real
+     * is set once a definite packed-INT op (pmulld/paddd/psubd/pshufd) produced them
+     * (so a 128-bit store commits four `*(int*)` lanes). Block-LOCAL, cleared with
+     * xmm_f. Consumed only by the packed-int handlers -> float/scalar code and the
+     * corpus are unaffected. */
+    ExprP xmm_i[R_COUNT][4];
+    bool  xmm_i_real[R_COUNT] = {false};
+
+    /* Packed 2-float struct (Vec2) passed/returned BY VALUE in a GP register — MSVC
+     * packs {float x, y} into one 8-byte int reg, `movq xmm,reg` reinterprets it,
+     * and the high lane .y is extracted via a stack spill + `[slot+4]` reload. We
+     * track which xmm/stack-slot currently holds such a packed value so the two
+     * lanes render as `*(float*)&v` / `*(float*)((char*)&v + 4)` instead of integer
+     * ops on the bit pattern (vec2_add/len/make). Cleared per block. */
+    std::map<Reg, std::string> xmm_packed_var;      /* xmm holds packed bytes of GP var */
+    std::map<int64_t, std::string> stack_packed_var; /* stack slot (norm) holds packed bytes of GP var */
+    std::map<int64_t, int> float_slots;              /* stack slot (norm) last written by movss/movsd -> float width (bit-reinterpret on int read) */
+    std::map<int64_t, int> int_slots;                /* stack slot (norm) last written by a GP integer store -> width (bit-reinterpret on movss/movsd load = int->float, the u2f/u2d direction) */
+    /* normalized stack-slot offset of a memory operand, or false if not a plain [rbp/rsp+disp]. */
+    bool op_slot_norm(const cs_x86_op& op, int64_t& norm) {
+        if (op.type != X86_OP_MEM) return false;
+        const x86_op_mem& m = op.mem;
+        if (m.index != X86_REG_INVALID || m.base == X86_REG_INVALID) return false;
+        Reg mb = R_NONE; int mt; map_reg(m.base, mb, mt);
+        return normalise_slot(mb, m.disp, norm);
+    }
+
+    /* `*(float*)&v` (off==0) or `*(float*)((char*)&v + off)`: reinterpret the 32-bit
+     * half at byte `off` of GP-var `v` as a single float. */
+    std::set<std::string> packed_gp_vars;   /* GP vars holding a packed 2-float struct: force `long long` */
+    /* Read a scalar-float source operand, forwarding a spilled Vec2 lane when the
+     * source is a stack slot that a packed spill recorded (`addss xmm,[slot+4]`). */
+    ExprP fp_src(const cs_x86_op& op, int w) {
+        if (op.type == X86_OP_MEM && !stack_packed_var.empty()) {
+            const x86_op_mem& m = op.mem;
+            Reg mb = R_NONE; int mt; if (m.base != X86_REG_INVALID) map_reg(m.base, mb, mt);
+            int64_t norm;
+            if (m.index == X86_REG_INVALID && normalise_slot(mb, m.disp, norm))
+                for (auto& kv : stack_packed_var) {
+                    int64_t off = norm - kv.first;
+                    if (off == 0 || off == 4) return packed_flane(kv.second, (int)off);
+                }
+        }
+        return as_float(rvalue(op), w);
+    }
+    /* Pack two scalar float lanes back into a GP register (the `unpcklps; movq rax,
+     * xmm` return of a Vec2 by value): `((long long)*(unsigned int*)&hi << 32) |
+     * *(unsigned int*)&lo`. Non-lvalue lanes are first materialized into a float
+     * temp so their bit pattern can be taken by address. */
+    std::set<std::string> force_float_vars;   /* address-reinterpreted lanes: keep `float` */
+    ExprP pack_two_floats(ExprP lo, ExprP hi, Block& b) {
+        auto bits = [&](ExprP lane) -> ExprP {
+            ExprP lv = lane;
+            if (!lane || lane->kind != EK::Var) {
+                std::string tn = "t" + std::to_string(++temp_seq);
+                spill_temps.insert(tn);
+                var_width[tn] = 4; var_is_float[tn] = true;
+                Stmt s; s.kind = SK::Assign; s.lhs = mkVar(tn, 4); s.lhs->is_float = true;
+                s.rhs = lane; b.stmts.push_back(std::move(s));
+                lv = mkVar(tn, 4); lv->is_float = true;
+            }
+            /* the lane's own type stays `float`; `&lane` is only reinterpreted here,
+             * which must not mark it a pointer. */
+            force_float_vars.insert(lv->name);
+            ExprP m = mkMem(mkAddrOf(clone(lv)), 4, true);   /* *(unsigned int*)&lv */
+            return m;
+        };
+        ExprP hib = mkCast("(long long)", bits(hi), 8, false);
+        ExprP shifted = mkBinary("<<", hib, mkConst(32, 8), 8);
+        return mkBinary("|", shifted, bits(lo), 8);
+    }
+    ExprP packed_flane(const std::string& v, int off) {
+        packed_gp_vars.insert(v);
+        ExprP addr = mkAddrOf(mkVar(v, 8));
+        if (off) addr = mkBinary("+", mkCast("(char*)", addr, 8), mkConst(off, 8), 8);
+        ExprP m = mkMem(addr, 4, false);
+        m->is_float = true;
+        return m;
+    }
+    /* Lookahead: does `movq xmm,r64` at insn index `i` feed a SINGLE-precision float
+     * op (movss/addss/.../unpcklps/cvtss2sd) — i.e. the reg held 2 packed floats, not
+     * a scalar double or an integer SIMD value? Bounded scan of the next insns. */
+    bool movq_feeds_single_float(size_t i) {
+        for (size_t j = i + 1; j < insns.size() && j < i + 16; ++j) {
+            switch (insns[j].id) {
+                case X86_INS_MOVSS: case X86_INS_ADDSS: case X86_INS_SUBSS:
+                case X86_INS_MULSS: case X86_INS_DIVSS: case X86_INS_UNPCKLPS:
+                case X86_INS_CVTSS2SD: case X86_INS_COMISS: case X86_INS_UCOMISS:
+                case X86_INS_MAXSS: case X86_INS_MINSS: case X86_INS_SQRTSS:
+                    return true;
+                case X86_INS_ADDSD: case X86_INS_MULSD:
+                case X86_INS_SUBSD: case X86_INS_DIVSD:
+                    /* scalar-double ARITHMETIC first => it was a double, not 2 floats.
+                     * (movss/movsd MOVES are spills/reloads of the packed pair — NOT a
+                     * disambiguating signal, so they are skipped.) */
+                    return false;
+                default: break;
+            }
+        }
+        return false;
+    }
+
+    /* pending flag source from cmp/test/arith for the following jcc/setcc */
+    struct FlagSrc {
+        bool valid = false;
+        bool is_cmp = false;
+        bool is_test = false;
+        bool is_arith = false;
+        bool is_bt = false;    /* CF = the tested bit (a); jb/jc => set, jae/jnc => clear */
+        bool is_fcmp = false;  /* comiss/ucomiss: float compare, unsigned jcc => ordering */
+        ExprP a, b;
+        int width = 4;
+    };
+    FlagSrc flags;
+    std::vector<FlagSrc> block_flags_out;   /* flag state at each block's exit */
+
+    /* two flag sources are equivalent iff same kind and same compared operands —
+     * lets a merge block inherit a condition when every predecessor agrees. */
+    bool flagsrc_equal(const FlagSrc& x, const FlagSrc& y) {
+        if (x.valid != y.valid) return false;
+        if (!x.valid) return true;
+        if (x.is_cmp != y.is_cmp || x.is_test != y.is_test ||
+            x.is_arith != y.is_arith || x.is_bt != y.is_bt ||
+            x.is_fcmp != y.is_fcmp || x.width != y.width) return false;
+        return exprEqual(x.a, y.a) && exprEqual(x.b, y.b);
+    }
+
+    uint64_t cur_insn_addr = 0;
+    int cur_insn_seg = 0;   /* current insn segment override: 0 none, 1 gs, 2 fs */
+    const Insn* prev_insn = nullptr;   /* instruction lifted just before this one */
+
+    /* `xor reg, rsp` — the stack-canary verification idiom (`mov reg,[cookie];
+     * xor reg,rsp; call __security_check_cookie`). A call right after it is the
+     * cookie check even when the target has no symbol name. */
+    bool is_cookie_xor(const Insn* in) {
+        if (!in || in->id != X86_INS_XOR || in->x86.op_count != 2) return false;
+        if (in->x86.operands[0].type != X86_OP_REG ||
+            in->x86.operands[1].type != X86_OP_REG) return false;
+        Reg a, b2; int wa, wb; map_reg(in->x86.operands[0].reg, a, wa);
+        map_reg(in->x86.operands[1].reg, b2, wb);
+        return b2 == R_RSP && a != R_RSP;
+    }
+    std::set<uint64_t> cookie_call_addrs;   /* dropped stack-cookie-check calls */
+    /* Precompute the addresses of stack-cookie-check calls (`xor reg,rsp; call`)
+     * so BOTH lifting and liveness ignore them. If only lifting drops the call,
+     * liveness still counts its implicit rax-def, marks rax not-live-in at the
+     * epilogue merge, and skips the rax phi — losing the real return value. */
+    void scan_cookie_calls() {
+        for (size_t i = 1; i < insns.size(); ++i)
+            if (insns[i].is_call && is_cookie_xor(&insns[i-1]))
+                cookie_call_addrs.insert(insns[i].addr);
+    }
+    uint32_t cur_insn_size = 0;
+
+    /* Get the symbolic value of a register (folded). Width-truncate as needed. */
+    static bool is_nonvol_gpr(Reg r) {
+        return r==R_RBX||r==R_RBP||r==R_RSI||r==R_RDI||
+               r==R_R12||r==R_R13||r==R_R14||r==R_R15;
+    }
+    static const char* reg_abi_name(Reg r) {
+        static const char* N[R_COUNT] = {
+            "NONE",
+            "RAX","RCX","RDX","RBX","RSP","RBP","RSI","RDI",
+            "R8","R9","R10","R11","R12","R13","R14","R15",
+            "XMM0","XMM1","XMM2","XMM3","XMM4","XMM5","XMM6","XMM7",
+            "XMM8","XMM9","XMM10","XMM11","XMM12","XMM13","XMM14","XMM15",
+            "RIP"
+        };
+        return (r > R_NONE && r < R_COUNT) ? N[r] : "REG";
+    }
+    static bool is_xmm(Reg r) { return r >= R_XMM0 && r <= R_XMM15; }
+    /* Win64 callee-saved (nonvolatile) SSE registers: xmm6..xmm15. Saved in the
+     * prologue (movups/movaps to the frame) and restored in the epilogue. */
+    static bool is_nonvol_xmm(Reg r) { return r >= R_XMM6 && r <= R_XMM15; }
+    std::map<Reg,std::string> unknown_reg_name;
+    std::map<std::string,std::string> named_globals;  /* qword_174148 -> (*(long long*)0x174148) */
+    std::map<std::string,std::string> global_struct_local;  /* qword_174148 -> local `gs_174148` (read-only global struct base cached in a typed local) */
+    int unknown_value_count = 0;   /* PERMANENT-INVARIANT backstop firings: how
+                                    * many distinct values the dataflow could not
+                                    * reconstruct. Kept visible so a clean census
+                                    * means "recovered OR honestly named", never
+                                    * "faked". */
+    /* THE BACKSTOP. A value the dataflow could not reconstruct is emitted as a
+     * clean DECLARED local using Ghidra's `in_<REG>` convention (the value the
+     * register held on input) — NEVER a `ctx_` sentinel and NEVER a literal-0
+     * pointer base (`*(0+off)` null deref). This is the permanent guarantee: those
+     * two artifacts are structurally unable to reach the output, on ANY input,
+     * forever. Stable per register so every read of one lost value shares a name. */
+    ExprP unknown_reg_value(Reg r, int w) {
+        auto it = unknown_reg_name.find(r);
+        std::string nm;
+        if (it != unknown_reg_name.end()) nm = it->second;
+        else {
+            nm = std::string("in_") + reg_abi_name(r);
+            unknown_reg_name[r] = nm;
+            record_width(nm, w >= 8 ? 8 : 4);
+            if (w >= 8) var_is_ll[nm] = true;
+            if (is_xmm(r)) var_is_float[nm] = true;   /* declare float, not int */
+            ++unknown_value_count;
+        }
+        return mkVar(nm, w >= 8 ? 8 : 4);
+    }
+
+    /* an opaque `in_<REG>` placeholder (a lost incoming/callee-saved value). */
+    static bool is_ctx_value(const ExprP& e) {
+        return e && e->kind == EK::Var && e->name.rfind("in_", 0) == 0;
+    }
+
+    /* Promote a leaked ARG-register backstop to its PARAMETER. `in_RCX` means "the
+     * value rcx held on input" — which, by the Win64 ABI, IS the first integer
+     * argument a1 (rdx->a2, r8->a3, r9->a4; xmm0-3 -> a1-a4 float). So an
+     * `in_<argreg>` that survived recovery is exactly a missed parameter; renaming
+     * it to aN and declaring the parameter is the CORRECT fix, not a cosmetic one,
+     * and eliminates the backstop. The corpus has zero leaks, so this only ever
+     * fires on real binaries — never perturbing the 484/0 gate. */
+    void promote_leaked_arg_params() {
+        /* only promote a leak that ACTUALLY survives into the emitted IR (a trailing
+         * `in_R8`/`in_R9` trimmed off a call by trim_phantom_call_args still lingers
+         * in unknown_reg_name but must NOT invent params a3/a4). */
+        std::set<std::string> used;
+        std::function<void(const ExprP&)> mark = [&](const ExprP& e){
+            if (!e) return;
+            if (e->kind == EK::Var) used.insert(e->name);
+            mark(e->a); mark(e->b); mark(e->c);
+            for (auto& ar : e->args) mark(ar);
+        };
+        for (auto& b : blocks) {
+            for (auto& s : b.stmts) { mark(s.lhs); mark(s.rhs); }
+            mark(b.cond); mark(b.ret_value); mark(b.ret_raw); mark(b.switch_var); mark(b.tail_call);
+        }
+        struct AR { Reg r; int pos; bool fl; };
+        static const AR ARGS[8] = {
+            {R_RCX,0,false},{R_RDX,1,false},{R_R8,2,false},{R_R9,3,false},
+            {R_XMM0,0,true},{R_XMM1,1,true},{R_XMM2,2,true},{R_XMM3,3,true}
+        };
+        for (const AR& a : ARGS) {
+            auto it = unknown_reg_name.find(a.r);
+            if (it == unknown_reg_name.end()) continue;
+            std::string leak = it->second;   /* "in_RCX" / "in_XMM2" ... */
+            if (!used.count(leak)) continue;   /* trimmed/phantom — don't invent a param */
+            std::string pn = "a" + std::to_string(a.pos + 1);
+            if (a.pos + 1 > num_params) num_params = a.pos + 1;
+            if (a.fl) is_float_param[a.pos] = true;
+            record_width(pn, a.fl ? 4 : 8);
+            if (a.fl) var_is_float[pn] = true; else var_is_ll[pn] = true;
+            ExprP pv = mkVar(pn, a.fl ? 4 : 8); if (a.fl) pv->is_float = true;
+            for (auto& b : blocks) {
+                for (auto& s : b.stmts) { s.lhs = subst_named_var(s.lhs, leak, pv); s.rhs = subst_named_var(s.rhs, leak, pv); }
+                b.cond = subst_named_var(b.cond, leak, pv);
+                b.ret_value = subst_named_var(b.ret_value, leak, pv);
+                b.switch_var = subst_named_var(b.switch_var, leak, pv);
+                b.tail_call = subst_named_var(b.tail_call, leak, pv);
+            }
+            unknown_reg_name.erase(a.r);   /* no longer declared as a backstop */
+        }
+        /* Any STILL-surviving leak is a register the function reads on ENTRY by a
+         * non-standard, hand-written convention that the ABI arg-register promotion
+         * above did not cover: __chkstk takes its allocation size in rax; setjmp
+         * saves the caller's callee-saved rbx/rsi/rdi/rbp into the jmp_buf; an SEH
+         * trampoline restores and tail-jumps to the caller's rbp (`pop rbp; jmp
+         * rbp`). Each is a genuine INPUT, so promote it to a trailing parameter and
+         * rename every use — the honest, compilable form (mirrors IDA naming `_RBX`
+         * as an input) — instead of leaving an uninitialized `in_<REG>` local. This
+         * drives the residual backstop-leak count to zero. Corpus functions never
+         * reach here (they have no surviving leak), so the gate is untouched. */
+        std::vector<std::pair<Reg,std::string>> rest;
+        for (auto& kv : unknown_reg_name)
+            if (used.count(kv.second)) rest.push_back({kv.first, kv.second});
+        std::sort(rest.begin(), rest.end(),
+                  [](const std::pair<Reg,std::string>& a, const std::pair<Reg,std::string>& b){
+                      return a.first < b.first; });
+        for (auto& pr : rest) {
+            const std::string& leak = pr.second;
+            int idx = num_params;                 /* next 0-based param slot */
+            std::string pn = "a" + std::to_string(idx + 1);
+            num_params = idx + 1;
+            int w = var_width.count(leak) ? var_width[leak] : 8;
+            record_width(pn, w >= 8 ? 8 : 4);
+            if (w >= 8) var_is_ll[pn] = true;
+            /* carry pointer typing so a promoted `int*in_RSI` stays `int*` */
+            if (var_pointer.count(leak) && var_pointer[leak]) {
+                var_pointer[pn] = true; var_is_ll[pn] = true;
+                if (ptr_elem_width.count(leak)) ptr_elem_width[pn] = ptr_elem_width[leak];
+                if (ptr_elem_uns.count(leak))   ptr_elem_uns[pn]   = ptr_elem_uns[leak];
+                if (ptr_elem_float.count(leak)) ptr_elem_float[pn] = ptr_elem_float[leak];
+            }
+            ExprP pv = mkVar(pn, w >= 8 ? 8 : 4);
+            for (auto& b : blocks) {
+                for (auto& s : b.stmts) { s.lhs = subst_named_var(s.lhs, leak, pv); s.rhs = subst_named_var(s.rhs, leak, pv); }
+                b.cond = subst_named_var(b.cond, leak, pv);
+                b.ret_value = subst_named_var(b.ret_value, leak, pv);
+                b.switch_var = subst_named_var(b.switch_var, leak, pv);
+                b.tail_call = subst_named_var(b.tail_call, leak, pv);
+            }
+            unknown_reg_name.erase(pr.first);     /* no longer a declared backstop */
+        }
+    }
+
+    ExprP reg_value(Reg r, int w) {
+        ExprP v = regfile[r] ? clone(regfile[r]) : nullptr;
+        if (!v) {
+            /* Untracked read -> THE BACKSTOP (see unknown_reg_value): emit a clean
+             * declared `in_<REG>` local for ANY register, callee-saved OR volatile.
+             * The old volatile `0` fallback was the SOLE source of `(char*)0` null
+             * bases (a lost arg pointer like r8 collapsed to `*(0+off)`) and of
+             * `if (0 == 0)` folds — both now structurally impossible. The /Od corpus
+             * never reads a volatile uninitialized, so it never hits this path; the
+             * value is identical (it was already untracked), only its NAME changed
+             * from a broken sentinel to a declared variable. */
+            v = unknown_reg_value(r, w);
+        }
+        /* x86-64: writing a 32-bit sub-register zero-extends into the full 64-bit
+         * register (the upper 32 bits are cleared). So a width-4 value read back at
+         * 64-bit width has KNOWN-ZERO upper bits and must promote by ZERO extension,
+         * not C's signed default. Without this, `mov eax,ecx; imul rax,rcx` renders
+         * `a1 * 0x100000001LL` — which SIGN-extends a negative int param, the wrong
+         * value. The genuine sign-extend path (`movsxd rax,ecx`) already produces a
+         * width-8 value, so it is untouched. Non-negative values are unaffected in
+         * VALUE (positive int == unsigned), so this only ever corrects, never breaks.
+         * NB: not applied to address-index reads (resolve_mem passes for_addr) to
+         * avoid `(unsigned int)` noise on non-negative array indices. */
+        if (w >= 8 && !zx_suppress && !is_xmm(r) && v && v->width == 4 &&
+            !v->is_unsigned && !v->is_float) {
+            /* xmm lanes are excluded: a `movd xmm,ecx; cvtdq2pd` converts the int32
+             * as SIGNED, so the GP zero-extension rule must not pollute it. */
+            if (v->kind == EK::Const)
+                v = mkConst(v->cval & 0xFFFFFFFFLL, 8, true);
+            else
+                v = mkCast("(unsigned int)", v, 4, true);
+        }
+        return truncate(v, w);
+    }
+    /* When true, reg_value skips the 32->64 zero-extension cast (used for address
+     * index reads, where a non-negative index needs no `(unsigned int)` clutter). */
+    bool zx_suppress = false;
+
+    /* Truncate/extend an expression to width w preserving low-bit value. */
+    ExprP truncate(ExprP v, int w) {
+        if (!v) return mkConst(0, w);
+        if (w >= 8 || w == 0) return v;
+        if (v->kind == EK::Const) {
+            int64_t m = (w == 4) ? (int64_t)(int32_t)v->cval
+                       : (w == 2) ? (int64_t)(int16_t)v->cval
+                                  : (int64_t)(int8_t)v->cval;
+            return mkConst(m, w, v->is_unsigned);
+        }
+        if (v->width == w) return v;
+        return mkCast(cast_str(w, false), v, w, false);
+    }
+
+    /* Resolve an rvalue operand to an Expr using current reg values. */
+    ExprP rvalue(const cs_x86_op& op) {
+        if (op.type == X86_OP_IMM)
+            return mkConst(op.imm, op.size ? op.size : 4);
+        if (op.type == X86_OP_REG) {
+            Reg r; int w; map_reg(op.reg, r, w);
+            if (r == R_NONE) return mkConst(0, w ? w : 8);
+            /* high-byte registers (ah/bh/ch/dh) are bits 8-15 of the parent, NOT
+             * the low byte — model them as `(parent >> 8) & 0xFF`. Without this a
+             * `test dh,dh` reads as `test dl,dl`, which silently breaks every SWAR
+             * byte scan (strlen/strcpy/strncpy/memchr test dl then dh per word). */
+            if (is_high_byte_reg(op.reg)) {
+                ExprP full = reg_value(r, 8);
+                return truncate(mkBinary(">>", full, mkConst(8, 8), 8, true), 1);
+            }
+            return reg_value(r, w);
+        }
+        if (op.type == X86_OP_MEM)
+            return resolve_mem(op, op.size ? op.size : 4);
+        return mkConst(0, 4);
+    }
+    static bool is_high_byte_reg(unsigned reg) {
+        return reg == X86_REG_AH || reg == X86_REG_BH ||
+               reg == X86_REG_CH || reg == X86_REG_DH;
+    }
+
+    /* Resolve a memory operand, handling rip-relative + stack slots + general. */
+    ExprP resolve_mem(const cs_x86_op& op, int width) {
+        /* Everything computed here is ADDRESS arithmetic (base + index*scale);
+         * a 32-bit index needs no `(unsigned int)` zero-ext clutter (indices are
+         * non-negative). Suppress the reg_value zero-ext cast for the duration. */
+        bool _saved_zx = zx_suppress; zx_suppress = true;
+        struct ZxGuard { bool* p; bool v; ~ZxGuard() { *p = v; } } _zg{&zx_suppress, _saved_zx};
+        const x86_op_mem& m = op.mem;
+        /* SEGMENT-relative (gs:/fs:) = TEB/TLS access, NOT an absolute deref. Win64
+         * puts the TEB at gs:, so `mov rax, gs:[0x30]` (self-ptr), `gs:[0x58]` (TLS
+         * array) etc. Flattening the segment override turned these into near-null
+         * `*(long long*)0x30` derefs (fun_0005d828/fun_0006dcd0). Model the load as
+         * the MSVC `__readgsqword(disp)` / `__readfsqword(disp)` intrinsic; an
+         * indexed form keeps the index off that base. */
+        {
+            bool gs = (m.segment == X86_REG_GS) || cur_insn_seg == 1;
+            bool fs = (m.segment == X86_REG_FS) || cur_insn_seg == 2;
+            if ((gs || fs) && m.base == X86_REG_INVALID) {
+                auto rd = std::make_shared<Expr>();
+                rd->kind = EK::Call; rd->callee = gs ? "__readgsqword" : "__readfsqword";
+                rd->width = 8; rd->ret_kind = 2;
+                rd->args.push_back(mkConst(m.disp, 8, true));
+                used_segread = true;
+                if (m.index == X86_REG_INVALID) return rd;   /* scalar TEB/TLS field */
+                /* indexed: `*(T*)(__readgsqword(disp) + idx*scale)` */
+                Reg ir; int iw; map_reg(m.index, ir, iw);
+                ExprP idx = reg_value(ir, 8);
+                if (m.scale > 1) idx = mkBinary("*", idx, mkConst((int64_t)m.scale, 8), 8);
+                return mkMem(mkBinary("+", rd, idx, 8), width);
+            }
+        }
+        /* rip-relative: resolve to absolute rva and read constant from image */
+        if (m.base == X86_REG_RIP && m.index == X86_REG_INVALID) {
+            uint64_t abs = cur_insn_addr + cur_insn_size + (uint64_t)m.disp;
+            /* A load from a WRITABLE global is a mutable variable: emit a deref of
+             * its address, not the (initial) image byte — otherwise `mov r8,[g];
+             * test r8,r8` collapses to `if (0 != 0)`. Read-only data (string/float
+             * constants, tables) still inlines as a constant. */
+            if (addr_writable(abs)) return mkMem(mkConst((int64_t)abs, 8), width);
+            int64_t cv = 0;
+            bool ok = false;
+            if (width <= 1) { uint8_t b; if (read_u8(abs, b)) { cv = (int8_t)b; ok = true; } }
+            else if (width <= 4) { int32_t v; if (read_i32(abs, v)) { cv = v; ok = true; } }
+            else { int64_t v; if (read_i64(abs, v)) { cv = v; ok = true; } }
+            if (ok) return mkConst(cv, width, false);
+            /* could not read: emit a deref of the absolute address */
+            return mkMem(mkConst((int64_t)abs, 8), width);
+        }
+        /* stack slot? */
+        Reg base = R_NONE, index = R_NONE; int t;
+        if (m.base != X86_REG_INVALID) map_reg(m.base, base, t);
+        if (m.index != X86_REG_INVALID) map_reg(m.index, index, t);
+        if (index == R_NONE && base != R_RIP) {
+            int64_t norm;
+            if (normalise_slot(base, m.disp, norm)) {
+                /* in an address-escaped aggregate -> a field memory access */
+                if (!param_home_off.count(norm)) {
+                    if (const AggRegion* r = agg_region_for(norm))
+                        return mkMem(agg_addr(*r, norm), width);
+                }
+                std::string nm = resolved_slot_name(norm, width);
+                if (!nm.empty()) { record_width(nm, width); return mkVar(nm, width); }
+            }
+        }
+        /* stack array: [rsp/rbp + index*scale + disp] => *(T*)(&buf + index*scale) */
+        if (index != R_NONE) {
+            int64_t norm;
+            if (normalise_slot(base, m.disp, norm)) {
+                if (!param_home_off.count(norm)) {
+                    if (const AggRegion* r = agg_region_for(norm))
+                        return mkMem(agg_indexed(*r, norm, index, m.scale), width);
+                }
+                ExprP a = stack_array_addr(norm, index, m.scale);
+                return mkMem(a, width);
+            }
+        }
+        /* general address using folded reg values */
+        return mem_to_expr(op, width, regfile);
+    }
+
+    /* Build `(char*)&buf + index*scale` for a stack-array access whose frame
+     * base offset is `norm`. `buf` is a dedicated array local for that offset. */
+    ExprP stack_array_addr(int64_t norm, Reg index, int scale) {
+        std::string nm = array_name(norm);
+        ExprP idx = regfile[index] ? clone(regfile[index]) : mkConst(0, 8);
+        ExprP scaled = idx;
+        if (scale > 1) scaled = mkBinary("*", idx, mkConst((int64_t)scale, 8), 8);
+        /* the array name decays to char*; address = buf + index*scale */
+        ExprP base = mkVar(nm, 8);
+        base->is_unsigned = true;   /* marks "already a pointer", skip (char*) */
+        return mkBinary("+", base, scaled, 8);
+    }
+
+    std::map<int64_t,std::string> stack_array_name;  /* frame off -> buf local */
+    std::set<std::string> array_locals;
+    std::map<int,Reg> switch_cmp_reg;   /* switch block -> bound-check reg, resolved post-exec */
+    std::map<int,uint64_t> switch_index_load;   /* switch block -> table-load insn addr */
+    /* switch block -> the index register's value snapshotted AT the table load,
+     * before the computed goto reuses the register as the jump target. The index
+     * reg is also briefly reused for the `code[pc]` access earlier in the same
+     * block, so we must snapshot at the EXACT table-load address, not the first
+     * indexed access. */
+    std::map<int,ExprP> switch_resolved_index;
+
+    /* ---- address-escaped stack aggregates (out-structs / out-params) ----
+     * When a stack region's ADDRESS is passed to a call (`lea argreg,[rbp-X];
+     * call F`), the callee may write the whole region through that pointer. The
+     * region must therefore be modeled as ONE memory aggregate (`char sN[size]`)
+     * with every in-region `[rbp-X+k]` access routed through memory — NOT as a
+     * set of independent SSA scalar locals (which would look uninitialised after
+     * the call, dropping the call's writes and the direct movdqu/byte inits). */
+    struct AggRegion { int64_t base; int64_t end; std::string name; };
+    std::vector<AggRegion> agg_regions;
+    const AggRegion* agg_region_for(int64_t off) const {
+        for (auto& r : agg_regions)
+            if (off >= r.base && off < r.end) return &r;
+        return nullptr;
+    }
+    /* address of `off` inside an aggregate: `sN` (base, array decays to char*) or
+     * `(char*)sN + d` for a field. is_unsigned marks "already a pointer". */
+    ExprP agg_addr(const AggRegion& r, int64_t off) {
+        ExprP base = mkVar(r.name, 8);
+        base->is_unsigned = true;
+        int64_t d = off - r.base;
+        if (d == 0) return base;
+        return mkBinary("+", base, mkConst(d, 8), 8);
+    }
+    /* `(char*)sN + (off-base) + index*scale` — an INDEXED access into the
+     * aggregate. Without this a `lea &agg; call` (-> aggregate) PLUS an indexed
+     * `agg[i]` access would split the SAME stack region into two locals (the
+     * aggregate `sN` and a separate `bufM`), so a copy loop fills one while the
+     * call/heap operates on the other (heap_kth_largest's `hv.data`). */
+    ExprP agg_indexed(const AggRegion& r, int64_t off, Reg index, int scale) {
+        ExprP a = agg_addr(r, off);
+        ExprP idx = regfile[index] ? clone(regfile[index]) : mkConst(0, 8);
+        if (scale > 1) idx = mkBinary("*", idx, mkConst((int64_t)scale, 8), 8);
+        return mkBinary("+", a, idx, 8);
+    }
+    void scan_addressed_stack() {
+        auto static_norm = [&](Reg base, int64_t disp, int64_t& norm)->bool {
+            if (base == R_RSP) { norm = disp; return true; }
+            if (base == R_RBP && uses_rbp_frame && rbp_offset_known) {
+                norm = disp + rbp_minus_rsp; return true;
+            }
+            return false;
+        };
+        std::set<int64_t> escaped;
+        /* A 16-byte SSE store to a plain stack slot (`movdqa [rsp+k], xmm`) is a
+         * bulk buffer/array init (a compiler-materialized const array copied in, or
+         * a memset), never a scalar. Seed an aggregate region so the store lowers to
+         * an array MEMORY write that shares the SAME `sN` local as the later indexed
+         * reads (`[rsp+idx*4]`) — otherwise the store is a dead scalar `vN` (a
+         * different symbol) and DSE drops the whole initialization. Collect the
+         * covered byte intervals and merge the contiguous ones into one region. */
+        std::vector<std::pair<int64_t,int64_t>> sse_ivals;
+        for (auto& in : insns) {
+            const cs_x86& x = in.x86;
+            if (in.id == X86_INS_LEA && x.op_count >= 2 &&
+                x.operands[0].type == X86_OP_REG) {
+                Reg dst; int dw; map_reg(x.operands[0].reg, dst, dw);
+                /* gate: the address goes to a call (loaded into an arg register). This
+                 * targets out-params/out-structs precisely and keeps the blast radius
+                 * to functions that actually escape a stack address. */
+                if (dst==R_RCX||dst==R_RDX||dst==R_R8||dst==R_R9) {
+                    const cs_x86_op& mo = x.operands[1];
+                    if (mo.type == X86_OP_MEM && mo.mem.index == X86_REG_INVALID) {
+                        Reg base = R_NONE; int t;
+                        if (mo.mem.base != X86_REG_INVALID) map_reg(mo.mem.base, base, t);
+                        int64_t norm;
+                        if (static_norm(base, mo.mem.disp, norm)) escaped.insert(norm);
+                    }
+                }
+            }
+            bool sse16 = (in.id==X86_INS_MOVAPS||in.id==X86_INS_MOVUPS||in.id==X86_INS_MOVDQA||
+                          in.id==X86_INS_MOVDQU||in.id==X86_INS_MOVAPD||in.id==X86_INS_MOVUPD);
+            if (sse16 && x.op_count >= 2 && x.operands[0].type == X86_OP_MEM &&
+                x.operands[0].size == 16 && x.operands[0].mem.index == X86_REG_INVALID) {
+                Reg base = R_NONE; int t;
+                if (x.operands[0].mem.base != X86_REG_INVALID) map_reg(x.operands[0].mem.base, base, t);
+                int64_t norm;
+                if (static_norm(base, x.operands[0].mem.disp, norm))
+                    sse_ivals.push_back({norm, norm + 16});
+            }
+        }
+        /* merge contiguous/overlapping 16-byte-store intervals into array regions */
+        if (!sse_ivals.empty()) {
+            std::sort(sse_ivals.begin(), sse_ivals.end());
+            int64_t cs = sse_ivals[0].first, ce = sse_ivals[0].second;
+            auto flush = [&](int64_t s, int64_t e) {
+                for (auto& r : agg_regions) if (s < r.end && e > r.base) return; /* overlaps escaped region */
+                if (e - s < 16) return;
+                AggRegion r; r.base = s; r.end = e;
+                r.name = "s" + std::to_string((int)agg_regions.size() + 1);
+                array_locals.insert(r.name);
+                agg_regions.push_back(r);
+            };
+            for (size_t i = 1; i < sse_ivals.size(); ++i) {
+                if (sse_ivals[i].first <= ce) ce = std::max(ce, sse_ivals[i].second);
+                else { flush(cs, ce); cs = sse_ivals[i].first; ce = sse_ivals[i].second; }
+            }
+            flush(cs, ce);
+        }
+        if (escaped.empty()) return;
+        std::vector<int64_t> bases(escaped.begin(), escaped.end());   /* sorted */
+        /* locals live below the frame top: for an rbp frame the top is rbp (norm
+         * 0, locals negative); for an rsp frame it is frame_size (incoming args
+         * sit above it). The region never crosses the top, so outgoing-arg and
+         * incoming-arg slots are never absorbed. */
+        int64_t frame_top = uses_rbp_frame ? 0 : (frame_size > 0 ? frame_size : 0x1000);
+        for (size_t i = 0; i < bases.size(); ++i) {
+            int64_t base = bases[i];
+            int64_t end = base + 0x100;
+            if (base < frame_top && end > frame_top) end = frame_top;
+            if (i + 1 < bases.size() && bases[i+1] > base && bases[i+1] < end)
+                end = bases[i+1];
+            if (end <= base) end = base + 8;
+            AggRegion r; r.base = base; r.end = end;
+            r.name = "s" + std::to_string((int)agg_regions.size() + 1);
+            array_locals.insert(r.name);
+            agg_regions.push_back(r);
+        }
+    }
+
+    /* ===== STRUCT RECOVERY (v1, conservative, pointer-param, per-function) =====
+     * A pointer PARAM accessed at a set of clean constant byte offsets is a struct.
+     * We emit a packed `struct` typedef with named fields and render the recognized
+     * accesses as `p->field_N`. ANYTHING that does not fit (variable index, a width
+     * conflict at an offset, an overlap) falls back to the existing raw
+     * `*(T*)((char*)p + N)` form — always valid — so this can never break compilation. */
+    struct ParamStruct {
+        std::string tag;                     /* e.g. "s_a1" */
+        std::map<int64_t,int>  fw;           /* offset -> field width */
+        std::map<int64_t,bool> fu, ff, fptr; /* offset -> unsigned / float / pointer */
+        std::map<int64_t,std::string> fptr_tag; /* offset -> nested struct tag (field is `struct T*`) */
+        int64_t stride = 0;                  /* >0: array-element struct, padded to this size */
+    };
+    std::map<std::string, ParamStruct> param_structs;   /* param name -> layout */
+    std::map<std::string, std::set<int64_t>> struct_field_ptr;  /* param -> offsets whose value is used as an address */
+    /* a struct field whose LOADED VALUE is used as a memory base address holds a
+     * pointer: record it so the field declares `void*` and its uses get (char*). */
+    void scan_field_ptr(const ExprP& e) {
+        if (!e) return;
+        auto note = [&](ExprP o) {
+            while (o && o->kind==EK::Cast) o = o->a;
+            if (o && o->kind==EK::Mem && o->a && (o->width==8 || o->width==0)) {
+                std::string p; int64_t off;
+                if (struct_base_offset(o->a, p, off)) struct_field_ptr[p].insert(off);
+            }
+        };
+        if (e->kind == EK::Mem && e->a) {
+            /* base of a deref address `*(field + K)` / `*field` */
+            ExprP base = e->a;
+            while (base && base->kind==EK::Binary && (base->op=="+"||base->op=="-")) base = base->a;
+            note(base);
+        }
+        /* a field-load CAST TO A POINTER (directly or as `(T*)(field + idx)`) is an
+         * unambiguous pointer base. NB: only the field-load side is note()'d; an int
+         * OFFSET operand is not a Mem-width-8 field-load so it stays integer — so this
+         * never turns a genuine `ptr + int` into `ptr + ptr`. */
+        if (e->kind == EK::Cast && e->op.find('*') != std::string::npos && e->a) {
+            ExprP inner = e->a;
+            while (inner && inner->kind==EK::Cast) inner = inner->a;
+            if (inner && inner->kind==EK::Binary && (inner->op=="+"||inner->op=="-")) { note(inner->a); note(inner->b); }
+            else note(inner);
+        }
+        scan_field_ptr(e->a); scan_field_ptr(e->b); scan_field_ptr(e->c);
+        for (auto& a : e->args) scan_field_ptr(a);
+    }
+    bool is_struct_ptr_field(const ExprP& mem) {
+        if (param_structs.empty() || !mem || mem->kind != EK::Mem || !mem->a) return false;
+        std::string p; int64_t off;
+        if (!struct_base_offset(mem->a, p, off)) return false;
+        auto it = param_structs.find(p);
+        if (it == param_structs.end()) return false;
+        auto fit = it->second.fptr.find(off);
+        return fit != it->second.fptr.end() && fit->second;
+    }
+    /* the nested-struct TAG a `struct T*` field points to (top-level OR nested base), for
+     * casting a value stored into it. Returns "" if the Mem is not a retyped ptr field. */
+    std::string struct_ptr_field_tag(const ExprP& mem) {
+        if (param_structs.empty() || !mem || mem->kind != EK::Mem || !mem->a) return "";
+        std::string p; int64_t off;
+        if (!struct_base_offset(mem->a, p, off) && !nested_base_offset(mem->a, p, off)) return "";
+        auto it = param_structs.find(p);
+        if (it == param_structs.end()) return "";
+        auto t = it->second.fptr_tag.find(off);
+        return t != it->second.fptr_tag.end() ? t->second : "";
+    }
+
+    bool is_ptr_param_name(const std::string& nm) {
+        if (nm.size() < 2 || nm[0] != 'a') return false;
+        for (size_t i = 1; i < nm.size(); ++i) if (!isdigit((unsigned char)nm[i])) return false;
+        std::string dt = decl_type(nm);
+        return !dt.empty() && dt.back() == '*';
+    }
+    /* A global whose stored VALUE is used as a struct base: `qword_XXXX` = the 8-byte
+     * pointer at a read-write .data address, dereferenced with a field offset. Matches
+     * the named_globals rendering so `((struct tag*)qword_XXXX)->field_K` reads back the
+     * same field. Only width-8 non-float loads of a real data address qualify. */
+    bool is_global_base(const ExprP& b, std::string& name) {
+        if (std::getenv("DS_NO_GSTRUCT")) return false;
+        ExprP x = b; int g = 0;
+        while (x && x->kind == EK::Cast && g++ < 8) x = x->a;
+        if (x && x->kind == EK::Mem && x->a && x->a->kind == EK::Const &&
+            x->width == 8 && !x->is_float &&
+            (uint64_t)x->a->cval > 0x1000 && in_data_rva((uint64_t)x->a->cval)) {
+            char nm[48];
+            std::snprintf(nm, sizeof nm, "qword_%llx", (unsigned long long)(uint64_t)x->a->cval);
+            name = nm; return true;
+        }
+        return false;
+    }
+    static bool is_global_struct_name(const std::string& p) {
+        return p.rfind("qword_", 0) == 0 || p.rfind("dword_", 0) == 0;
+    }
+    /* If `addr` is `param` / `(cast)param + CONST` / a global-base +CONST, return the
+     * base name + byte offset. */
+    bool struct_base_offset(const ExprP& addr, std::string& param, int64_t& off) {
+        if (!addr) return false;
+        if (addr->kind == EK::Var) { param = addr->name; off = 0; return is_ptr_param_name(param) || struct_var.count(param); }
+        std::string gn;
+        if (is_global_base(addr, gn)) { param = gn; off = 0; return true; }
+        if (addr->kind == EK::Binary && addr->op == "+") {
+            ExprP base = addr->a, idx = addr->b;
+            if (!(idx && idx->kind == EK::Const)) {
+                if (addr->a && addr->a->kind == EK::Const) { base = addr->b; idx = addr->a; }
+                else return false;
+            }
+            if (!idx || idx->kind != EK::Const) return false;
+            if (is_global_base(base, gn)) { param = gn; off = idx->cval; return true; }
+            while (base && base->kind == EK::Cast) base = base->a;   /* strip (char*) etc. */
+            if (base && base->kind == EK::Var && (is_ptr_param_name(base->name) || struct_var.count(base->name))) {
+                param = base->name; off = idx->cval; return true;
+            }
+        }
+        return false;
+    }
+    /* NESTED struct base (DS_NESTSTRUCT): `(char*)FL + K` (or bare FL, K=0) where FL is a
+     * width-8 non-float field-LOAD `*(long long*)(<recovered struct field addr>)` used as a
+     * pointer base. Returns a synthetic name `<parent>_<parentOffHex>` + the sub-offset K.
+     * The parent must ALREADY be a recovered struct (param_structs populated), so this only
+     * resolves in the SECOND recovery pass and at render time — never during the first
+     * (top-level) collect. Disjoint from struct_base_offset: that requires a Var/global/
+     * param+const base and REJECTS a Mem-load base, so nested and top-level never overlap. */
+    bool nested_base_offset(const ExprP& addr, std::string& name, int64_t& off, int depth = 0) {
+        static const bool disabled = std::getenv("DS_NO_NESTSTRUCT") != nullptr;
+        /* deep chains stay clean because the fields are RETYPED `struct T*` — so
+         * a1->f_28->f_22c8->f_23a renders as plain arrows, not stacked inline casts. */
+        if (disabled || !addr || depth > 6) return false;   /* default-on; DS_NO_NESTSTRUCT disables */
+        ExprP base = addr; off = 0;
+        if (addr->kind == EK::Binary && addr->op == "+") {
+            ExprP idx = addr->b; base = addr->a;
+            if (!(idx && idx->kind == EK::Const)) {
+                if (addr->a && addr->a->kind == EK::Const) { base = addr->b; idx = addr->a; }
+                else return false;
+            }
+            if (!idx || idx->kind != EK::Const) return false;
+            off = idx->cval;
+        }
+        ExprP fl = base;
+        while (fl && fl->kind == EK::Cast) fl = fl->a;
+        if (!fl || fl->kind != EK::Mem || !fl->a || fl->width != 8 || fl->is_float) return false;
+        std::string pp; int64_t poff;
+        /* the parent field-load's address resolves either to a TOP-LEVEL struct field, OR
+         * (recursively) to a DEEPER nested struct field — so `a1->f_d0->f_x->f_y` chains to
+         * any depth. The fixpoint collect below builds each level before the next needs it. */
+        bool ok = struct_base_offset(fl->a, pp, poff);
+        if (!ok) ok = nested_base_offset(fl->a, pp, poff, depth + 1);
+        if (!ok) return false;
+        auto it = param_structs.find(pp);
+        if (it == param_structs.end() || !it->second.fw.count(poff)) return false;
+        if (it->second.fw.at(poff) != 8) return false;                  /* pointer-sized field only */
+        char nm[160]; std::snprintf(nm, sizeof nm, "%s_%llx", pp.c_str(), (unsigned long long)poff);
+        name = nm; return true;
+    }
+    /* the field-load Mem at the root of a nested base, for rendering the `->` chain. */
+    ExprP nested_base_load(const ExprP& addr) {
+        ExprP base = addr;
+        if (addr && addr->kind == EK::Binary && addr->op == "+")
+            base = (addr->b && addr->b->kind == EK::Const) ? addr->a : addr->b;
+        while (base && base->kind == EK::Cast) base = base->a;
+        return base;
+    }
+
+    /* ---- ARRAY-OF-STRUCT recovery (DS_NO_ARRSTRUCT disables) ----
+     * `*(T*)((char*)(index*stride + base) + off)` -> `((struct elem*)base)[index].field_off`,
+     * where base is a struct-field-pointer / ptr-param, stride a constant element size, off a
+     * constant field offset within an element. Inline-cast render (base keeps its type). */
+    bool parse_index_scale(const ExprP& e, ExprP& idx, int64_t& stride) {
+        ExprP x = e;
+        while (x && x->kind == EK::Cast) x = x->a;
+        if (!x || x->kind != EK::Binary || !x->b || x->b->kind != EK::Const) return false;
+        if (x->op == "<<" && x->b->cval >= 3 && x->b->cval < 12) { idx = x->a; stride = (int64_t)1 << x->b->cval; return true; }
+        if (x->op == "*"  && x->b->cval >= 8 && x->b->cval <= 0x1000) { idx = x->a; stride = x->b->cval; return true; }
+        return false;
+    }
+    bool array_base_key(const ExprP& bs, std::string& key) {
+        ExprP x = bs;
+        while (x && x->kind == EK::Cast) x = x->a;
+        if (!x) return false;
+        if (x->kind == EK::Var && is_ptr_param_name(x->name)) { key = x->name; return true; }
+        if (x->kind == EK::Mem && x->a && x->width == 8 && !x->is_float) {   /* a struct-field pointer load */
+            std::string p; int64_t off;
+            if (struct_base_offset(x->a, p, off) || nested_base_offset(x->a, p, off)) {
+                char nm[176]; std::snprintf(nm, sizeof nm, "%s_%llx", p.c_str(), (unsigned long long)off);
+                key = nm; return true;
+            }
+        }
+        return false;
+    }
+    bool array_struct_access(const ExprP& mem, std::string& key, ExprP& base_out,
+                             ExprP& index_out, int64_t& stride_out, int64_t& off_out) {
+        static const bool disabled = std::getenv("DS_NO_ARRSTRUCT") != nullptr;
+        if (disabled || !mem || mem->kind != EK::Mem || !mem->a) return false;
+        ExprP a = mem->a; off_out = 0;
+        if (a->kind == EK::Binary && a->op == "+" && a->b && a->b->kind == EK::Const) { off_out = a->b->cval; a = a->a; }
+        while (a && a->kind == EK::Cast) a = a->a;
+        if (!a || a->kind != EK::Binary || a->op != "+") return false;
+        for (int sw = 0; sw < 2; ++sw) {
+            ExprP si = sw ? a->b : a->a, bs = sw ? a->a : a->b;
+            int64_t stride; ExprP idx;
+            if (!parse_index_scale(si, idx, stride) || stride < 8) continue;
+            if (off_out < 0 || off_out >= stride) continue;
+            std::string bkey;
+            if (!array_base_key(bs, bkey)) continue;
+            char kk[220]; std::snprintf(kk, sizeof kk, "%s_A%llx", bkey.c_str(), (unsigned long long)stride);
+            key = kk; base_out = bs; index_out = idx; stride_out = stride;
+            return true;
+        }
+        return false;
+    }
+    void collect_array_struct(const ExprP& e,
+            std::map<std::string,std::map<int64_t,int>>& fw,
+            std::map<std::string,std::map<int64_t,bool>>& fu,
+            std::map<std::string,std::map<int64_t,bool>>& ff,
+            std::map<std::string,int64_t>& strides) {
+        if (!e) return;
+        if (e->kind == EK::Mem) {
+            std::string key; ExprP b, i; int64_t stride, off;
+            if (array_struct_access(e, key, b, i, stride, off)) {
+                int w = e->width ? e->width : 1;
+                auto& m = fw[key]; auto it = m.find(off);
+                if (it == m.end()) { m[off] = w; fu[key][off] = e->is_unsigned; ff[key][off] = e->is_float; strides[key] = stride; }
+                else if (it->second != w) it->second = -1;
+            }
+        }
+        collect_array_struct(e->a, fw, fu, ff, strides);
+        collect_array_struct(e->b, fw, fu, ff, strides);
+        collect_array_struct(e->c, fw, fu, ff, strides);
+        for (auto& a : e->args) collect_array_struct(a, fw, fu, ff, strides);
+    }
+
+    /* ---- POINTER-TEMP / STACK-LOCAL struct recovery (DS_NO_VARSTRUCT disables) ----
+     * `*(T*)((char*)tN + K)` on a pointer temp / stack local accessed at >=2 fixed offsets
+     * -> `((struct s*)tN)->field_K`. INLINE-CAST render (the var's declaration is NOT changed
+     * — so its other uses, arithmetic, and `char sN[]` array-decay are all untouched). */
+    std::set<std::string> struct_var;   /* pointer temps / stack locals recovered as struct bases */
+    bool is_struct_base_candidate(const std::string& nm) {
+        if (std::getenv("DS_NO_VARSTRUCT") || nm.size() < 2) return false;
+        if (is_ptr_param_name(nm)) return false;             /* params handled separately */
+        if (struct_excluded_params.count(nm)) return false;  /* used with a variable index -> array */
+        auto vp = var_pointer.find(nm);
+        if (vp != var_pointer.end() && vp->second) return true;   /* a pointer temp/var */
+        if (array_locals.count(nm)) return true;                  /* a `char sN[]` stack local */
+        return false;
+    }
+    bool var_struct_base(const ExprP& addr, std::string& name, int64_t& off) {
+        if (!addr) return false;
+        ExprP x = addr; while (x && x->kind == EK::Cast) x = x->a;
+        if (x && x->kind == EK::Var && is_struct_base_candidate(x->name)) { name = x->name; off = 0; return true; }
+        if (addr->kind == EK::Binary && addr->op == "+") {
+            ExprP base = addr->a, idx = addr->b;
+            if (!(idx && idx->kind == EK::Const)) {
+                if (addr->a && addr->a->kind == EK::Const) { base = addr->b; idx = addr->a; }
+                else return false;
+            }
+            if (!idx || idx->kind != EK::Const) return false;
+            ExprP b = base; while (b && b->kind == EK::Cast) b = b->a;
+            if (b && b->kind == EK::Var && is_struct_base_candidate(b->name)) { name = b->name; off = idx->cval; return true; }
+        }
+        return false;
+    }
+    /* mark a pointer-var / stack-local used with a VARIABLE index as an array (excluded). */
+    void note_array_var(const ExprP& addr) {
+        if (!addr || addr->kind != EK::Binary || addr->op != "+") return;
+        if ((addr->b && addr->b->kind == EK::Const) || (addr->a && addr->a->kind == EK::Const)) return;
+        for (int s = 0; s < 2; ++s) {
+            ExprP side = s ? addr->b : addr->a, other = s ? addr->a : addr->b;
+            ExprP b = side; while (b && b->kind == EK::Cast) b = b->a;
+            if (b && b->kind == EK::Var && other && other->kind != EK::Const) {
+                auto vp = var_pointer.find(b->name);
+                if ((vp != var_pointer.end() && vp->second) || array_locals.count(b->name))
+                    struct_excluded_params.insert(b->name);
+            }
+        }
+    }
+    void scan_var_array_excl(const ExprP& e) {
+        if (!e) return;
+        if (e->kind == EK::Mem && e->a) note_array_var(e->a);
+        scan_var_array_excl(e->a); scan_var_array_excl(e->b); scan_var_array_excl(e->c);
+        for (auto& a : e->args) scan_var_array_excl(a);
+    }
+    void collect_var_struct(const ExprP& e,
+            std::map<std::string,std::map<int64_t,int>>& fw,
+            std::map<std::string,std::map<int64_t,bool>>& fu,
+            std::map<std::string,std::map<int64_t,bool>>& ff) {
+        if (!e) return;
+        if (e->kind == EK::Mem && e->a) {
+            std::string p; int64_t off;
+            if (var_struct_base(e->a, p, off) && off >= 0 && off < 0x8000) {
+                int w = e->width ? e->width : 1;
+                auto& m = fw[p]; auto it = m.find(off);
+                if (it == m.end()) { m[off] = w; fu[p][off] = e->is_unsigned; ff[p][off] = e->is_float; }
+                /* invalidate on a width OR float/non-float conflict: a slot accessed as both
+                 * `*(float*)` and an int/pointer value can't be one typed field (a float
+                 * field cast to `(T*)` is C2440). */
+                else if (it->second != w || ff[p][off] != e->is_float) it->second = -1;
+            }
+        }
+        collect_var_struct(e->a, fw, fu, ff);
+        collect_var_struct(e->b, fw, fu, ff);
+        collect_var_struct(e->c, fw, fu, ff);
+        for (auto& a : e->args) collect_var_struct(a, fw, fu, ff);
+    }
+    std::set<std::string> struct_excluded_params;   /* array-indexed -> not a struct */
+    /* A param used with a VARIABLE index (`a1[i]`, `*(T*)((char*)a1 + i*s)`) is an
+     * ARRAY, not a struct — exclude it (retyping it `struct*` would break `a1[i]`). */
+    void note_array_param(const ExprP& addr) {
+        if (!addr || addr->kind != EK::Binary || addr->op != "+") return;
+        ExprP base = addr->a, idx = addr->b;
+        if (idx && idx->kind == EK::Const) return;               /* const offset = field */
+        if (addr->a && addr->a->kind == EK::Const) return;
+        while (base && base->kind == EK::Cast) base = base->a;
+        if (base && base->kind == EK::Var && is_ptr_param_name(base->name))
+            struct_excluded_params.insert(base->name);
+        /* also `idx*scale + param` shapes: check both operands for a param base */
+        ExprP other = addr->b;
+        while (other && other->kind == EK::Cast) other = other->a;
+        if (other && other->kind == EK::Var && is_ptr_param_name(other->name) &&
+            addr->a && addr->a->kind != EK::Const)
+            struct_excluded_params.insert(other->name);
+    }
+    void collect_struct_access(const ExprP& e,
+            std::map<std::string,std::map<int64_t,int>>& fw,
+            std::map<std::string,std::map<int64_t,bool>>& fu,
+            std::map<std::string,std::map<int64_t,bool>>& ff) {
+        if (!e) return;
+        if (e->kind == EK::Mem && e->a) {
+            std::string p; int64_t off;
+            if (struct_base_offset(e->a, p, off) && off >= 0 && off < 0x8000) {
+                int w = e->width ? e->width : 1;
+                auto& m = fw[p]; auto it = m.find(off);
+                if (it == m.end()) { m[off] = w; fu[p][off] = e->is_unsigned; ff[p][off] = e->is_float; }
+                else if (it->second != w) it->second = -1;   /* width conflict -> invalidate */
+            } else note_array_param(e->a);
+        }
+        collect_struct_access(e->a, fw, fu, ff);
+        collect_struct_access(e->b, fw, fu, ff);
+        collect_struct_access(e->c, fw, fu, ff);
+        for (auto& a : e->args) collect_struct_access(a, fw, fu, ff);
+    }
+    /* second-pass collector keyed on nested_base_offset (a1->field_d0->field_K). */
+    void collect_nested_access(const ExprP& e,
+            std::map<std::string,std::map<int64_t,int>>& fw,
+            std::map<std::string,std::map<int64_t,bool>>& fu,
+            std::map<std::string,std::map<int64_t,bool>>& ff) {
+        if (!e) return;
+        if (e->kind == EK::Mem && e->a) {
+            std::string p; int64_t off;
+            if (nested_base_offset(e->a, p, off) && off >= 0 && off < 0x8000) {
+                int w = e->width ? e->width : 1;
+                auto& m = fw[p]; auto it = m.find(off);
+                if (it == m.end()) { m[off] = w; fu[p][off] = e->is_unsigned; ff[p][off] = e->is_float; }
+                else if (it->second != w) it->second = -1;
+            }
+        }
+        collect_nested_access(e->a, fw, fu, ff);
+        collect_nested_access(e->b, fw, fu, ff);
+        collect_nested_access(e->c, fw, fu, ff);
+        for (auto& a : e->args) collect_nested_access(a, fw, fu, ff);
+    }
+    void recover_struct_layouts() {
+        std::map<std::string,std::map<int64_t,int>>  fw;
+        std::map<std::string,std::map<int64_t,bool>> fu, ff;
+        struct_field_ptr.clear();
+        for (auto& b : blocks) {
+            for (auto& s : b.stmts) { collect_struct_access(s.lhs, fw, fu, ff);
+                                      collect_struct_access(s.rhs, fw, fu, ff); }
+            collect_struct_access(b.cond, fw, fu, ff);
+            collect_struct_access(b.ret_value, fw, fu, ff);
+            collect_struct_access(b.switch_var, fw, fu, ff);
+            collect_struct_access(b.tail_call, fw, fu, ff);
+        }
+        /* NOTE: struct-field pointer typing (declaring a used-as-address qword field
+         * `void*`) is DISABLED — the renderer does not yet byte-cast a void* field in
+         * every arithmetic position (ptr+ptr / int-ptr surfaced 111 C2110/C2113s). It
+         * needs a render pass that treats any is_struct_ptr_field operand uniformly;
+         * until then scan_field_ptr stays unrun so every field keeps its width type
+         * and the output stays compile-clean. */
+        for (auto& kv : fw) {
+            const std::string& p = kv.first;
+            if (struct_excluded_params.count(p)) continue;   /* array param, not a struct */
+            std::vector<int64_t> offs;
+            for (auto& o : kv.second) if (o.second > 0) offs.push_back(o.first);
+            std::sort(offs.begin(), offs.end());
+            ParamStruct L; int64_t prev_end = -1;
+            auto& pptr = struct_field_ptr[p];
+            for (int64_t o : offs) {
+                int w = kv.second[o];
+                if (o < prev_end) continue;             /* overlaps previous field -> skip */
+                L.fw[o] = w; L.fu[o] = fu[p][o]; L.ff[o] = ff[p][o];
+                /* a qword field whose value is used as a base address is a pointer */
+                L.fptr[o] = (w == 8 && !ff[p][o] && pptr.count(o));
+                prev_end = o + w;
+            }
+            /* tag qualified by the function name so concatenated pair-files (the corpus
+             * builds one TU per DLL) don't collide on `struct s_a1`. */
+            if (L.fw.size() >= 2) { L.tag = "s_" + self_fname + "_" + p; param_structs[p] = L; }
+        }
+        /* SECOND PASS: nested struct-pointer fields (a1->field_d0->field_K). Runs AFTER the
+         * top-level structs exist (nested_base_offset validates the parent field against
+         * param_structs). Inline-cast render — the field stays `long long`, so no field is
+         * retyped and no pointer arithmetic breaks (unlike the reverted #32). */
+        if (!std::getenv("DS_NO_NESTSTRUCT")) {
+            /* fixpoint: level 0 builds depth-2 structs (parent = a top-level field), level 1
+             * builds depth-3 (parent = a depth-2 nested field), ... until no new level. */
+            for (int level = 0; level < 6; ++level) {
+                std::map<std::string,std::map<int64_t,int>>  nfw;
+                std::map<std::string,std::map<int64_t,bool>> nfu, nff;
+                for (auto& b : blocks) {
+                    for (auto& s : b.stmts) { collect_nested_access(s.lhs, nfw, nfu, nff);
+                                              collect_nested_access(s.rhs, nfw, nfu, nff); }
+                    collect_nested_access(b.cond, nfw, nfu, nff);
+                    collect_nested_access(b.ret_value, nfw, nfu, nff);
+                    collect_nested_access(b.switch_var, nfw, nfu, nff);
+                    collect_nested_access(b.tail_call, nfw, nfu, nff);
+                }
+                int added = 0;
+                for (auto& kv : nfw) {
+                    const std::string& p = kv.first;
+                    if (param_structs.count(p)) continue;      /* already built (earlier level) */
+                    std::vector<int64_t> offs;
+                    for (auto& o : kv.second) if (o.second > 0) offs.push_back(o.first);
+                    std::sort(offs.begin(), offs.end());
+                    ParamStruct L; int64_t prev_end = -1;
+                    for (int64_t o : offs) {
+                        int w = kv.second[o];
+                        if (o < prev_end) continue;
+                        L.fw[o] = w; L.fu[o] = nfu[p][o]; L.ff[o] = nff[p][o]; L.fptr[o] = false;
+                        prev_end = o + w;
+                    }
+                    if (L.fw.size() >= 2) {
+                        L.tag = "s_" + self_fname + "_" + p; param_structs[p] = L; added++;
+                        /* RETYPE the parent field as `struct <thisTag>*` so accesses through
+                         * it render as clean arrows (a1->f_28->f_K) instead of inline casts.
+                         * The synthetic name is `<parent>_<offHex>`; the parent is already a
+                         * recovered struct (nested was collected after it). */
+                        auto us = p.rfind('_');
+                        if (us != std::string::npos && us + 1 < p.size()) {
+                            std::string parent = p.substr(0, us);
+                            int64_t poff = (int64_t)strtoll(p.substr(us + 1).c_str(), nullptr, 16);
+                            auto pit = param_structs.find(parent);
+                            if (pit != param_structs.end() && pit->second.fw.count(poff) &&
+                                pit->second.fw.at(poff) == 8) {
+                                pit->second.fptr[poff] = true;
+                                pit->second.fptr_tag[poff] = L.tag;
+                            }
+                        }
+                    }
+                }
+                if (added == 0) break;                         /* no new nesting level exposed */
+            }
+        }
+        /* ARRAY-OF-STRUCT: element structs for `base + index*stride + off` field accesses.
+         * The element struct is padded to `stride` so `((struct elem*)base)[i]` addresses
+         * `base + i*stride`. Runs after nested so a nested base pointer resolves. */
+        if (!std::getenv("DS_NO_ARRSTRUCT")) {
+            std::map<std::string,std::map<int64_t,int>>  afw;
+            std::map<std::string,std::map<int64_t,bool>> afu, aff;
+            std::map<std::string,int64_t> astr;
+            for (auto& b : blocks) {
+                for (auto& s : b.stmts) { collect_array_struct(s.lhs, afw, afu, aff, astr);
+                                          collect_array_struct(s.rhs, afw, afu, aff, astr); }
+                collect_array_struct(b.cond, afw, afu, aff, astr);
+                collect_array_struct(b.ret_value, afw, afu, aff, astr);
+                collect_array_struct(b.switch_var, afw, afu, aff, astr);
+                collect_array_struct(b.tail_call, afw, afu, aff, astr);
+            }
+            for (auto& kv : afw) {
+                const std::string& p = kv.first;
+                if (param_structs.count(p)) continue;
+                std::vector<int64_t> offs;
+                for (auto& o : kv.second) if (o.second > 0) offs.push_back(o.first);
+                std::sort(offs.begin(), offs.end());
+                ParamStruct L; int64_t prev_end = -1;
+                for (int64_t o : offs) {
+                    int w = kv.second[o];
+                    if (o < prev_end) continue;
+                    L.fw[o] = w; L.fu[o] = afu[p][o]; L.ff[o] = aff[p][o]; L.fptr[o] = false;
+                    prev_end = o + w;
+                }
+                /* require >=2 distinct fields OR the stride would just be a scalar array. */
+                if (L.fw.size() >= 2 && prev_end <= astr[p]) {
+                    L.tag = "s_" + self_fname + "_" + p; L.stride = astr[p];
+                    param_structs[p] = L;
+                }
+            }
+        }
+        /* POINTER-TEMP / STACK-LOCAL structs (runs last; struct_var seeds the render only,
+         * after the higher-precedence param/global/nested/array structs are built). */
+        if (!std::getenv("DS_NO_VARSTRUCT")) {
+            for (auto& b : blocks) {                             /* pass 1: exclude array vars */
+                for (auto& s : b.stmts) { scan_var_array_excl(s.lhs); scan_var_array_excl(s.rhs); }
+                scan_var_array_excl(b.cond); scan_var_array_excl(b.ret_value);
+                scan_var_array_excl(b.switch_var); scan_var_array_excl(b.tail_call);
+            }
+            std::map<std::string,std::map<int64_t,int>>  vfw;
+            std::map<std::string,std::map<int64_t,bool>> vfu, vff;
+            for (auto& b : blocks) {                             /* pass 2: collect const-offset fields */
+                for (auto& s : b.stmts) { collect_var_struct(s.lhs, vfw, vfu, vff);
+                                          collect_var_struct(s.rhs, vfw, vfu, vff); }
+                collect_var_struct(b.cond, vfw, vfu, vff);
+                collect_var_struct(b.ret_value, vfw, vfu, vff);
+                collect_var_struct(b.switch_var, vfw, vfu, vff);
+                collect_var_struct(b.tail_call, vfw, vfu, vff);
+            }
+            for (auto& kv : vfw) {
+                const std::string& p = kv.first;
+                if (param_structs.count(p)) continue;
+                std::vector<int64_t> offs;
+                for (auto& o : kv.second) if (o.second > 0) offs.push_back(o.first);
+                std::sort(offs.begin(), offs.end());
+                ParamStruct L; int64_t prev_end = -1;
+                for (int64_t o : offs) {
+                    int w = kv.second[o];
+                    if (o < prev_end) continue;
+                    L.fw[o] = w; L.fu[o] = vfu[p][o]; L.ff[o] = vff[p][o]; L.fptr[o] = false;
+                    prev_end = o + w;
+                }
+                if (L.fw.size() >= 2) {
+                    L.tag = "s_" + self_fname + "_" + p; param_structs[p] = L; struct_var.insert(p);
+                }
+            }
+        }
+    }
+    /* Cache each READ-ONLY global struct base in a typed local (`struct s* gs_X = (struct
+     * s*)qword_X;`) so the body reads `gs_X->field` instead of repeating the ~50-char
+     * `((struct s*)qword_X)->` at every access (fn_0001ab40 has 387 of ONE such cast).
+     * SKIP a global the function writes mid-body — a cached copy would go stale (the
+     * inline form re-reads `*(long long*)0xX` each time, preserving that semantics). */
+    void assign_global_struct_locals() {
+        if (std::getenv("DS_NO_GSLOCAL")) return;
+        auto writes_addr = [&](uint64_t addr) -> bool {
+            for (auto& b : blocks)
+                for (auto& s : b.stmts) {
+                    if (s.kind != SK::Assign || !s.lhs) continue;
+                    ExprP x = s.lhs;
+                    while (x && x->kind == EK::Cast) x = x->a;
+                    if (x && x->kind == EK::Mem && x->a && x->a->kind == EK::Const &&
+                        (uint64_t)x->a->cval == addr && x->width == 8)
+                        return true;
+                }
+            return false;
+        };
+        for (auto& kv : param_structs) {
+            const std::string& p = kv.first;
+            if (!is_global_struct_name(p)) continue;
+            /* skip a NESTED synthetic name (`qword_X_Y`) — only a REAL global (`qword_<hex>`,
+             * a #define'd data address) can seed a local; its suffix is pure hex, no '_'. */
+            if (p.substr(6).find('_') != std::string::npos) continue;
+            uint64_t addr = strtoull(p.c_str() + 6, nullptr, 16);
+            if (!writes_addr(addr)) global_struct_local[p] = "gs_" + p.substr(6);
+        }
+    }
+    std::string struct_typedef_str(const ParamStruct& L) {
+        std::string s = "#pragma pack(push, 1)\nstruct " + L.tag + " {\n";
+        int64_t pos = 0;
+        for (auto& kv : L.fw) {
+            int64_t off = kv.first; int w = kv.second;
+            if (off > pos) s += "    char _pad_" + hex(pos).substr(2) + "[" +
+                                std::to_string((long long)(off - pos)) + "];\n";
+            std::string ty;
+            if (L.fptr_tag.count(off)) ty = "struct " + L.fptr_tag.at(off) + "*";   /* nested struct ptr */
+            else if (L.fptr.count(off) && L.fptr.at(off)) ty = "void*";
+            else ty = L.ff.at(off) ? (w >= 8 ? "double" : "float")
+                                   : typ_str(w, L.fu.at(off), false);
+            s += "    " + ty + " field_" + hex(off).substr(2) + ";\n";
+            pos = off + w;
+        }
+        /* array-element struct: pad to the stride so sizeof == stride and `elem[i]`
+         * addresses `base + i*stride`. */
+        if (L.stride > pos)
+            s += "    char _pad_end[" + std::to_string((long long)(L.stride - pos)) + "];\n";
+        s += "};\n#pragma pack(pop)\n";
+        return s;
+    }
+    /* Render `*(T*)((char*)p + K)` as `p->field_K` when p is a recovered struct pointer
+     * and K/width match a field; else return false (caller uses the raw form). */
+    bool try_struct_field(const ExprP& mem, std::string& out) {
+        if (param_structs.empty() || !mem || mem->kind != EK::Mem || !mem->a) return false;
+        std::string p; int64_t off;
+        /* ARRAY-OF-STRUCT: `*(T*)((char*)(i*stride + base) + off)` -> `((struct elem*)base)[i].field_off`.
+         * Disjoint from the nested/struct-field paths (those require a CONST offset base). */
+        {
+            std::string ak; ExprP ab, ai; int64_t astride, aoff;
+            if (array_struct_access(mem, ak, ab, ai, astride, aoff)) {
+                auto ait = param_structs.find(ak);
+                if (ait != param_structs.end()) {
+                    auto af = ait->second.fw.find(aoff);
+                    int w = mem->width ? mem->width : 1;
+                    if (af != ait->second.fw.end() && af->second == w) {
+                        /* clean subscript when the index strips to a plain integer; keep the
+                         * original coercion casts when it doesn't (a pointer/float-typed index
+                         * value is `[(long long)((unsigned int)t1)]`, not an illegal `[t1]`). */
+                        ExprP ix = ai; while (ix && ix->kind == EK::Cast) ix = ix->a;
+                        bool ix_ok = ix && !ix->is_float && !renders_as_pointer(ix) &&
+                            !(ix->kind == EK::Var && var_is_float.count(ix->name) && var_is_float[ix->name]);
+                        std::string idxs = ix_ok ? rsub(ix, 15) : rsub(ai, 15);
+                        out = "((struct " + ait->second.tag + "*)" + rsub(ab, 14) + ")[" +
+                              idxs + "].field_" + hex(aoff).substr(2);
+                        return true;
+                    }
+                }
+                return false;
+            }
+        }
+        /* NESTED field-load base (a1->field_d0->field_K): inline-cast the parent field
+         * load, which itself renders via the top-level struct. Tried first; disjoint from
+         * struct_base_offset (which rejects a Mem-load base). */
+        {
+            std::string np; int64_t noff;
+            if (nested_base_offset(mem->a, np, noff)) {
+                auto nit = param_structs.find(np);
+                if (nit != param_structs.end()) {
+                    auto nf = nit->second.fw.find(noff);
+                    int w = mem->width ? mem->width : 1;
+                    if (nf != nit->second.fw.end() && nf->second == w) {
+                        /* the parent field is RETYPED `struct T*`, so a clean chained arrow
+                         * compiles — no inline cast (a1->f_28->f_K). */
+                        out = render(nested_base_load(mem->a)) + "->field_" + hex(noff).substr(2);
+                        return true;
+                    }
+                }
+                return false;   /* nested base but no matching field -> raw form */
+            }
+        }
+        if (!struct_base_offset(mem->a, p, off)) return false;
+        auto it = param_structs.find(p);
+        if (it == param_structs.end()) return false;
+        auto fit = it->second.fw.find(off);
+        if (fit == it->second.fw.end()) return false;
+        int w = mem->width ? mem->width : 1;
+        if (fit->second != w) return false;      /* different width at this offset -> raw */
+        if (is_global_struct_name(p)) {          /* global: cast the long-long value to the struct ptr */
+            /* register the #define — this arrow render bypasses the bare-load Mem path
+             * that normally emits it, so a global used ONLY as a struct base would be an
+             * undeclared identifier (C2065) without this. */
+            named_globals[p] = "(*(long long*)0x" + p.substr(6) + ")";
+            auto lit = global_struct_local.find(p);
+            if (lit != global_struct_local.end())          /* read-only: use the cached local */
+                out = lit->second + "->field_" + hex(off).substr(2);
+            else
+                out = "((struct " + it->second.tag + "*)" + disp(p) + ")->field_" + hex(off).substr(2);
+        } else if (struct_var.count(p))                    /* pointer temp / stack local: inline cast */
+            out = "((struct " + it->second.tag + "*)" + disp(p) + ")->field_" + hex(off).substr(2);
+        else
+            out = disp(p) + "->field_" + hex(off).substr(2);
+        return true;
+    }
+    /* Address-of a recognized struct field: a bare `(char*)p + K` (used AS a pointer,
+     * not deref'd) renders `&p->field_K` instead of a raw byte-offset cast, when K is
+     * EXACTLY a declared field offset. Turns `(int*)((char*)a1+0x54)` into
+     * `&a1->field_54`. */
+    bool try_struct_field_addr(const ExprP& e, std::string& out) {
+        if (param_structs.empty() || !e || e->kind != EK::Binary || e->op != "+") return false;
+        std::string p; int64_t off;
+        /* NESTED field address: `&a1->field_d0->field_K` (inline-cast the parent field). */
+        {
+            std::string np; int64_t noff;
+            if (nested_base_offset(e, np, noff) && noff != 0) {
+                auto nit = param_structs.find(np);
+                if (nit != param_structs.end() && nit->second.fw.count(noff)) {
+                    out = "&" + render(nested_base_load(e)) + "->field_" + hex(noff).substr(2);
+                    return true;
+                }
+                return false;
+            }
+        }
+        if (!struct_base_offset(e, p, off) || off == 0) return false;
+        auto it = param_structs.find(p);
+        if (it == param_structs.end() || !it->second.fw.count(off)) return false;
+        if (is_global_struct_name(p)) {          /* global: cast the long-long value first */
+            named_globals[p] = "(*(long long*)0x" + p.substr(6) + ")";
+            auto lit = global_struct_local.find(p);
+            if (lit != global_struct_local.end())
+                out = "&" + lit->second + "->field_" + hex(off).substr(2);
+            else
+                out = "&((struct " + it->second.tag + "*)" + disp(p) + ")->field_" + hex(off).substr(2);
+        } else if (struct_var.count(p))
+            out = "&((struct " + it->second.tag + "*)" + disp(p) + ")->field_" + hex(off).substr(2);
+        else
+            out = "&" + disp(p) + "->field_" + hex(off).substr(2);
+        return true;
+    }
+
+    std::string array_name(int64_t norm) {
+        auto it = stack_array_name.find(norm);
+        if (it != stack_array_name.end()) return it->second;
+        std::string nm = "buf" + std::to_string((int)stack_array_name.size() + 1);
+        stack_array_name[norm] = nm;
+        array_locals.insert(nm);
+        return nm;
+    }
+
+    /* Address expression (no deref) for lea / address-of. */
+    ExprP addr_of_mem(const cs_x86_op& op) {
+        const x86_op_mem& m = op.mem;
+        if (m.base == X86_REG_RIP && m.index == X86_REG_INVALID) {
+            uint64_t abs = cur_insn_addr + cur_insn_size + (uint64_t)m.disp;
+            return mkConst((int64_t)abs, 8, true);
+        }
+        Reg base = R_NONE, index = R_NONE; int t;
+        if (m.base != X86_REG_INVALID) map_reg(m.base, base, t);
+        if (m.index != X86_REG_INVALID) map_reg(m.index, index, t);
+        if (index == R_NONE && base != R_RIP) {
+            int64_t norm;
+            if (normalise_slot(base, m.disp, norm)) {
+                /* address of an escaped aggregate field: `sN` / `(char*)sN + d`
+                 * (already a pointer — no extra `&`). */
+                if (!param_home_off.count(norm)) {
+                    if (const AggRegion* r = agg_region_for(norm))
+                        return agg_addr(*r, norm);
+                }
+                std::string nm = resolved_slot_name(norm, 4);
+                if (!nm.empty()) {
+                    var_pointer[nm] = false;
+                    return mkAddrOf(mkVar(nm, var_width.count(nm)?var_width[nm]:4));
+                }
+            }
+        }
+        /* lea of an INDEXED stack slot: `lea reg,[rsp+idx*8+disp]` — taken by
+         * NEG/SWAP for an in-place stack[] element RMW. Route to the stack-array
+         * model so it is `&buf[idx]`, not a `0 + idx*8` null base (mirrors the
+         * mem_to_expr indexed path). */
+        if (index != R_NONE && base != R_RIP) {
+            int64_t norm;
+            if (normalise_slot(base, m.disp, norm)) {
+                if (!param_home_off.count(norm)) {
+                    if (const AggRegion* r = agg_region_for(norm))
+                        return agg_indexed(*r, norm, index, m.scale);
+                }
+                return stack_array_addr(norm, index, m.scale);
+            }
+        }
+        ExprP addr;
+        auto rv = [&](Reg r) -> ExprP {
+            return regfile[r] ? clone(regfile[r]) : mkReg(r, 8);
+        };
+        if (base != R_NONE && base != R_RIP) addr = rv(base);
+        if (index != R_NONE) {
+            ExprP ie = rv(index);
+            if (m.scale > 1) ie = mkBinary("*", ie, mkConst((int64_t)m.scale, 8), 8);
+            addr = addr ? mkBinary("+", addr, ie, 8) : ie;
+        }
+        if (m.disp != 0 || !addr) {
+            ExprP de = mkConst(m.disp, 8);
+            addr = addr ? mkBinary("+", addr, de, 8) : de;
+        }
+        return addr ? addr : mkConst(0, 8);
+    }
+
+    /* Resolve a slot offset to its variable name, registering it. */
+    std::string slot_name(int64_t norm, int width) {
+        auto ph = param_home_off.find(norm);
+        if (ph != param_home_off.end()) return ph->second;
+        auto it = stack_slot_name.find(norm);
+        if (it != stack_slot_name.end()) return it->second;
+        std::string nm = "v" + std::to_string((int)stack_slot_name.size() + 1);
+        stack_slot_name[norm] = nm;
+        record_width(nm, width);
+        return nm;
+    }
+
+    /* MSVC /O2 spill-and-reuse: a stack-passed (or homed) parameter is loaded into a
+     * callee-saved register in the prologue, then its now-dead home slot is recycled
+     * as a scratch local. Because param_home_off names the slot after the parameter,
+     * the recycle store printed as `a9 = 0` and every later deref of the (pointer)
+     * parameter read the clobbered slot -> "pointer used as int". We split the slot's
+     * live range by ADDRESS: the capture read(s) before the first recycle store keep
+     * the parameter name; the recycle store and everything at-or-after it become a
+     * fresh local. cur_insn_addr drives the split, so it is stable across the lift
+     * fixpoint. */
+    std::map<int64_t, uint64_t> home_reuse_split;    /* norm -> first recycle-store addr */
+    std::map<int64_t, std::string> home_reuse_local; /* norm -> recycled-life local name  */
+
+    void detect_reused_param_homes() {
+        if (param_home_off.empty() || insns.empty()) return;
+        std::vector<int64_t> loop_carried;
+        for (auto& kv : param_home_off) {
+            int64_t norm = kv.first;
+            uint64_t first_reuse = 0; bool has_reuse = false;
+            uint64_t first_read  = 0; bool has_read  = false;
+            std::vector<uint64_t> reads;
+            for (auto& in : insns) {
+                const cs_x86& x = in.x86;
+                for (int o = 0; o < x.op_count; ++o) {
+                    if (x.operands[o].type != X86_OP_MEM) continue;
+                    const x86_op_mem& m = x.operands[o].mem;
+                    if (m.index != X86_REG_INVALID) continue;
+                    Reg base = R_NONE; int bw;
+                    if (m.base != X86_REG_INVALID) map_reg(m.base, base, bw);
+                    int64_t n;
+                    if (!normalise_slot(base, m.disp, n) || n != norm) continue;
+                    bool is_w = (x.operands[o].access & CS_AC_WRITE) != 0;
+                    bool is_r = (x.operands[o].access & CS_AC_READ)  != 0;
+                    if (is_r) { if (!has_read) { first_read = in.addr; has_read = true; } reads.push_back(in.addr); }
+                    /* a PURE write (`mov [slot],x`) replaces the slot's value -> a
+                     * reuse boundary; a read-modify-write (`add [slot],x`) keeps it as
+                     * the same logical variable, so it does NOT count. The prologue
+                     * homing store is excluded (it writes the parameter to its slot). */
+                    if (is_w && !is_r && !has_reuse && !home_store_addrs.count(in.addr)) {
+                        first_reuse = in.addr; has_reuse = true;
+                    }
+                }
+            }
+            /* Split only when the parameter is provably captured (read) before the
+             * slot is recycled. Without a capture, a conditional `param = x` would
+             * lose the incoming value on the not-taken path, so leave it alone. */
+            if (has_reuse && has_read && first_read < first_reuse) {
+                /* Loop-carried reassignment: the recycle store lives inside a loop
+                 * (a back-edge [T,S] with T <= first_reuse <= S) that ALSO contains
+                 * a read of the slot before that store (T <= R < first_reuse). Then
+                 * the read on iteration N+1 consumes the store from iteration N, so
+                 * the address-based split would freeze the loop read at `aN` (and the
+                 * store, going to a never-read fresh local, is dead-store-eliminated
+                 * -> the in-loop update vanishes -> infinite loop, e.g.
+                 * count_trailing_zeros' `while((a1&1)==0) a1>>=1`). Model the slot as
+                 * ONE mutable local initialized to aN instead. */
+                bool loopc = false;
+                for (auto& j : insns) {
+                    if (!((j.is_jcc || j.is_jmp) && j.has_branch_target)) continue;
+                    uint64_t T = j.branch_target, S = j.addr;
+                    if (!(T < S && T <= first_reuse && first_reuse <= S)) continue;
+                    for (uint64_t R : reads) if (T <= R && R < first_reuse) { loopc = true; break; }
+                    if (loopc) break;
+                }
+                if (loopc) loop_carried.push_back(norm);
+                else home_reuse_split[norm] = first_reuse;
+            }
+        }
+        /* Demote loop-carried homed params from immutable alias to a real local
+         * initialized to the parameter (the home store is already skipped). */
+        for (int64_t norm : loop_carried) {
+            auto it = param_home_off.find(norm);
+            if (it == param_home_off.end()) continue;
+            slot_init_param[norm] = it->second;
+            param_home_off.erase(it);
+        }
+    }
+
+    /* slot_name, but honoring the param-home live-range split (above). */
+    std::string resolved_slot_name(int64_t norm, int width) {
+        auto it = home_reuse_split.find(norm);
+        if (it != home_reuse_split.end() && cur_insn_addr >= it->second) {
+            std::string& nm = home_reuse_local[norm];
+            if (nm.empty()) nm = slot_name(norm ^ (int64_t)0x5EA5000000LL, width);
+            record_width(nm, width);
+            return nm;
+        }
+        return slot_name(norm, width);
+    }
+
+    /* Write a value to a register: just update the symbolic map (no statement).
+     * 32-bit writes zero-extend (clear upper 32 bits): we fold by storing the
+     * (already-narrow) value and recording that the register now holds a 32-bit
+     * value. For our purposes the stored Expr carries its own width. */
+    void set_reg(Reg r, int w, ExprP val, Block& b) {
+        if (r <= R_NONE || r >= R_COUNT) return;
+        ExprP v = fold(val);
+        if (w == 4) {
+            /* 32-bit write zero-extends into the 64-bit register. The value
+             * already carries width 4 (extension ops widen explicitly). We do
+             * NOT mutate the expr's width (that would corrupt a Mem's access
+             * size); the value is stored as-is. If a narrow byte/word value
+             * leaked here, wrap it in a widening cast WITHOUT touching the inner
+             * access. */
+            if (v->width && v->width < 4)
+                v = mkCast(cast_str(4, v->is_unsigned), v, 4, v->is_unsigned);
+        } else if (w == 2 || w == 1) {
+            /* partial write merges with old upper bits. Under /Od this almost
+             * never feeds a wider read of the same reg before a full rewrite;
+             * model the merge conservatively only if old value exists. */
+            ExprP old = regfile[r];
+            if (old) {
+                int64_t keepmask = (w == 2) ? ~0xFFFFLL : ~0xFFLL;
+                int64_t lowmask  = (w == 2) ?  0xFFFFLL :  0xFFLL;
+                ExprP keep = mkBinary("&", clone(old), mkConst(keepmask, 8), 8);
+                ExprP low  = mkBinary("&",
+                    mkCast("(unsigned long long)", set_width(v, w), 8, true),
+                    mkConst(lowmask, 8), 8);
+                v = fold(mkBinary("|", keep, low, 8));
+            } else {
+                v = set_width(v, w);
+            }
+        }
+        /* Safety valve: cap the symbolic SIZE of a register value. A fully /O2-
+         * unrolled loop with a self-referential register (TEA's mutual v0/v1
+         * recursion: v0 += f(v1); v1 += g(v0)) otherwise grows the expression
+         * ~3x per round, reaching a multi-million-node tree that hangs the tool
+         * building/folding/rendering it. Spilling to a named temp once it exceeds
+         * a threshold caps the growth AND reads as the natural `tN = ...` chain.
+         * Inputs are already capped, so node_count here is cheap (<= ~2*limit). */
+        if (v && v->kind != EK::Var && v->kind != EK::Const && v->kind != EK::Reg &&
+            node_count(v) > 400) {
+            std::string tn = "t" + std::to_string(++temp_seq);
+            cse_temps.insert(tn);
+            int cw = v->width >= 8 ? 8 : 4;
+            var_width[tn] = cw; if (cw >= 8) var_is_ll[tn] = true;
+            if (v->is_float) var_is_float[tn] = true;
+            Stmt s; s.kind = SK::Assign; s.lhs = mkVar(tn, cw);
+            if (v->is_float) s.lhs->is_float = true;
+            s.rhs = v;
+            b.stmts.push_back(std::move(s));
+            ExprP tv = mkVar(tn, cw); if (cw >= 8) tv->is_unsigned = false;
+            if (v->is_float) tv->is_float = true;
+            v = tv;
+        }
+        regfile[r] = v;
+        /* A scalar write to an xmm invalidates any tracked high lane AND the packed
+         * float-lane vector: only an explicit packed op re-establishes them. */
+        if (is_xmm(r)) { regfile_hi[r] = nullptr; clear_xmm_f(r); xmm_packed_var.erase(r); }
+    }
+
+    void clear_xmm_f(Reg r) {
+        for (int k = 0; k < 4; ++k) xmm_f[r][k] = nullptr;
+        xmm_f_real[r] = false;
+        for (int k = 0; k < 4; ++k) xmm_i[r][k] = nullptr;
+        xmm_i_real[r] = false;
+    }
+    /* Get the 4 INT lanes of an operand. Register: tracked xmm_i (all 4 present).
+     * Memory: four `*(int*)(addr + 4*i)` loads. Mirrors xmm_f_lanes for integers. */
+    bool xmm_i_lanes(const cs_x86_op& op, ExprP out[4]) {
+        for (int i = 0; i < 4; ++i) out[i] = nullptr;
+        if (op.type == X86_OP_REG) {
+            Reg r; int w; map_reg(op.reg, r, w);
+            if (!is_xmm(r)) return false;
+            if (xmm_i[r][0] && xmm_i[r][1] && xmm_i[r][2] && xmm_i[r][3]) {
+                for (int i = 0; i < 4; ++i) out[i] = clone(xmm_i[r][i]);
+                return true;
+            }
+            return false;
+        }
+        if (op.type == X86_OP_MEM) {
+            ExprP m0 = rvalue(op);
+            if (m0 && m0->kind == EK::Mem && m0->a) {
+                for (int i = 0; i < 4; ++i) {
+                    ExprP a = (i == 0) ? clone(m0->a)
+                             : mkBinary("+", clone(m0->a), mkConst(4 * i, 8), 8);
+                    out[i] = mkMem(a, 4, false);   /* *(int*)(p + 4i) */
+                }
+                return true;
+            }
+        }
+        return false;
+    }
+    /* Set the 4 int lanes from a packed-INT op; mark real so a 128-bit store commits
+     * four `*(int*)` lanes, and drive lane 0 into the scalar regfile. */
+    void set_xmm_i4(Reg r, ExprP i0, ExprP i1, ExprP i2, ExprP i3, Block& b) {
+        if (!is_xmm(r)) return;
+        ExprP L[4] = { i0, i1, i2, i3 };
+        clear_xmm_f(r);
+        for (int k = 0; k < 4; ++k) xmm_i[r][k] = L[k] ? cap_lane(fold(clone(L[k])), b) : nullptr;
+        xmm_i_real[r] = true;
+        regfile[r] = i0 ? cap_lane(fold(clone(i0)), b) : nullptr;
+        regfile_hi[r] = nullptr;
+    }
+    /* Populate the 4 float lanes WITHOUT disturbing the scalar regfile (used on a
+     * movups/movaps memory load: ambiguous int-vs-float, so a side-channel only a
+     * later float op reads; `real` stays false until a float op commits). */
+    void populate_xmm_f(Reg r, ExprP f[4], bool real) {
+        if (!is_xmm(r)) return;
+        for (int k = 0; k < 4; ++k) { xmm_f[r][k] = f[k] ? fold(clone(f[k])) : nullptr; if (xmm_f[r][k]) xmm_f[r][k]->is_float = true; }
+        xmm_f_real[r] = real;
+    }
+    /* Set the 4 float lanes from a definite float OP (arith/shuffle): also drives
+     * lane 0 into the scalar regfile (so a following scalar movss/store reads it)
+     * and marks the vector `real` so a 128-bit store commits four float lanes. */
+    void set_xmm_f4(Reg r, ExprP f0, ExprP f1, ExprP f2, ExprP f3, Block& b) {
+        if (!is_xmm(r)) return;
+        ExprP L[4] = { f0, f1, f2, f3 };
+        for (int k = 0; k < 4; ++k) {
+            xmm_f[r][k] = L[k] ? cap_lane(fold(clone(L[k])), b) : nullptr;
+            if (xmm_f[r][k]) xmm_f[r][k]->is_float = true;
+        }
+        xmm_f_real[r] = true;
+        ExprP l0 = f0 ? clone(f0) : nullptr;
+        if (l0) { l0->is_float = true; l0->width = 4; }
+        regfile[r] = l0 ? cap_lane(fold(l0), b) : nullptr;
+        regfile_hi[r] = nullptr;
+    }
+
+    /* --- 2-lane (8-byte `movsd`-as-2-floats) packed-float side-channel. MSVC uses
+     * `movsd xmm,[m]; addps; movsd [m],xmm` as the 2-wide float remainder after the
+     * 16-byte main loop (fadd_v `a[i]+=b[i]`). Modeled with the LOW two xmm_f lanes;
+     * lanes 2,3 stay null. Mirror of the int populate_xmm_i2/set_xmm_i2 path. --- */
+    void populate_xmm_f2(Reg r, ExprP f0, ExprP f1) {
+        if (!is_xmm(r)) return;
+        xmm_f[r][0] = f0 ? fold(clone(f0)) : nullptr; if (xmm_f[r][0]) xmm_f[r][0]->is_float = true;
+        xmm_f[r][1] = f1 ? fold(clone(f1)) : nullptr; if (xmm_f[r][1]) xmm_f[r][1]->is_float = true;
+        xmm_f[r][2] = nullptr; xmm_f[r][3] = nullptr;
+        xmm_f_real[r] = false;
+    }
+    bool xmm_f_lanes2(const cs_x86_op& op, ExprP out[2]) {
+        out[0] = out[1] = nullptr;
+        if (op.type == X86_OP_REG) {
+            Reg r; int w; map_reg(op.reg, r, w);
+            if (!is_xmm(r) || !xmm_f[r][0] || !xmm_f[r][1]) return false;
+            out[0] = clone(xmm_f[r][0]); out[1] = clone(xmm_f[r][1]);
+            return true;
+        }
+        if (op.type == X86_OP_MEM) {
+            ExprP m0 = rvalue(op);
+            if (m0 && m0->kind == EK::Mem && m0->a) {
+                ExprP a0 = mkMem(clone(m0->a), 4, false); a0->is_float = true;
+                ExprP a1 = mkMem(mkBinary("+", clone(m0->a), mkConst(4, 8), 8), 4, false); a1->is_float = true;
+                out[0] = a0; out[1] = a1;
+                return true;
+            }
+        }
+        return false;
+    }
+    void set_xmm_f2(Reg r, ExprP f0, ExprP f1, Block& b) {
+        if (!is_xmm(r)) return;
+        xmm_f[r][0] = f0 ? cap_lane(fold(clone(f0)), b) : nullptr; if (xmm_f[r][0]) xmm_f[r][0]->is_float = true;
+        xmm_f[r][1] = f1 ? cap_lane(fold(clone(f1)), b) : nullptr; if (xmm_f[r][1]) xmm_f[r][1]->is_float = true;
+        xmm_f[r][2] = nullptr; xmm_f[r][3] = nullptr;
+        xmm_f_real[r] = true;
+        ExprP l0 = f0 ? clone(f0) : nullptr;
+        if (l0) { l0->is_float = true; l0->width = 4; }
+        regfile[r] = l0 ? cap_lane(fold(l0), b) : nullptr;
+        regfile_hi[r] = nullptr;
+    }
+    bool emit_simd8_store_flanes(Block& b, const cs_x86_op& dst, ExprP f[2], uint64_t addr) {
+        int w = 8; bool isr; Reg r; int wreg;
+        ExprP lv = store_lvalue(dst, w, isr, r, wreg);
+        if (isr || !lv || lv->kind != EK::Mem || !lv->a) return false;
+        if (!f[0] || !f[1]) return false;
+        ExprP daddr = lv->a;
+        ExprP m0 = mkMem(clone(daddr), 4, false); m0->is_float = true;
+        ExprP m1 = mkMem(mkBinary("+", clone(daddr), mkConst(4, 8), 8), 4, false); m1->is_float = true;
+        emit_store(b, m0, f[0], addr);
+        emit_store(b, m1, f[1], addr);
+        return true;
+    }
+    /* The scalar (lane-0) float value of an xmm operand — a movss-loaded scalar in
+     * the regfile, or a `*(float*)` memory load. Used for the `shufps x,x,0` splat
+     * that broadcasts a scalar into a vector (`vec * scalar`). */
+    ExprP xmm_scalar_f(const cs_x86_op& op) {
+        if (op.type == X86_OP_REG) {
+            Reg r; int w; map_reg(op.reg, r, w);
+            if (is_xmm(r) && regfile[r]) { ExprP v = clone(regfile[r]); v->is_float = true; if (v->width > 4) v->width = 4; return v; }
+            return nullptr;
+        }
+        if (op.type == X86_OP_MEM) {
+            ExprP m = rvalue(op);
+            if (m) { m->is_float = true; if (m->kind == EK::Mem) m->width = 4; }
+            return m;
+        }
+        return nullptr;
+    }
+    /* Get the 4 float lanes of an operand. Register: the tracked xmm_f (all 4 must
+     * be present). Memory: four `*(float*)(addr + 4*i)` loads. Returns false if the
+     * source can't yield a full float vector. */
+    bool xmm_f_lanes(const cs_x86_op& op, ExprP out[4]) {
+        for (int i = 0; i < 4; ++i) out[i] = nullptr;
+        if (op.type == X86_OP_REG) {
+            Reg r; int w; map_reg(op.reg, r, w);
+            if (!is_xmm(r)) return false;
+            if (xmm_f[r][0] && xmm_f[r][1] && xmm_f[r][2] && xmm_f[r][3]) {
+                for (int i = 0; i < 4; ++i) out[i] = clone(xmm_f[r][i]);
+                return true;
+            }
+            return false;
+        }
+        if (op.type == X86_OP_MEM) {
+            ExprP m0 = rvalue(op);
+            if (m0 && m0->kind == EK::Mem && m0->a) {
+                for (int i = 0; i < 4; ++i) {
+                    ExprP a = (i == 0) ? clone(m0->a)
+                             : mkBinary("+", clone(m0->a), mkConst(4 * i, 8), 8);
+                    ExprP mem = mkMem(a, 4, false); mem->is_float = true;
+                    out[i] = mem;
+                }
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /* Materialize an expr into a named temp if it has grown large (same valve as
+     * set_reg) so loop-carried lane expressions can't blow up. Returns a Var. */
+    ExprP cap_lane(ExprP v, Block& b) {
+        if (!v || v->kind == EK::Var || v->kind == EK::Const || v->kind == EK::Reg ||
+            node_count(v) <= 400) return v;
+        std::string tn = "t" + std::to_string(++temp_seq);
+        cse_temps.insert(tn);
+        int cw = v->width >= 8 ? 8 : 4;
+        var_width[tn] = cw; if (cw >= 8) var_is_ll[tn] = true;
+        if (v->is_float) var_is_float[tn] = true;
+        Stmt s; s.kind = SK::Assign; s.lhs = mkVar(tn, cw);
+        if (v->is_float) s.lhs->is_float = true;
+        s.rhs = v; b.stmts.push_back(std::move(s));
+        ExprP tv = mkVar(tn, cw);
+        if (v->is_float) tv->is_float = true;
+        return tv;
+    }
+
+    /* Set both lanes of an xmm from a packed op. lo goes through the normal scalar
+     * path (so scalar reads see lane 0); hi is recorded in the side map. */
+    void set_xmm_lanes(Reg r, ExprP lo, ExprP hi, Block& b) {
+        set_reg(r, 16, lo, b);                 /* sets regfile[r], clears regfile_hi[r] */
+        if (is_xmm(r)) regfile_hi[r] = hi ? cap_lane(fold(hi), b) : nullptr;
+    }
+    ExprP xmm_lo(Reg r) const { return regfile[r] ? clone(regfile[r]) : nullptr; }
+    ExprP xmm_hi(Reg r) const {
+        return (is_xmm(r) && regfile_hi[r]) ? clone(regfile_hi[r]) : nullptr;
+    }
+
+    ExprP set_width(ExprP v, int w) {
+        if (!v) return v;
+        auto c = std::make_shared<Expr>(*v);
+        c->a = v->a; c->b = v->b; c->c = v->c; c->args = v->args;
+        c->width = w;
+        return c;
+    }
+
+    /* Emit a store to a recovered variable / memory location (a real statement). */
+    void emit_store(Block& b, ExprP lhs, ExprP rhs, uint64_t addr) {
+        Stmt s; s.kind = SK::Assign; s.lhs = lhs; s.rhs = fold(rhs); s.addr = addr;
+        b.stmts.push_back(std::move(s));
+    }
+
+    /* A 128-bit SIMD store (movups/movaps/movdqu of an xmm to memory) copies all
+     * 16 bytes — emitting a single scalar store dropped 12 (a `movups [ctx],xmm0`
+     * ImVec4/rect copy became `*(int*)ctx = *a1`). Split it into two 8-byte halves
+     * when the source is a memory load or a constant: always compiles (plain
+     * `long long`, no 128-bit type), and is behavior-faithful. Returns false (caller
+     * falls back to the scalar store) when the source can't be cleanly halved. */
+    bool emit_simd16_store(Block& b, const cs_x86_op& dst, ExprP src, uint64_t addr) {
+        int w = 16; bool isr; Reg r; int wreg;
+        ExprP lv = store_lvalue(dst, w, isr, r, wreg);
+        if (isr || !lv || lv->kind != EK::Mem || !lv->a) return false;
+        ExprP slo, shi;
+        if (src && src->kind == EK::Mem && src->a) {
+            slo = mkMem(clone(src->a), 8);
+            shi = mkMem(mkBinary("+", clone(src->a), mkConst(8, 8), 8), 8);
+        } else if (src && src->kind == EK::Const) {
+            slo = mkConst(src->cval, 8); shi = mkConst(0, 8);
+        } else return false;
+        ExprP daddr = lv->a;
+        emit_store(b, mkMem(clone(daddr), 8), slo, addr);
+        emit_store(b, mkMem(mkBinary("+", clone(daddr), mkConst(8, 8), 8), 8), shi, addr);
+        return true;
+    }
+
+    /* A 128-bit store whose FOUR 32-bit float lanes were tracked through packed-
+     * float ops (mulps/addps/shufps). Emits four faithful `*(float*)(d + 4*i)`
+     * stores — the packed-float analogue of the 2x64 lane store. */
+    bool emit_simd16_store_flanes(Block& b, const cs_x86_op& dst, ExprP f[4], uint64_t addr) {
+        int w = 16; bool isr; Reg r; int wreg;
+        ExprP lv = store_lvalue(dst, w, isr, r, wreg);
+        if (isr || !lv || lv->kind != EK::Mem || !lv->a) return false;
+        for (int i = 0; i < 4; ++i) if (!f[i]) return false;
+        ExprP daddr = lv->a;
+        for (int i = 0; i < 4; ++i) {
+            ExprP a = (i == 0) ? clone(daddr)
+                     : mkBinary("+", clone(daddr), mkConst(4 * i, 8), 8);
+            ExprP m = mkMem(a, 4, false); m->is_float = true;
+            emit_store(b, m, f[i], addr);
+        }
+        return true;
+    }
+
+    /* A 128-bit store whose FOUR 32-bit INT lanes were tracked through packed-int
+     * ops (pmulld/paddd/...): commit four faithful `*(int*)(p + 4i) = lane` stores. */
+    bool emit_simd16_store_ilanes(Block& b, const cs_x86_op& dst, ExprP f[4], uint64_t addr) {
+        int w = 16; bool isr; Reg r; int wreg;
+        ExprP lv = store_lvalue(dst, w, isr, r, wreg);
+        if (isr || !lv || lv->kind != EK::Mem || !lv->a) return false;
+        for (int i = 0; i < 4; ++i) if (!f[i]) return false;
+        ExprP daddr = lv->a;
+        for (int i = 0; i < 4; ++i) {
+            ExprP a = (i == 0) ? clone(daddr)
+                     : mkBinary("+", clone(daddr), mkConst(4 * i, 8), 8);
+            emit_store(b, mkMem(a, 4, false), f[i], addr);   /* *(int*)(p+4i) = lane */
+        }
+        return true;
+    }
+    /* Stock the packed-INT side-channel from a raw movdqu load (real=false: int-vs-
+     * float ambiguous until a packed op reads it). */
+    void populate_xmm_i(Reg r, ExprP f[4]) {
+        if (!is_xmm(r)) return;
+        for (int k = 0; k < 4; ++k) xmm_i[r][k] = f[k] ? fold(clone(f[k])) : nullptr;
+        xmm_i_real[r] = false;
+    }
+
+    /* --- 2-lane (8-byte `movq`) packed-int side-channel. MSVC emits a movq /
+     * paddd / movq loop as the 2-wide remainder after the 16-byte main loop
+     * (iadd/isub `a[i]+=b[i]`, n not a multiple of 4). Modeled with the LOW two
+     * xmm_i lanes only; lanes 2,3 stay null. --- */
+    void populate_xmm_i2(Reg r, ExprP f0, ExprP f1) {
+        if (!is_xmm(r)) return;
+        xmm_i[r][0] = f0 ? fold(clone(f0)) : nullptr;
+        xmm_i[r][1] = f1 ? fold(clone(f1)) : nullptr;
+        xmm_i[r][2] = nullptr; xmm_i[r][3] = nullptr;
+        xmm_i_real[r] = false;
+    }
+    /* Recover the low TWO int32 lanes of an 8-byte packed-int operand (a tracked
+     * xmm with lanes 0,1, or an 8-byte memory load). Returns false otherwise. */
+    bool xmm_i_lanes2(const cs_x86_op& op, ExprP out[2]) {
+        out[0] = out[1] = nullptr;
+        if (op.type == X86_OP_REG) {
+            Reg r; int w; map_reg(op.reg, r, w);
+            if (!is_xmm(r) || !xmm_i[r][0] || !xmm_i[r][1]) return false;
+            out[0] = clone(xmm_i[r][0]); out[1] = clone(xmm_i[r][1]);
+            return true;
+        }
+        if (op.type == X86_OP_MEM) {
+            ExprP m0 = rvalue(op);
+            if (m0 && m0->kind == EK::Mem && m0->a) {
+                out[0] = mkMem(clone(m0->a), 4, false);
+                out[1] = mkMem(mkBinary("+", clone(m0->a), mkConst(4, 8), 8), 4, false);
+                return true;
+            }
+        }
+        return false;
+    }
+    /* Set the low two int lanes from a 2-wide packed op; mark real so a following
+     * `movq m64, xmm` commits two `*(int*)` lanes. */
+    void set_xmm_i2(Reg r, ExprP i0, ExprP i1, Block& b) {
+        if (!is_xmm(r)) return;
+        clear_xmm_f(r);
+        xmm_i[r][0] = i0 ? cap_lane(fold(clone(i0)), b) : nullptr;
+        xmm_i[r][1] = i1 ? cap_lane(fold(clone(i1)), b) : nullptr;
+        xmm_i[r][2] = nullptr; xmm_i[r][3] = nullptr;
+        xmm_i_real[r] = true;
+        regfile[r] = i0 ? cap_lane(fold(clone(i0)), b) : nullptr;
+        regfile_hi[r] = nullptr;
+    }
+    /* An 8-byte store whose low two 32-bit int lanes were tracked through a 2-wide
+     * packed-int op: emits two faithful `*(int*)(d + 4i)` stores. */
+    bool emit_simd8_store_ilanes(Block& b, const cs_x86_op& dst, ExprP f[2], uint64_t addr) {
+        int w = 8; bool isr; Reg r; int wreg;
+        ExprP lv = store_lvalue(dst, w, isr, r, wreg);
+        if (isr || !lv || lv->kind != EK::Mem || !lv->a) return false;
+        if (!f[0] || !f[1]) return false;
+        ExprP daddr = lv->a;
+        emit_store(b, mkMem(clone(daddr), 4, false), f[0], addr);
+        emit_store(b, mkMem(mkBinary("+", clone(daddr), mkConst(4, 8), 8), 4, false), f[1], addr);
+        return true;
+    }
+
+    /* A 128-bit store whose two 64-bit lanes were tracked through packed ops
+     * (lo/hi already computed). Splits into two faithful 8-byte lane stores. */
+    bool emit_simd16_store_lanes(Block& b, const cs_x86_op& dst, ExprP lo, ExprP hi, uint64_t addr) {
+        int w = 16; bool isr; Reg r; int wreg;
+        ExprP lv = store_lvalue(dst, w, isr, r, wreg);
+        if (isr || !lv || lv->kind != EK::Mem || !lv->a) return false;
+        ExprP daddr = lv->a;
+        emit_store(b, mkMem(clone(daddr), 8), lo, addr);
+        emit_store(b, mkMem(mkBinary("+", clone(daddr), mkConst(8, 8), 8), 8), hi, addr);
+        return true;
+    }
+
+    /* Recover the two 64-bit lanes of a 128-bit SIMD source operand (a tracked xmm
+     * register, or a 16-byte memory load split into lo/hi halves). Returns true
+     * only when BOTH lanes are known. */
+    /* A 16-byte load from a READ-ONLY image address (a compiler-materialized const
+     * vector in .rdata) as its two 64-bit lanes. The scalar image reader collapses a
+     * 16-byte load to ONE Const (low 8 bytes only), and the store then zeroes the high
+     * half — losing half the constant array. Read BOTH 8-byte halves so both lanes
+     * commit as real constants (correct AND recompilable, no absolute derefs). */
+    bool image_const_lanes(const cs_x86_op& op, ExprP& lo, ExprP& hi) {
+        if (op.type != X86_OP_MEM) return false;
+        const x86_op_mem& m = op.mem;
+        if (m.index != X86_REG_INVALID) return false;
+        uint64_t abs;
+        if (m.base == X86_REG_RIP) abs = cur_insn_addr + cur_insn_size + (uint64_t)m.disp;
+        else if (m.base == X86_REG_INVALID && m.segment == X86_REG_INVALID) abs = (uint64_t)m.disp;
+        else return false;
+        if (addr_writable(abs)) return false;   /* a mutable global is not a constant */
+        int64_t a = 0, b = 0;
+        if (!read_i64(abs, a) || !read_i64(abs + 8, b)) return false;
+        lo = mkConst(a, 8); hi = mkConst(b, 8);
+        return true;
+    }
+    bool simd_src_lanes(const cs_x86_op& op, ExprP& lo, ExprP& hi) {
+        if (op.type == X86_OP_REG) {
+            Reg r; int w; map_reg(op.reg, r, w);
+            if (!is_xmm(r)) return false;
+            lo = xmm_lo(r); hi = xmm_hi(r);
+            return lo && hi;
+        }
+        if (op.type == X86_OP_MEM) {
+            if (image_const_lanes(op, lo, hi)) return true;
+            ExprP m = rvalue(op);
+            if (m && m->kind == EK::Mem && m->a) {
+                lo = mkMem(clone(m->a), 8);
+                hi = mkMem(mkBinary("+", clone(m->a), mkConst(8, 8), 8), 8);
+                return true;
+            }
+        }
+        return false;
+    }
+    /* Lane 0 (low 64 bits) of a SIMD source operand, or null if unknown. */
+    ExprP simd_lane0(const cs_x86_op& op) {
+        if (op.type == X86_OP_REG) {
+            Reg r; int w; map_reg(op.reg, r, w);
+            return is_xmm(r) ? xmm_lo(r) : nullptr;
+        }
+        if (op.type == X86_OP_MEM) {
+            ExprP m = rvalue(op);
+            if (m && m->kind == EK::Mem && m->a) return mkMem(clone(m->a), 8);
+        }
+        return nullptr;
+    }
+
+    /* Build the lvalue for a destination operand; returns null for reg dst. */
+    ExprP store_lvalue(const cs_x86_op& op, int& width, bool& is_reg, Reg& which, int& wreg) {
+        is_reg = false; which = R_NONE; wreg = 0;
+        if (op.type == X86_OP_REG) {
+            Reg r; int w; map_reg(op.reg, r, w);
+            is_reg = true; which = r; wreg = w; width = w; return nullptr;
+        }
+        if (op.type == X86_OP_MEM) {
+            width = op.size ? op.size : 4;
+            const x86_op_mem& m = op.mem;
+            if (m.base == X86_REG_RIP && m.index == X86_REG_INVALID) {
+                uint64_t abs = cur_insn_addr + cur_insn_size + (uint64_t)m.disp;
+                return mkMem(mkConst((int64_t)abs, 8), width);
+            }
+            Reg base = R_NONE, index = R_NONE; int t;
+            if (m.base != X86_REG_INVALID) map_reg(m.base, base, t);
+            if (m.index != X86_REG_INVALID) map_reg(m.index, index, t);
+            if (index == R_NONE && base != R_RIP) {
+                int64_t norm;
+                if (normalise_slot(base, m.disp, norm)) {
+                    /* store into an address-escaped aggregate field -> memory store
+                     * into `sN`, so the pre-call init (zeroing, byte/movdqu fills)
+                     * the callee reads is preserved, not dropped as a dead scalar. */
+                    if (!param_home_off.count(norm)) {
+                        if (const AggRegion* r = agg_region_for(norm))
+                            return mkMem(agg_addr(*r, norm), width);
+                    }
+                    std::string nm = resolved_slot_name(norm, width);
+                    record_width(nm, width);
+                    return mkVar(nm, width);
+                }
+            }
+            /* stack-array store: *(T*)(&buf + index*scale) = val */
+            if (index != R_NONE) {
+                int64_t norm;
+                if (normalise_slot(base, m.disp, norm)) {
+                    if (!param_home_off.count(norm)) {
+                        if (const AggRegion* r = agg_region_for(norm))
+                            return mkMem(agg_indexed(*r, norm, index, m.scale), width);
+                    }
+                    return mkMem(stack_array_addr(norm, index, m.scale), width);
+                }
+            }
+            return mem_to_expr(op, width, regfile);
+        }
+        return nullptr;
+    }
+
+    /* Before a store to memory, any register whose cached value was READ from the
+     * SAME address must be spilled to a temp — otherwise the cached memory-load
+     * expression silently re-reads the just-overwritten cell. This is the swap
+     * bug: `r9 = a[i]; a[i] = a[j]; a[j] = r9` lifted as `a[j] = a[i]` after a[i]
+     * was clobbered (both elements ended up equal, destroying every quicksort/
+     * heapsort/partition swap). Materialize the snapshot so the deferred use reads
+     * the OLD value. Spilling is always value-preserving; dead temps are DSE'd. */
+    void clobber_mem_before_store(Block& b, const ExprP& storeAddr, uint64_t addr) {
+        if (!storeAddr) return;
+        for (int r = R_RAX; r < R_COUNT; ++r) {
+            if (r == R_RSP || r == R_RIP) continue;
+            /* RBP is a GENERAL register under /O2 (no frame pointer): it routinely
+             * holds a memory load (sl_insert keeps `idx = sl->count` in rbp). Skip
+             * it only when it is the frame base; a frame-base rbp is an EK::Reg and
+             * is filtered out below anyway. Skipping it unconditionally left a
+             * post-increment's old value re-read from the just-overwritten cell
+             * (sl_insert stored idx+1 into the back-links and returned idx+1). */
+            if (r == R_RBP && uses_rbp_frame) continue;
+            ExprP cur = regfile[r];
+            if (!cur || cur->kind == EK::Var || cur->kind == EK::Const ||
+                cur->kind == EK::Reg) continue;
+            if (!expr_loads_addr(cur, storeAddr)) continue;
+            std::string tn = "t" + std::to_string(++temp_seq);
+            spill_temps.insert(tn);
+            int cw = cur->width >= 8 ? 8 : 4;
+            var_width[tn] = cw; if (cw == 8) var_is_ll[tn] = true;
+            if (cur->is_float) var_is_float[tn] = true;
+            Stmt s; s.kind = SK::Assign; s.lhs = mkVar(tn, cw);
+            s.rhs = fold(clone(cur)); s.addr = addr;
+            b.stmts.push_back(std::move(s));
+            regfile[r] = mkVar(tn, cw);
+        }
+    }
+
+    /* Generic dst = value: register => map update; mem/var => statement. */
+    void do_dst(Block& b, const cs_x86_op& dst, ExprP val, uint64_t addr) {
+        int width = 4; bool isr; Reg r; int wreg;
+        ExprP lv = store_lvalue(dst, width, isr, r, wreg);
+        /* NOTE (deferred): a raw FLOAT landing in a GP register via `movss [slot],xmm;
+         * mov eax,[slot]` (union/bit-cast — isnan/frexp/signbit) is a bit reinterpret
+         * `*(int*)&f`, decompiled here as a value conversion. Fixing it needs SLOT-level
+         * float tracking (the int-read value carries no is_float at lift), unlike the movd
+         * register form (handled). mathclassify.dll's 18 spill-reload fails are this class. */
+        if (isr) { set_reg(r, wreg, val, b); return; }
+        if (lv) {
+            ExprP sv = truncate(val, width);
+            /* storing a float value through a pointer makes the target a float
+             * deref (`*(float*)`), so the destination pointer is float* too. */
+            if (lv->kind == EK::Mem && val && val->is_float) {
+                lv->is_float = true;
+                if (sv) sv->is_float = true;
+            }
+            if (lv->kind == EK::Mem && lv->a)
+                clobber_mem_before_store(b, lv->a, addr);
+            emit_store(b, lv, sv, addr);
+        }
+    }
+
+    /* Freeze an expression into a fresh `t<N> = <expr>;` statement and return a Var
+     * for it. For an atomic RMW (xchg/cmpxchg) whose destination is memory, the
+     * swapped-out register half, the ZF flag, and rax must all see the PRE-store
+     * value — but the memory operand is a re-reading expression (`*(T*)addr` / a
+     * `#define` global), so after the store it would read back the NEW value and
+     * invert the lock logic. Snapshotting the old value first keeps them consistent. */
+    ExprP snapshot_to_temp(Block& b, ExprP v, int w, uint64_t addr) {
+        std::string tn = "t" + std::to_string(++temp_seq);
+        spill_temps.insert(tn);
+        int cw = w >= 8 ? 8 : 4;
+        var_width[tn] = cw; if (cw >= 8) var_is_ll[tn] = true;
+        Stmt s; s.kind = SK::Assign; s.lhs = mkVar(tn, cw); s.rhs = fold(v); s.addr = addr;
+        b.stmts.push_back(std::move(s));
+        return mkVar(tn, cw);
+    }
+
+    /* ----- flag / condition recovery ----- */
+    ExprP cc_to_expr(CC cc, const FlagSrc& fs) {
+        if (!fs.valid) return mkConst(1, 4);
+        /* bit test: `bt x,n; jc/jb` => bit set; `jnc/jae` => bit clear. CF holds
+         * the tested bit (fs.a already = `(x >> n) & 1`). */
+        if (fs.is_bt) {
+            bool set = (cc == CC::B);    /* jb/jc taken when CF==1 (bit set) */
+            return fold(mkBinary(set ? "!=" : "==", clone(fs.a), mkConst(0, fs.width), fs.width));
+        }
+        /* float compare: comiss/ucomiss set CF/ZF so the UNSIGNED conditional
+         * jumps express the ordering. Emit plain float relops (no unsigned cast). */
+        if (fs.is_fcmp) {
+            /* comiss/ucomiss set CF/ZF so UNSIGNED jcc express the FP ordering, but
+             * the "below"/"below-equal"/unordered-inclusive branches (jb/jbe, taken
+             * on CF=1 which the CPU also sets for an UNORDERED/NaN compare) do NOT
+             * match C's `<`/`<=` (both false for NaN). Rendering jb as `a < b` drops
+             * the NaN case — e.g. arr_abs's `comiss 0,a[i]; jbe skip` (skip when
+             * `!(a[i] < 0)` INCLUDING NaN) became `a[i] >= 0` (excludes NaN), so a
+             * NaN element got wrongly negated. Emit the unordered-inclusive branches
+             * as the negation of their ORDERED complement — `jb => !(a >= b)`,
+             * `jbe => !(a > b)` — which is bit-correct for every input, NaN included.
+             * ja/jae are ordered (false on NaN) and render directly. */
+            std::string fop; bool neg_unord = false;
+            switch (cc) {
+                case CC::E:  fop = "=="; break;
+                case CC::NE: fop = "!="; break;
+                case CC::A:  fop = ">";  break;
+                case CC::AE: fop = ">="; break;
+                case CC::B:  fop = ">="; neg_unord = true; break;  /* jb  = !(a>=b) */
+                case CC::BE: fop = ">";  neg_unord = true; break;  /* jbe = !(a>b)  */
+                default:     fop = "!="; break;
+            }
+            ExprP la = clone(fs.a), ra = clone(fs.b);
+            /* Canonicalise `const OP var` -> `var FLIP const` so a comiss with the
+             * zero/constant in the first operand reads as `a2 < 0.0f`, not the
+             * algebraically-equal but jarring `0.0f > a2`. */
+            if (la->kind == EK::Const && ra->kind != EK::Const) {
+                std::swap(la, ra);
+                if (fop == ">") fop = "<"; else if (fop == "<") fop = ">";
+                else if (fop == ">=") fop = "<="; else if (fop == "<=") fop = ">=";
+            }
+            /* a float relation: any bare 0 operand should print as a float zero. */
+            if (la->kind == EK::Const) la->is_float = true, la->width = fs.width;
+            if (ra->kind == EK::Const) ra->is_float = true, ra->width = fs.width;
+            ExprP rel = fold(mkBinary(fop, la, ra, fs.width));
+            if (neg_unord) rel = mkUnary("!", rel, 4);
+            return rel;
+        }
+        ExprP L, R;
+        bool uns = false;
+        std::string op;
+        /* An arithmetic SUBTRACTION result feeding a conditional carries exactly
+         * the flags of `cmp A, B` (CF/SF/ZF/OF all reflect A - B). Modeling it as
+         * `(A - B) OP 0` breaks the CARRY-based unsigned codes — `sub x,k; jae` is
+         * `x >= k`, NOT the always-true `(x - k) >= 0u` — and is loose for signed
+         * codes too (overflow). Decompose so every condition code is exact. */
+        ExprP dA, dB; bool decomposed = false;
+        if (fs.is_arith && !fs.is_cmp && !fs.is_test && fs.a &&
+            fs.a->kind == EK::Binary && fs.a->op == "-" && fs.a->a && fs.a->b) {
+            dA = fs.a->a; dB = fs.a->b; decomposed = true;
+        }
+        if (fs.is_cmp) { L = clone(fs.a); R = clone(fs.b); }
+        else if (fs.is_test) {
+            ExprP a = clone(fs.a), bb = clone(fs.b);
+            if (exprEqual(fs.a, fs.b)) L = a;
+            else L = mkBinary("&", a, bb, fs.width);
+            R = mkConst(0, fs.width);
+        } else if (decomposed) { L = clone(dA); R = clone(dB); }
+        else { L = clone(fs.a); R = mkConst(0, fs.width); }
+
+        switch (cc) {
+            /* For a DESTRUCTIVE arithmetic (`sub eax,1; jne` countdown), the ZF
+             * reflects the RESULT, so the exit test is `(A-B) == 0`, NOT the
+             * operand form `A == B`. Critically, the destination register is
+             * OVERWRITTEN by the sub and reused as the loop-carried counter, so the
+             * operand form would re-read the just-decremented variable (rendering
+             * `t1 == 1` where t1 is already post-decrement => one iteration short).
+             * Emitting the result form `(A-B) == 0` lets inject_phis' terminator
+             * rebind retarget the back-edge value `A-B` to the post-copy temp,
+             * yielding the correct `t1 == 0`. Equality codes only — carry/borrow
+             * codes still need the decomposed operands. */
+            case CC::E:  op = "=="; if (decomposed) { L = clone(fs.a); R = mkConst(0, fs.width); } break;
+            case CC::NE: op = "!="; if (decomposed) { L = clone(fs.a); R = mkConst(0, fs.width); } break;
+            case CC::L:  op = "<";  break;
+            case CC::LE: op = "<="; break;
+            case CC::G:  op = ">";  break;
+            case CC::GE: op = ">="; break;
+            case CC::B:  op = "<";  uns = true; break;
+            case CC::BE: op = "<="; uns = true; break;
+            case CC::A:  op = ">";  uns = true; break;
+            case CC::AE: op = ">="; uns = true; break;
+            /* Sign flag after a COMPARE reflects sign(A - B), not sign(A): a
+             * `cmp A,B; cmovns/setns` selects on `A - B >= 0`. Dropping B (forcing
+             * the RHS to 0 while keeping L=A) silently loses an operand — e.g. a
+             * 2D cross product `a*b - c*d` lowered to `imul; imul; cmp; cmovns`
+             * collapsed to `a*b >= 0`, dropping the subtracted second product. For
+             * a non-compare source (test / single arithmetic result) SF is the sign
+             * of that one value, so L stays as-is. */
+            case CC::S:
+                op = "<";
+                if (fs.is_cmp) L = fold(mkBinary("-", clone(fs.a), clone(fs.b), fs.width));
+                else if (decomposed) L = clone(fs.a);   /* fs.a IS A - B */
+                R = mkConst(0, fs.width); break;
+            case CC::NS:
+                op = ">=";
+                if (fs.is_cmp) L = fold(mkBinary("-", clone(fs.a), clone(fs.b), fs.width));
+                else if (decomposed) L = clone(fs.a);
+                R = mkConst(0, fs.width); break;
+            default:     op = "!="; break;
+        }
+        return fold(mkBinary(op, L, R, fs.width, uns));
+    }
+
+    void set_flags_cmp(const cs_x86& x) {
+        flags = FlagSrc();
+        flags.valid = true; flags.is_cmp = true;
+        flags.a = rvalue(x.operands[0]);
+        flags.b = rvalue(x.operands[1]);
+        flags.width = x.operands[0].size ? x.operands[0].size : 4;
+    }
+    void set_flags_test(const cs_x86& x) {
+        flags = FlagSrc();
+        flags.valid = true; flags.is_test = true;
+        flags.a = rvalue(x.operands[0]);
+        flags.b = rvalue(x.operands[1]);
+        flags.width = x.operands[0].size ? x.operands[0].size : 4;
+    }
+    void set_flags_arith(ExprP res, int w) {
+        flags = FlagSrc();
+        flags.valid = true; flags.is_arith = true; flags.a = clone(res); flags.width = w;
+    }
+    /* Set arithmetic flags for a destination JUST written with `res`. For a MEMORY
+     * destination, `res` embeds a LIVE `*p` read that re-evaluates to the POST-store
+     * value at render time, double-counting the op: `*p = *p - 1; if (*p - 1 != 0)`
+     * (the refcount off-by-one → premature free/UAF) and `*p = *p >> 1; if (*p >> 1)`
+     * (double shift). The stored result IS the new *p, so read the lvalue back — it
+     * renders as `if (*p != 0)`. A register keeps `res` (rvalue would return the same
+     * updated expr, but avoid perturbing the common path). Must be called AFTER do_dst. */
+    void set_flags_dst(const cs_x86_op& d, ExprP res, int w) {
+        set_flags_arith(d.type == X86_OP_MEM ? rvalue(d) : res, w);
+    }
+
+    /* ----- the main per-block executor ----- */
+    void exec_block(Block& b) {
+        for (int i = 0; i < R_COUNT; ++i) { regfile[i] = nullptr; regfile_hi[i] = nullptr; clear_xmm_f((Reg)i); }
+        xmm_packed_var.clear(); stack_packed_var.clear(); int_slots.clear();
+        if (b.is_switch) switch_resolved_index.erase(b.id);   /* recapture each pass */
+        flags = FlagSrc();
+        /* Inherit the flag state from a single predecessor: a compare in one block
+         * feeding a conditional jump in the next (`cmp; jcc1; jcc2`, or the float
+         * `ucomisd; jp; jne` idiom) would otherwise lose its condition -> `if(1)`. */
+        if (b.pred.size() == 1 && b.pred[0] >= 0 &&
+            b.pred[0] < (int)block_flags_out.size())
+            flags = block_flags_out[b.pred[0]];
+        /* Multi-predecessor merge: if EVERY predecessor exits with the same flag
+         * source, the condition is well-defined at the join. A conditional jump
+         * whose `cmp` sits in a dominating block before a join (e.g. `cmp
+         * [rbx+0x27fc],0x14` falling into a labelled `jne` that is also a jump
+         * target) otherwise lost its flags here and folded to `if (1)` / `if
+         * (0==0)`. This is the flag analog of the cross-block register fixpoint. */
+        else if (b.pred.size() > 1) {
+            FlagSrc first; bool init = false, agree = true;
+            for (int p : b.pred) {
+                if (p < 0 || p >= (int)block_flags_out.size()) { agree = false; break; }
+                const FlagSrc& fp = block_flags_out[p];
+                if (!fp.valid) { agree = false; break; }
+                if (!init) { first = fp; init = true; }
+                else if (!flagsrc_equal(first, fp)) { agree = false; break; }
+            }
+            if (init && agree) flags = first;
+        }
+        /* RSP is the symbolic frame base: a register that captures it (`mov rax,rsp`)
+         * stays frame-relative so `[rax+off]` resolves to a stack slot instead of
+         * collapsing to `[0+off]`. (push/sub-rsp are no-ops, so the marker holds.) */
+        regfile[R_RSP] = mkReg(R_RSP, 8);
+        /* seed regfile from block entry phi/temps (set by phi pass) */
+        for (int i = 0; i < R_COUNT; ++i)
+            if (entry_reg[b.id][i]) regfile[i] = clone(entry_reg[b.id][i]);
+        /* seed packed-SIMD high lanes (a broadcast that crossed a block boundary) */
+        if (b.id >= 0 && b.id < (int)entry_reg_hi.size())
+            for (int i = 0; i < R_COUNT; ++i)
+                if (entry_reg_hi[b.id][i]) regfile_hi[i] = clone(entry_reg_hi[b.id][i]);
+        /* seed packed-FLOAT lanes (a loop-invariant broadcast set up in a preheader
+         * survives into the loop body where mulps/addps consumes it). */
+        if (b.id >= 0 && b.id < (int)entry_xmm_f.size())
+            for (int i = 0; i < R_COUNT; ++i)
+                if (entry_xmm_f[b.id][i][0]) {
+                    for (int L = 0; L < 4; ++L)
+                        xmm_f[i][L] = entry_xmm_f[b.id][i][L] ? clone(entry_xmm_f[b.id][i][L]) : nullptr;
+                    xmm_f_real[i] = entry_xmm_f_real[b.id][i];
+                }
+        /* seed packed-INT lanes (guard-block `movd;pshufd` broadcast into the SSE body) */
+        if (b.id >= 0 && b.id < (int)entry_xmm_i.size())
+            for (int i = 0; i < R_COUNT; ++i)
+                if (entry_xmm_i[b.id][i][0]) {
+                    for (int L = 0; L < 4; ++L)
+                        xmm_i[i][L] = entry_xmm_i[b.id][i][L] ? clone(entry_xmm_i[b.id][i][L]) : nullptr;
+                    xmm_i_real[i] = entry_xmm_i_real[b.id][i];
+                }
+
+        prev_insn = nullptr;
+        for (size_t k = 0; k < b.insn_idx.size(); ++k) {
+            const Insn& in = insns[b.insn_idx[k]];
+            cur_insn_addr = in.addr; cur_insn_size = in.size;
+            /* capture a gs:/fs: segment-override prefix (x86-64 encodes it in the
+             * prefix bytes, not always in mem.segment) so resolve_mem/mem_to_expr
+             * can model TEB/TLS accesses even when mem.segment is unset. */
+            cur_insn_seg = 0;
+            for (int pi = 0; pi < 4; ++pi) {
+                if (in.x86.prefix[pi] == X86_PREFIX_GS) { cur_insn_seg = 1; break; }
+                if (in.x86.prefix[pi] == X86_PREFIX_FS) { cur_insn_seg = 2; break; }
+            }
+            exec_insn(b, in);
+            prev_insn = &in;
+        }
+
+        /* record live-out register expressions */
+        for (int i = 0; i < R_COUNT; ++i) {
+            b.reg_out[i] = regfile[i] ? clone(regfile[i]) : nullptr;
+            b.reg_out_hi[i] = regfile_hi[i] ? clone(regfile_hi[i]) : nullptr;
+            b.reg_out_f_real[i] = xmm_f_real[i];
+            for (int L = 0; L < 4; ++L)
+                b.reg_out_f[i][L] = xmm_f[i][L] ? clone(xmm_f[i][L]) : nullptr;
+            b.reg_out_i_real[i] = xmm_i_real[i];
+            for (int L = 0; L < 4; ++L)
+                b.reg_out_i[i][L] = xmm_i[i][L] ? clone(xmm_i[i][L]) : nullptr;
+        }
+        if (b.id >= 0 && b.id < (int)block_flags_out.size())
+            block_flags_out[b.id] = flags;
+
+        /* branch condition */
+        const Insn* last = b.insn_idx.empty() ? nullptr : &insns[b.insn_idx.back()];
+        if (last && last->is_jcc && !b.drop_branch) {
+            CC cc = jcc_of(last->id);
+            b.cc = cc;
+            b.cond = cc_to_expr(cc, flags);
+        }
+        /* tail call: a `jmp <func>` whose target leaves this function returns the
+         * callee's result. Fires when there is no in-function successor (b.taken<0)
+         * OR the target is OUTSIDE [f->rva, f->rva+size) — the engine sometimes
+         * over-extends a neighbor's range so the jmp got linked to an in-image
+         * block that is really foreign code (DllMain -> 0x5e34c, which sits inside
+         * 0x5e2c8's range). In that case sever the spurious edge so the block is
+         * terminal and the tail call is emitted instead of a goto into the neighbor. */
+        bool jmp_outside = last && last->is_jmp && last->has_branch_target &&
+            f && f->size && (last->branch_target < f->rva ||
+                             last->branch_target >= f->rva + f->size);
+        if (last && last->is_jmp && last->has_branch_target && !b.is_switch &&
+            (b.taken < 0 || jmp_outside)) {
+            if (jmp_outside && b.taken >= 0) {
+                for (auto it = b.succ.begin(); it != b.succ.end(); )
+                    it = (*it == b.taken) ? b.succ.erase(it) : it + 1;
+                b.taken = -1;
+            }
+            uint64_t tgt = last->branch_target;
+            bool is_func = false;
+            for (size_t i = 0; i < e->func_len; ++i)
+                if (e->funcs[i].rva == tgt) { is_func = true; break; }
+            /* A terminal `jmp <addr>` with no in-function successor is a TAIL CALL
+             * even when the engine didn't list <addr> as a function (DllMain ->
+             * 0x5e34c, CRT thunks). Accept any in-image code RVA so the call —
+             * `return fun_<addr>(args)` — is recovered instead of dropped. */
+            if (is_func || (tgt > 0 && tgt < e->image_size)) {
+                std::string callee = name_for_rva(tgt);
+                int rk = 2, pc = 4; unsigned char fmask = 0;
+                if (sigtab && sigtab->count(tgt)) {
+                    rk = sigtab->at(tgt).ret_kind; pc = sigtab->at(tgt).param_count;
+                    fmask = sigtab->at(tgt).float_mask;
+                }
+                /* A TAIL CALL to a `j_<api>` import thunk (`jmp j_memset`) or to a
+                 * recognized API inherits that API's arity — the thunk's jmp-only
+                 * body gave the sigtab 0 params, so `return j_memset()` dropped all
+                 * args (cabinet fn_00019fd0/fn_00017e44). Mirrors the direct-call
+                 * thunk override; strip a leading `j_` then consult known_api. */
+                {
+                    int aargc, ark;
+                    std::string base = (callee.rfind("j_", 0) == 0) ? callee.substr(2) : callee;
+                    if (known_api(base, aargc, ark)) { pc = aargc; rk = ark; fmask = 0; }
+                }
+                extern_callees[callee] = rk;
+                auto call = std::make_shared<Expr>();
+                call->kind = EK::Call; call->callee = callee; call->width = 8;
+                call->ret_kind = rk;
+                Reg argregs[4] = { R_RCX, R_RDX, R_R8, R_R9 };
+                Reg xmmregs[4] = { R_XMM0, R_XMM1, R_XMM2, R_XMM3 };
+                if (pc < 0) pc = 0;
+                if (pc > 16) pc = 16;
+                for (int i = 0; i < pc; ++i) {
+                    if (i < 4) {
+                        /* a float/double param arrives in xmm[i], not the integer
+                         * reg — pull the right class per the callee's float_mask so
+                         * a tail call `jmp my_sqrt` passes the computed xmm0 value
+                         * (dist2d's dx*dx+dy*dy) instead of the integer rcx. */
+                        if (fmask & (1u << i)) {
+                            ExprP fv = reg_value(xmmregs[i], 8);
+                            if (fv) fv->is_float = true;
+                            call->args.push_back(fv);
+                        } else {
+                            call->args.push_back(reg_value(argregs[i], 8));
+                        }
+                    } else {
+                        int64_t off = 0x20 + 8 * (int64_t)(i - 4);
+                        std::string nm = slot_name(off, 8);
+                        int w = var_width.count(nm) ? var_width[nm] : 8;
+                        call->args.push_back(mkVar(nm, w));
+                    }
+                }
+                b.tail_call = call;
+                if (rk != 0 && used_return) {
+                    b.ret_value = truncate(call, ret_width >= 8 ? 8 : 4);
+                    b.has_ret_value = true;
+                }
+            }
+        }
+
+        /* INDIRECT tail jump: `jmp dword ptr [IAT]` (import thunk), `jmp [vtable]`
+         * or `jmp reg`, with no in-function successor. By the ABI the callee
+         * returns to OUR caller — this is a TAIL CALL, not a fall-through to an
+         * empty return. Emitting `return;` here is semantically wrong (the classic
+         * flattened-thunk bug) and silently corrupts any caller that inlines it.
+         * Render it as `return target(args);` so control visibly leaves. */
+        if (last && last->is_jmp && !last->has_branch_target && !b.is_switch &&
+            b.succ.empty() && last->x86.op_count >= 1) {
+            const cs_x86_op& t = last->x86.operands[0];
+            std::string callee; bool indirect = false;
+            ExprP itgt;   /* indirect-call target, kept as a live child for dataflow */
+            if (t.type == X86_OP_MEM) {
+                const x86_op_mem& m = t.mem;
+                /* candidate IAT-slot RVAs: rip-relative (x64) or absolute (x86,
+                 * where the disp is a VA = base+rva). */
+                std::vector<uint64_t> cands;
+                if (m.base == X86_REG_RIP && m.index == X86_REG_INVALID)
+                    cands.push_back(last->addr + last->size + (uint64_t)m.disp);
+                if (m.base == X86_REG_INVALID && m.index == X86_REG_INVALID) {
+                    cands.push_back((uint64_t)m.disp);
+                    if ((uint64_t)m.disp >= e->base)
+                        cands.push_back((uint64_t)m.disp - e->base);
+                }
+                std::string nm;
+                for (uint64_t a : cands) {
+                    for (size_t i = 0; i < e->import_len; ++i)
+                        if (e->imports[i].iat_rva == a && e->imports[i].name[0]) {
+                            nm = sani(e->imports[i].name); break;
+                        }
+                    if (!nm.empty()) break;
+                }
+                if (!nm.empty()) { callee = nm; extern_callees[nm] = 2; }
+                else {
+                    ExprP md = resolve_mem(t, 8);
+                    std::string fn; int rk2, pc2;
+                    if (const_callee_name(md, fn, rk2, pc2)) { callee = fn; extern_callees[fn] = rk2; }
+                    else { callee = "((long long(*)())(" + render(md) + "))"; indirect = true; itgt = md; }
+                }
+            } else if (t.type == X86_OP_REG) {
+                Reg r; int w; map_reg(t.reg, r, w);
+                ExprP rv = reg_value(r, 8);
+                std::string fn; int rk2, pc2;
+                if (const_callee_name(rv, fn, rk2, pc2)) { callee = fn; extern_callees[fn] = rk2; }
+                else { callee = "((long long(*)())(" + render(rv) + "))"; indirect = true; itgt = rv; }
+            }
+            if (!callee.empty()) {
+                auto call = std::make_shared<Expr>();
+                call->kind = EK::Call; call->callee = callee; call->indirect = indirect;
+                /* Keep the indirect target as a live child (call->a), NOT only baked
+                 * into the callee string. Otherwise the target value (`t = f(); call
+                 * t;`) is invisible to gather/DSE/copy-prop: its def gets eliminated
+                 * as "unused" while the string use survives -> an UNDECLARED
+                 * identifier (uncompilable C). With it as a child, the def is kept,
+                 * the value is declared, and copy-prop can inline it. Rendered lazily
+                 * (see EK::Call render) so the text always reflects the live child. */
+                if (indirect && itgt) call->a = itgt;
+                call->width = 8; call->ret_kind = 2;
+                /* x64 forwards the register args; x86 thunks forward stack args
+                 * transparently (we don't enumerate them). */
+                if (e->arch == DS_ARCH_X64) {
+                    Reg argregs[4] = { R_RCX, R_RDX, R_R8, R_R9 };
+                    for (int i = 0; i < 4; ++i)
+                        call->args.push_back(reg_value(argregs[i], 8));
+                }
+                b.tail_call = call;
+                used_return = true;
+                b.ret_value = truncate(call, ret_width >= 8 ? 8 : 4);
+                b.has_ret_value = true;
+            }
+        }
+
+        /* return value: xmm0 for a float/double return, else rax. */
+        if (b.ends_ret && used_return) {
+            if (ret_is_float) {
+                ExprP rv = regfile[R_XMM0] ? clone(regfile[R_XMM0]) : nullptr;
+                if (rv) {
+                    rv->is_float = true; rv->width = ret_width;
+                    b.ret_raw = clone(rv);
+                    b.ret_value = rv;              /* no integer truncation on FP */
+                    b.has_ret_value = true;
+                }
+            } else {
+                ExprP rv = regfile[R_RAX] ? clone(regfile[R_RAX]) : nullptr;
+                if (rv) {
+                    b.ret_raw = clone(rv);
+                    int rw = ret_byte_return ? 1 : (ret_width >= 8 ? 8 : 4);
+                    /* fold so the byte mask collapses: `(signed char)(t2 & -256)`
+                     * -> 0 (the byte-return / `xor al,al` case). */
+                    b.ret_value = fold(truncate(rv, rw));
+                    b.has_ret_value = true;
+                }
+            }
+        }
+        /* rebind a recovered jump-table switch to the index register's REAL
+         * dataflow value, but ONLY when (a) the CFG-time index is trivial (folds
+         * to a constant — the broken `switch(0)`), and (b) the resolved value is
+         * CLEAN (no `in_<REG>` backstop). A 2-level sparse table's index register
+         * holds a byte-table load off an unrecovered base (in_R8) and dispatches on
+         * the table rank — keeping its already-correct real-value index instead. */
+        if (b.is_switch) {
+            bool trivial = !b.switch_var;
+            if (b.switch_var) { ExprP f = fold(clone(b.switch_var)); trivial = (f && f->kind == EK::Const); }
+            if (trivial) {
+                /* Prefer the value snapshotted AT the table load (the real selector);
+                 * fall back to the block-exit register value for simple tables where
+                 * the index survives to the end. */
+                auto snap = switch_resolved_index.find(b.id);
+                if (snap != switch_resolved_index.end() && snap->second &&
+                    !expr_has_in_backstop(snap->second)) {
+                    b.switch_var = clone(snap->second);
+                } else {
+                    auto it = switch_cmp_reg.find(b.id);
+                    if (it != switch_cmp_reg.end() && regfile[it->second] &&
+                        !expr_has_in_backstop(regfile[it->second]))
+                        b.switch_var = clone(regfile[it->second]);
+                }
+            }
+        }
+    }
+
+    /* High half of a 2w-bit product (the RDX output of one-operand `imul`/`mul`).
+     * For w<=4 the high half is portable C: `(int)(((long long)a * b) >> 32)`. For
+     * the 64-bit case there is no portable 2x type, so emit a `mulh`/`umulh` node
+     * that renders as the MSVC `__mulh`/`__umulh` intrinsic — correct and the input
+     * to magic-number division reconstruction. */
+    ExprP mulhi_expr(const ExprP& a, const ExprP& src, int w, bool uns) {
+        if (w <= 4) {
+            int wide = w * 2;
+            ExprP wa = mkCast(cast_str(wide, uns), clone(a), wide, uns);
+            ExprP wb = mkCast(cast_str(wide, uns), clone(src), wide, uns);
+            ExprP prod = mkBinary("*", wa, wb, wide, uns);
+            ExprP hi = mkBinary(">>", prod, mkConst((int64_t)w * 8, wide), wide, uns);
+            return mkCast(cast_str(w, uns), hi, w, uns);
+        }
+        ExprP r = mkBinary(uns ? "umulh" : "mulh", clone(a), clone(src), w);
+        used_mulh = true;
+        return r;
+    }
+    bool used_mulh = false;   /* a __mulh/__umulh appears -> emit its prototype */
+    bool used_mxcsr = false;  /* __readmxcsr/__writemxcsr appears -> emit prototypes */
+    bool used_fabs = false;   /* fabs/fabsf appears (andps abs idiom) -> emit prototypes */
+    bool used_sqrt = false;   /* sqrtss/sqrtsd (inlined sqrt) appears -> emit prototypes */
+    bool used_fdiv0 = false;   /* `x / 0.0` inf idiom -> emit a volatile zero divisor */
+    bool used_while_true = false; /* emitted `while (true)` -> needs <stdbool.h> in C mode */
+    std::string self_fname;   /* sanitized name of THIS function (for recursive-call arity) */
+    bool used_stos = false;   /* __stosb/w/d/q appears (rep stos fill) -> emit prototypes */
+    bool used_cpuid = false;  /* __cpuid_e?x appears -> emit prototypes */
+    bool used_segread = false; /* __readgsqword/__readfsqword appears -> emit prototypes */
+
+    void exec_insn(Block& b, const Insn& in) {
+        const cs_x86& x = in.x86;
+        unsigned id = in.id;
+        int nop = x.op_count;
+        auto OP = [&](int i) -> const cs_x86_op& { return x.operands[i]; };
+
+        /* Skip prologue argument-homing stores. They write an arg register to its
+         * shadow-space home BEFORE `sub rsp`, so normalise_slot (which assumes the
+         * post-sub frame) would mis-resolve their offset and emit a bogus
+         * param-to-param assignment (e.g. `a1 = a4`). Reads of a param resolve to
+         * its name via param_home_off, so the store carries no information. */
+        if (home_store_addrs.count(in.addr)) return;
+        /* Snapshot the switch index register's value at the EXACT table-load insn
+         * (recover_jump_table recorded its address): the computed goto reuses that
+         * register as the jump target right after, and it is also briefly reused
+         * for the in-block `code[pc]` access, so reading it at block exit or at the
+         * first indexed access binds the wrong value. */
+        if (b.is_switch) {
+            auto la = switch_index_load.find(b.id);
+            if (la != switch_index_load.end() && la->second == in.addr) {
+                auto sc = switch_cmp_reg.find(b.id);
+                if (sc != switch_cmp_reg.end() && sc->second > R_NONE && regfile[sc->second])
+                    switch_resolved_index[b.id] = clone(regfile[sc->second]);
+            }
+        }
+        /* Skip callee-saved register save/restore (mov [rsp+X], r14 / mov r14,
+         * [rsp+X]). Preserving and restoring a non-volatile register has no
+         * observable effect on the recovered C; modeling the save read the
+         * register's incoming value (rendering `v5 = ctx_r14` — a phantom). */
+        if (callee_save_addrs.count(in.addr)) return;
+
+        switch (id) {
+            case X86_INS_MOV: case X86_INS_MOVABS: {
+                if (nop < 2) break;
+                ExprP src = rvalue(OP(1));
+                /* `mov gpr, [float_slot]` — reading a movss/movsd-written slot into a GP
+                 * register is a bit REINTERPRET of the float's bits (`*(int*)&f`), the
+                 * union/bit-cast idiom (isnan/frexp/signbit/copysign). */
+                int64_t sn;
+                if (src && OP(1).type == X86_OP_MEM && OP(0).type == X86_OP_REG &&
+                    op_slot_norm(OP(1), sn) && float_slots.count(sn)) {
+                    Reg dr; int dw; map_reg(OP(0).reg, dr, dw);
+                    int fw = float_slots[sn];
+                    if (!is_xmm(dr) && (int)OP(1).size == fw && !expr_has_in_backstop(src)) {
+                        src->is_float = true; src->width = fw;
+                        ExprP lvv = src;
+                        if (src->kind != EK::Var) {
+                            std::string tn = "t" + std::to_string(++temp_seq);
+                            spill_temps.insert(tn);
+                            var_width[tn] = fw < 8 ? 4 : 8; var_is_float[tn] = true;
+                            Stmt st; st.kind = SK::Assign; st.lhs = mkVar(tn, var_width[tn]);
+                            st.lhs->is_float = true; st.rhs = src; b.stmts.push_back(std::move(st));
+                            lvv = mkVar(tn, var_width[tn]); lvv->is_float = true;
+                        }
+                        force_float_vars.insert(lvv->name);
+                        src = mkMem(mkAddrOf(clone(lvv)), fw, true);
+                    }
+                }
+                /* an INTEGER store to a slot invalidates its float-ness (reused as int)
+                 * and records it as an int slot: a following `movss/movsd xmm,[slot]`
+                 * is then the int->float bit reinterpret (`*(float*)&i`, the u2f/u2d
+                 * builders). */
+                { int64_t dn; if (OP(0).type == X86_OP_MEM && op_slot_norm(OP(0), dn)) {
+                      float_slots.erase(dn);
+                      int iw = OP(0).size ? (int)OP(0).size : 4;
+                      if (iw == 4 || iw == 8) int_slots[dn] = iw; else int_slots.erase(dn);
+                  } }
+                do_dst(b, OP(0), src, in.addr);
+                break;
+            }
+            case X86_INS_MOVZX: {
+                if (nop < 2) break;
+                ExprP src = rvalue(OP(1));
+                /* a zero-extending load reveals the source element is UNSIGNED:
+                 * `movzx eax, byte [data+i]` => `data` is `unsigned char*`. Mark the
+                 * Mem so pointer-element typing recovers the unsigned element. */
+                if (src && src->kind == EK::Mem) src->is_unsigned = true;
+                int sw = OP(1).size ? OP(1).size : 1;
+                int dw = OP(0).size ? OP(0).size : 4;
+                ExprP c = ext_to(src, sw, dw, true);
+                do_dst(b, OP(0), c, in.addr);
+                break;
+            }
+            case X86_INS_MOVSX: case X86_INS_MOVSXD: {
+                if (nop < 2) break;
+                ExprP src = rvalue(OP(1));
+                int sw = OP(1).size ? OP(1).size : 4;
+                int dw = OP(0).size ? OP(0).size : 8;
+                ExprP c = ext_to(src, sw, dw, false);
+                do_dst(b, OP(0), c, in.addr);
+                break;
+            }
+            case X86_INS_LEA: {
+                if (nop < 2) break;
+                ExprP addr = addr_of_mem(OP(1));
+                do_dst(b, OP(0), addr, in.addr);
+                break;
+            }
+            case X86_INS_PUSH: case X86_INS_POP:
+            case X86_INS_NOP: case X86_INS_ENDBR64: case X86_INS_ENDBR32:
+            case X86_INS_INT3:
+                break;
+            case X86_INS_ADD: arith2(b, x, "+", in.addr); break;
+            case X86_INS_SUB:
+                /* drop `sub rsp,N` / `add rsp,N` housekeeping */
+                if (is_rsp_adjust(x)) break;
+                arith2(b, x, "-", in.addr); break;
+            case X86_INS_AND: arith2(b, x, "&", in.addr); break;
+            case X86_INS_OR:  arith2(b, x, "|", in.addr); break;
+            case X86_INS_XOR: {
+                if (nop >= 2 && OP(0).type == X86_OP_REG && OP(1).type == X86_OP_REG &&
+                    OP(0).reg == OP(1).reg) {
+                    int dw = OP(0).size ? OP(0).size : 4;
+                    do_dst(b, OP(0), mkConst(0, dw), in.addr);
+                    set_flags_arith(mkConst(0, dw), dw);
+                    break;
+                }
+                arith2(b, x, "^", in.addr); break;
+            }
+            case X86_INS_SHL: case X86_INS_SAL: arith2(b, x, "<<", in.addr); break;
+            case X86_INS_SHR: arith2(b, x, ">>", in.addr, true); break;
+            case X86_INS_SAR: sar_or_div(b, x, in.addr); break;
+            case X86_INS_INC: incdec(b, x, "+", in.addr); break;
+            case X86_INS_DEC: incdec(b, x, "-", in.addr); break;
+            case X86_INS_NEG: {
+                if (nop < 1) break;
+                int w = OP(0).size ? OP(0).size : 4;
+                ExprP x = rvalue(OP(0));
+                ExprP r = fold(mkUnary("-", clone(x), w));
+                do_dst(b, OP(0), r, in.addr);
+                /* NEG computes `0 - x`: CF = (x != 0), ZF = (x == 0), SF = (-x < 0).
+                 * Modeling the flags as `cmp 0, x` recovers the carry-consuming
+                 * idiom `neg; sbb r,r` => -(x != 0) (the regex_search 0/-1 return)
+                 * and the jz/js conditions. The old set_flags_arith(-x) gave a bogus
+                 * carry, collapsing `match ? 0 : -1` to a constant -1. */
+                flags = FlagSrc();
+                flags.valid = true; flags.is_cmp = true;
+                flags.a = mkConst(0, w); flags.b = x; flags.width = w;
+                break;
+            }
+            case X86_INS_NOT: {
+                if (nop < 1) break;
+                int w = OP(0).size ? OP(0).size : 4;
+                do_dst(b, OP(0), fold(mkUnary("~", rvalue(OP(0)), w)), in.addr);
+                break;
+            }
+            case X86_INS_BSWAP: {
+                /* BSWAP reverses byte order. capstone gives no semantic model, so
+                 * leaving it unmodeled silently DROPS the swap (reverse_bits then
+                 * returned a half-reversed value). Reconstruct as a portable
+                 * shift/mask shuffle (MSVC-compilable, header-free): source byte i
+                 * moves to byte (w-1-i). fold collapses the redundant masks. */
+                if (nop < 1) break;
+                int w = OP(0).size ? OP(0).size : 4;
+                ExprP x = rvalue(OP(0));
+                ExprP acc = nullptr;
+                for (int i = 0; i < w; ++i) {
+                    int srcsh = 8 * i, dstsh = 8 * (w - 1 - i);
+                    ExprP byte = srcsh ? mkBinary(">>", clone(x), mkConst(srcsh, w), w, true)
+                                       : clone(x);
+                    byte = mkBinary("&", byte, mkConst(0xff, w), w, true);
+                    ExprP term = dstsh ? mkBinary("<<", byte, mkConst(dstsh, w), w, true) : byte;
+                    acc = acc ? mkBinary("|", acc, term, w, true) : term;
+                }
+                do_dst(b, OP(0), fold(acc), in.addr);
+                break;
+            }
+            case X86_INS_SBB: {
+                /* `sbb r,r` (same reg) is the carry-to-mask idiom: r = r-r-CF =
+                 * -CF (0 or -1) from the preceding cmp. `cmp a,b; sbb eax,eax;
+                 * and eax,C` => `(a<b)?C:0`. Unmodeled, capstone's SBB was a no-op,
+                 * so eax kept its incoming value -> an `in_RAX` leak. */
+                if (nop < 2) break;
+                int w = OP(0).size ? OP(0).size : 4;
+                if (OP(0).type == X86_OP_REG && OP(1).type == X86_OP_REG &&
+                    OP(0).reg == OP(1).reg && flags.valid) {
+                    ExprP cf = cc_to_expr(CC::B, flags);     /* CF = unsigned-below */
+                    do_dst(b, OP(0), fold(mkUnary("-", cf, w)), in.addr);
+                    break;
+                }
+                ExprP cf = flags.valid ? cc_to_expr(CC::B, flags) : mkConst(0, w);
+                ExprP r = mkBinary("-", mkBinary("-", rvalue(OP(0)), rvalue(OP(1)), w), cf, w);
+                do_dst(b, OP(0), fold(r), in.addr);
+                set_flags_arith(r, w);
+                break;
+            }
+            case X86_INS_IMUL: {
+                if (nop == 1) {
+                    int w = OP(0).size ? OP(0).size : 4;
+                    ExprP a = reg_value(R_RAX, w);
+                    ExprP src = rvalue(OP(0));
+                    ExprP lo = mkBinary("*", clone(a), clone(src), w);
+                    /* RDX gets the HIGH half of the 2w-bit product (the 128-bit
+                     * `imul r/m64` feeds MSVC's 64-bit magic-number division). Model
+                     * it so `sar rdx,S` does not read an unrecovered `in_RDX`. */
+                    set_reg(R_RDX, w, fold(mulhi_expr(a, src, w, /*uns=*/false)), b);
+                    set_reg(R_RAX, w, lo, b); set_flags_arith(lo, w);
+                } else if (nop == 2) {
+                    arith2(b, x, "*", in.addr);
+                } else if (nop == 3) {
+                    int w = OP(0).size ? OP(0).size : 4;
+                    ExprP o1 = rvalue(OP(1));
+                    ExprP o2 = rvalue(OP(2));
+                    /* a 64-bit imul multiplies at 64-bit width: widen a narrower
+                     * (movsxd-derived) operand so the C multiply is
+                     * `(long long)(int)t1 * 0x38`, not a 32-bit `(int)t1 * 0x38`
+                     * that overflows when the product is used as a pointer offset
+                     * (fun_00015580's array stride). */
+                    if (w >= 8 && o1 && (o1->width ? o1->width : 4) < 8)
+                        o1 = ext_to(o1, o1->width ? o1->width : 4, 8, false);
+                    ExprP r = mkBinary("*", o1, o2, w);
+                    do_dst(b, OP(0), r, in.addr); set_flags_arith(r, w);
+                }
+                break;
+            }
+            case X86_INS_MUL: {
+                if (nop >= 1) {
+                    int w = OP(0).size ? OP(0).size : 4;
+                    ExprP a = mkCast(cast_str(w, true), reg_value(R_RAX, w), w, true);
+                    ExprP src = mkCast(cast_str(w, true), rvalue(OP(0)), w, true);
+                    ExprP r = mkBinary("*", clone(a), clone(src), w, true);
+                    set_reg(R_RDX, w, fold(mulhi_expr(a, src, w, /*uns=*/true)), b);
+                    set_reg(R_RAX, w, r, b);
+                }
+                break;
+            }
+            case X86_INS_IDIV: {
+                if (nop >= 1) {
+                    int w = OP(0).size ? OP(0).size : 4;
+                    ExprP src = rvalue(OP(0));
+                    ExprP num = reg_value(R_RAX, w);
+                    ExprP rem = mkBinary("%", clone(num), clone(src), w);
+                    ExprP quo = mkBinary("/", num, src, w);
+                    set_reg(R_RAX, w, quo, b);
+                    set_reg(R_RDX, w, rem, b);
+                }
+                break;
+            }
+            case X86_INS_DIV: {
+                if (nop >= 1) {
+                    int w = OP(0).size ? OP(0).size : 4;
+                    ExprP src = rvalue(OP(0));
+                    ExprP num = mkCast(cast_str(w, true), reg_value(R_RAX, w), w, true);
+                    ExprP den = mkCast(cast_str(w, true), src, w, true);
+                    ExprP rem = mkBinary("%", clone(num), clone(den), w, true);
+                    ExprP quo = mkBinary("/", num, den, w, true);
+                    set_reg(R_RAX, w, quo, b);
+                    set_reg(R_RDX, w, rem, b);
+                }
+                break;
+            }
+            /* Sign-extend helpers. These DO define a register (CDQ/CQO/CWD set the
+             * high reg to the sign bits; CDQE/CWDE/CBW widen rax in place), and
+             * that value is used by more than idiv — e.g. the signed `/2` idiom
+             * `(x - (x>>31)) >> 1`. Leaving them as no-ops let a stale register
+             * value leak into such expressions (masked before only because the
+             * register happened to read as 0). Model them explicitly. */
+            case X86_INS_CDQ:   /* EDX:EAX = sign-extend(EAX); EDX = EAX>>31 */
+                set_reg(R_RDX, 4, mkBinary(">>", reg_value(R_RAX, 4), mkConst(31, 4), 4), b);
+                break;
+            case X86_INS_CQO:   /* RDX:RAX = sign-extend(RAX); RDX = RAX>>63 */
+                set_reg(R_RDX, 8, mkBinary(">>", reg_value(R_RAX, 8), mkConst(63, 8), 8), b);
+                break;
+            case X86_INS_CWD:   /* DX:AX = sign-extend(AX); DX = AX>>15 */
+                set_reg(R_RDX, 2, mkBinary(">>", reg_value(R_RAX, 2), mkConst(15, 2), 2), b);
+                break;
+            case X86_INS_CDQE:  /* RAX = (int64)(int32)EAX */
+                set_reg(R_RAX, 8, mkCast(cast_str(8, false), reg_value(R_RAX, 4), 8, false), b);
+                break;
+            case X86_INS_CWDE:  /* EAX = (int32)(int16)AX */
+                set_reg(R_RAX, 4, mkCast(cast_str(4, false), reg_value(R_RAX, 2), 4, false), b);
+                break;
+            case X86_INS_CBW:   /* AX = (int16)(int8)AL */
+                set_reg(R_RAX, 2, mkCast(cast_str(2, false), reg_value(R_RAX, 1), 2, false), b);
+                break;
+            /* Bit test family: CF = bit `n` of the destination. `bt` only tests;
+             * bts/btr/btc also set/clear/complement it. Without this every
+             * `bt; jc/jae` (the ubiquitous flag-field check) lost its condition and
+             * rendered as `if (1)`. */
+            case X86_INS_BT: case X86_INS_BTS:
+            case X86_INS_BTR: case X86_INS_BTC: {
+                if (nop < 2) break;
+                int w = OP(0).size ? OP(0).size : 4;
+                ExprP base = rvalue(OP(0));
+                ExprP idx = rvalue(OP(1));
+                ExprP bit = mkBinary("&", mkBinary(">>", clone(base), clone(idx), w),
+                                     mkConst(1, w), w);
+                flags = FlagSrc();
+                flags.valid = true; flags.is_bt = true; flags.a = fold(bit); flags.width = w;
+                if (id != X86_INS_BT) {
+                    ExprP mask = mkBinary("<<", mkConst(1, w), clone(idx), w);
+                    ExprP nv;
+                    if (id == X86_INS_BTS) nv = mkBinary("|", clone(base), mask, w);
+                    else if (id == X86_INS_BTR) nv = mkBinary("&", clone(base), mkUnary("~", mask, w), w);
+                    else nv = mkBinary("^", clone(base), mask, w);   /* BTC */
+                    do_dst(b, OP(0), nv, in.addr);
+                }
+                break;
+            }
+            /* ---- SSE scalar floating point ----
+             * Without this, all float code (positions, distances, lengths — the
+             * bulk of a game-ish binary) is lost: values collapse to 0 and float
+             * comparisons set no flags so every `comiss; ja` became `if (1)`. */
+            case X86_INS_MOVSS: case X86_INS_MOVSD: {
+                /* scalar float load/move: a .rdata constant source is a float
+                 * literal (4B single / 8B double). */
+                if (nop < 2) break;
+                int w = (id==X86_INS_MOVSD) ? 8 : 4;
+                /* Vec2 lane RELOAD forwarding: `movss xmm, [slot(+4)]` where `slot`
+                 * held a spilled packed value => the float lane directly, bypassing
+                 * the (dead) memory round-trip the compiler used to extract .y. */
+                if (id == X86_INS_MOVSS && OP(0).type==X86_OP_REG && OP(1).type==X86_OP_MEM
+                    && !stack_packed_var.empty()) {
+                    const x86_op_mem& m = OP(1).mem;
+                    Reg mb=R_NONE; int mt; if (m.base!=X86_REG_INVALID) map_reg(m.base, mb, mt);
+                    int64_t norm;
+                    if (m.index==X86_REG_INVALID && normalise_slot(mb, m.disp, norm)) {
+                        for (auto& kv : stack_packed_var) {
+                            int64_t off = norm - kv.first;
+                            if (off==0 || off==4) {
+                                ExprP lane = packed_flane(kv.second, (int)off);
+                                Reg dr; int dw; map_reg(OP(0).reg, dr, dw);
+                                do_dst(b, OP(0), lane, in.addr);
+                                goto movss_handled;
+                            }
+                        }
+                    }
+                }
+                /* Vec2 packed SPILL: `movsd [slot], xmm` of a packed value — record
+                 * the slot so the .y reload forwards; skip emitting the dead store. */
+                if (OP(0).type==X86_OP_MEM && OP(1).type==X86_OP_REG) {
+                    Reg sr; int sw; map_reg(OP(1).reg, sr, sw);
+                    auto pit = xmm_packed_var.find(sr);
+                    if (pit != xmm_packed_var.end()) {
+                        const x86_op_mem& m = OP(0).mem;
+                        Reg mb=R_NONE; int mt; if (m.base!=X86_REG_INVALID) map_reg(m.base, mb, mt);
+                        int64_t norm;
+                        if (m.index==X86_REG_INVALID && normalise_slot(mb, m.disp, norm)) {
+                            stack_packed_var[norm] = pit->second;
+                            goto movss_handled;
+                        }
+                    }
+                }
+                /* `movsd m64, xmm` STORE whose xmm carries two REAL float lanes from a
+                 * 2-wide addps/mulps/subps/... remainder (fadd_v `a[i]+=b[i]` tail):
+                 * commit two faithful `*(float*)` lanes, not one scalar 8-byte store
+                 * (which would drop lane 1 and leave the array unchanged). */
+                if (id == X86_INS_MOVSD && OP(0).type == X86_OP_MEM && OP(0).size == 8 &&
+                    OP(1).type == X86_OP_REG) {
+                    Reg sr; int sw; map_reg(OP(1).reg, sr, sw);
+                    if (is_xmm(sr) && xmm_f_real[sr] && xmm_f[sr][0] && xmm_f[sr][1] &&
+                        !xmm_f[sr][2] && !xmm_f[sr][3] &&
+                        !expr_has_in_backstop(xmm_f[sr][0]) && !expr_has_in_backstop(xmm_f[sr][1])) {
+                        ExprP g[2] = { clone(xmm_f[sr][0]), clone(xmm_f[sr][1]) };
+                        if (emit_simd8_store_flanes(b, OP(0), g, in.addr)) goto movss_handled;
+                    }
+                }
+                {
+                ExprP v;
+                /* `movss/movsd xmm, [int_slot]` LOAD — reading a slot last written by
+                 * a GP integer store as a float is the int->float bit REINTERPRET
+                 * (`*(float*)&i`, the u2f/u2d union idiom that rebuilds a float from
+                 * its bits: fabs/neg/copysign/nextup/rebuild/scalb). Mirror of the
+                 * `mov gpr,[float_slot]` float->int reinterpret above. */
+                int64_t isn;
+                if (OP(0).type == X86_OP_REG && OP(1).type == X86_OP_MEM &&
+                    op_slot_norm(OP(1), isn) && int_slots.count(isn) &&
+                    (int)OP(1).size == int_slots[isn]) {
+                    Reg dr; int dw; map_reg(OP(0).reg, dr, dw);
+                    ExprP iv = rvalue(OP(1));
+                    if (is_xmm(dr) && iv && !expr_has_in_backstop(iv)) {
+                        ExprP lvv = iv;
+                        if (iv->kind != EK::Var) {
+                            std::string tn = "t" + std::to_string(++temp_seq);
+                            spill_temps.insert(tn);
+                            var_width[tn] = (w < 8) ? 4 : 8; var_is_float[tn] = false;
+                            Stmt st; st.kind = SK::Assign; st.lhs = mkVar(tn, var_width[tn]);
+                            st.rhs = iv; b.stmts.push_back(std::move(st));
+                            lvv = mkVar(tn, var_width[tn]);
+                        }
+                        v = mkMem(mkAddrOf(clone(lvv)), w, true);
+                        v->is_float = true; v->width = w;
+                    }
+                }
+                if (!v) v = as_float(rvalue(OP(1)), w);
+                /* movss/movsd MOVES float bits — the value is float of width w.
+                 * Tagging it (even for a bare temp/Var, which as_float leaves
+                 * untouched) stops do_dst's int `truncate(val,w)` from wrapping a
+                 * width-8 phi temp in `(int)`, which would truncate a stored float
+                 * (e.g. an AABB coord 3.7 -> 3) AND leave the store typed int. */
+                if (v) { v->is_float = true; v->width = w; }
+                /* record the slot as float-holding: a later `mov eax,[slot]` (union/
+                 * bit-cast) is then a bit reinterpret, not a value read. Storing a
+                 * float to a slot also clears any stale int-slot tag. */
+                int64_t fsn;
+                if (OP(0).type == X86_OP_MEM && op_slot_norm(OP(0), fsn)) { float_slots[fsn] = w; int_slots.erase(fsn); }
+                do_dst(b, OP(0), v, in.addr);
+                }
+                /* `movsd xmm, m64` LOAD: stock two low float lanes so a following 2-wide
+                 * packed-float op stays faithful (real=false until a packed op reads). */
+                if (id == X86_INS_MOVSD && OP(0).type == X86_OP_REG &&
+                    OP(1).type == X86_OP_MEM && OP(1).size == 8) {
+                    Reg dr; int dw; map_reg(OP(0).reg, dr, dw);
+                    if (is_xmm(dr)) {
+                        ExprP m0 = rvalue(OP(1));
+                        if (m0 && m0->kind == EK::Mem && m0->a) {
+                            ExprP l0 = mkMem(clone(m0->a), 4, false); l0->is_float = true;
+                            ExprP l1 = mkMem(mkBinary("+", clone(m0->a), mkConst(4, 8), 8), 4, false); l1->is_float = true;
+                            populate_xmm_f2(dr, l0, l1);
+                        }
+                    }
+                }
+                movss_handled:;
+                break;
+            }
+            case X86_INS_MOVAPS:  case X86_INS_MOVUPS:
+            case X86_INS_MOVDQA:  case X86_INS_MOVDQU:
+            case X86_INS_MOVUPD:  case X86_INS_MOVAPD: {
+                if (nop < 2) break;
+                /* 16-byte packed move. */
+                if (OP(0).type == X86_OP_MEM && OP(0).size == 16) {
+                    /* STORE. A source that came through packed-FLOAT ops commits four
+                     * faithful `*(float*)` lanes (vec3/vec4 math). Else the 2x64
+                     * integer-lane path, else the scalar fallback. */
+                    if (OP(1).type == X86_OP_REG) {
+                        Reg sr; int sw; map_reg(OP(1).reg, sr, sw);
+                        if (is_xmm(sr) && xmm_f_real[sr]) {
+                            ExprP f[4]; bool ok = true;
+                            for (int i = 0; i < 4; ++i) { f[i] = xmm_f[sr][i] ? clone(xmm_f[sr][i]) : nullptr; if (!f[i] || expr_has_in_backstop(f[i])) ok = false; }
+                            if (ok && emit_simd16_store_flanes(b, OP(0), f, in.addr)) break;
+                        }
+                        /* packed-INT lanes (a[i]*=k / a[i]+=b[i]) -> four `*(int*)` stores */
+                        if (is_xmm(sr) && xmm_i_real[sr]) {
+                            ExprP g[4]; bool ok = true;
+                            for (int i = 0; i < 4; ++i) { g[i] = xmm_i[sr][i] ? clone(xmm_i[sr][i]) : nullptr; if (!g[i] || expr_has_in_backstop(g[i])) ok = false; }
+                            if (ok && emit_simd16_store_ilanes(b, OP(0), g, in.addr)) break;
+                        }
+                    }
+                    ExprP lo, hi;
+                    if (OP(1).type == X86_OP_REG && simd_src_lanes(OP(1), lo, hi) &&
+                        !expr_has_in_backstop(lo) && !expr_has_in_backstop(hi) &&
+                        emit_simd16_store_lanes(b, OP(0), lo, hi, in.addr)) break;
+                    if (emit_simd16_store(b, OP(0), rvalue(OP(1)), in.addr)) break;
+                    do_dst(b, OP(0), rvalue(OP(1)), in.addr);
+                    break;
+                }
+                /* register destination: track both 64-bit lanes when the source's
+                 * lanes are known (reg→reg copy, or 128-bit load split into halves)
+                 * so a following packed op / lane store stays faithful. */
+                if (OP(0).type == X86_OP_REG) {
+                    Reg dr; int dw; map_reg(OP(0).reg, dr, dw);
+                    if (is_xmm(dr)) {
+                        ExprP lo, hi;
+                        bool lanes = simd_src_lanes(OP(1), lo, hi);
+                        /* set the scalar/64-bit view FIRST — both set_xmm_lanes and
+                         * do_dst call set_reg, which CLEARS xmm_f — so the float-lane
+                         * side-channel must be populated AFTER them. */
+                        if (lanes) set_xmm_lanes(dr, lo, hi, b);
+                        else do_dst(b, OP(0), rvalue(OP(1)), in.addr);   /* scalar fallback */
+                        /* stock the float-lane side-channel — ALSO for a 16-byte
+                         * MEMORY load (xmm_f_lanes synthesizes 4 `*(float*)` lanes),
+                         * so a following packed-FLOAT op (mulps/addps/divps) stays
+                         * faithful instead of being dropped (arr_scale `a[i]*=s`,
+                         * arr_normalize01). real=false: a raw load is int-vs-float
+                         * ambiguous until a packed-FLOAT op reads it. */
+                        ExprP f[4];
+                        if (xmm_f_lanes(OP(1), f)) {
+                            bool src_real = false;
+                            if (OP(1).type == X86_OP_REG) { Reg s2; int sw2; map_reg(OP(1).reg, s2, sw2); src_real = is_xmm(s2) && xmm_f_real[s2]; }
+                            populate_xmm_f(dr, f, src_real);
+                        }
+                        /* ALSO stock the packed-INT side-channel from the raw load, so a
+                         * following pmulld/paddd (a[i]*=k) stays faithful. real=false. */
+                        ExprP g[4];
+                        if (xmm_i_lanes(OP(1), g)) populate_xmm_i(dr, g);
+                        break;
+                    }
+                }
+                do_dst(b, OP(0), rvalue(OP(1)), in.addr);
+                break;
+            }
+            case X86_INS_VMOVD: case X86_INS_VMOVQ:
+            case X86_INS_MOVD: case X86_INS_MOVQ:
+                if (nop >= 2) {
+                    /* movd/movq r32/r64, xmm : moving a FLOAT's bits into a GP register is a
+                     * bit REINTERPRET (`*(int*)&f`), NOT a value store — the exponent/mantissa
+                     * bit tests that follow (isnan/ilogb/frexp/copysign domain checks) operate
+                     * on the raw IEEE bits. Without this, `movd eax,xmm; eax>>23` reads a
+                     * phantom (`__vmovd(a1)` for the unmodeled AVX form). */
+                    /* `movd/movq r_gpr, xmm(scalar float)` extracts the raw IEEE bits — a bit
+                     * REINTERPRET `*(int*)&f`, NOT a value store (isnan/ilogb/frexp exponent
+                     * tests read the bits). Safe now: the AddrOf guard in mark_ptr_in_addr
+                     * keeps `f` a float value, not a pointer. Skips a packed-INTEGER lane
+                     * (xmm_i_real) and a Vec2 2-float pack (handled below). */
+                    if (OP(0).type == X86_OP_REG && OP(1).type == X86_OP_REG) {
+                        Reg dr, sr; int dw, sw; map_reg(OP(0).reg, dr, dw); map_reg(OP(1).reg, sr, sw);
+                        bool packed2 = xmm_f[sr][0] && xmm_f[sr][1];   /* a Vec2 -> the pack case below */
+                        if (!is_xmm(dr) && is_xmm(sr) && !xmm_i_real[sr] && !packed2) {
+                            int rw = (id == X86_INS_MOVQ || id == X86_INS_VMOVQ) ? 8 : 4;
+                            ExprP sv = as_float(rvalue(OP(1)), rw);
+                            bool srcf = sv && (sv->is_float ||
+                                (sv->kind == EK::Var && var_is_float.count(sv->name) && var_is_float[sv->name]) ||
+                                (xmm_f[sr][0] != nullptr));
+                            if (sv && srcf && !expr_has_in_backstop(sv)) {
+                                /* materialize a non-var source into a float temp so its bits
+                                 * can be taken by address (mirrors pack_two_floats). */
+                                ExprP lv = sv;
+                                if (sv->kind != EK::Var) {
+                                    std::string tn = "t" + std::to_string(++temp_seq);
+                                    spill_temps.insert(tn);
+                                    var_width[tn] = rw < 8 ? 4 : 8; var_is_float[tn] = true;
+                                    Stmt st; st.kind = SK::Assign; st.lhs = mkVar(tn, var_width[tn]);
+                                    st.lhs->is_float = true; st.rhs = sv; b.stmts.push_back(std::move(st));
+                                    lv = mkVar(tn, var_width[tn]); lv->is_float = true;
+                                }
+                                force_float_vars.insert(lv->name);
+                                do_dst(b, OP(0), mkMem(mkAddrOf(clone(lv)), rw, true), in.addr);
+                                break;
+                            }
+                        }
+                    }
+                    /* `movq xmm, r64` where r64 is a GP VAR holding a packed 2-float
+                     * struct (Vec2 by value) feeding single-float ops: reinterpret the
+                     * two 32-bit halves as float lanes so `.x`/`.y` render as
+                     * `*(float*)&v` / `*(float*)((char*)&v+4)` instead of integer ops. */
+                    if (id == X86_INS_MOVQ && OP(0).type == X86_OP_REG &&
+                        OP(1).type == X86_OP_REG) {
+                        Reg dr, sr; int dw, sw; map_reg(OP(0).reg, dr, dw); map_reg(OP(1).reg, sr, sw);
+                        /* `movq r64, xmm` where the xmm holds two tracked float lanes:
+                         * pack them into the GP register (Vec2 returned by value). */
+                        if (!is_xmm(dr) && is_xmm(sr) && dw == 8 &&
+                            xmm_f[sr][0] && xmm_f[sr][1]) {
+                            ExprP packed = pack_two_floats(clone(xmm_f[sr][0]), clone(xmm_f[sr][1]), b);
+                            do_dst(b, OP(0), packed, in.addr);
+                            break;
+                        }
+                        ExprP sv = (is_xmm(dr) && !is_xmm(sr) && sw == 8) ? rvalue(OP(1)) : nullptr;
+                        size_t idx = (size_t)(&in - insns.data());
+                        if (sv && sv->kind == EK::Var && movq_feeds_single_float(idx)) {
+                            const std::string& vn = sv->name;
+                            ExprP lanes[4] = { packed_flane(vn, 0), packed_flane(vn, 4), nullptr, nullptr };
+                            regfile[dr] = clone(lanes[0]);
+                            regfile_hi[dr] = nullptr;
+                            populate_xmm_f(dr, lanes, true);
+                            xmm_packed_var[dr] = vn;
+                            break;
+                        }
+                    }
+                    /* `movq m64, xmm` STORE whose xmm carries two REAL int lanes from a
+                     * 2-wide paddd/pmulld/psubd remainder (iadd/isub `a[i]+=b[i]` tail):
+                     * commit two faithful `*(int*)` lanes instead of one scalar 8-byte
+                     * store (which would drop lane 1 and leave the array unchanged). */
+                    if (id == X86_INS_MOVQ && OP(0).type == X86_OP_MEM && OP(0).size == 8 &&
+                        OP(1).type == X86_OP_REG) {
+                        Reg sr; int sw; map_reg(OP(1).reg, sr, sw);
+                        if (is_xmm(sr) && xmm_i_real[sr] && xmm_i[sr][0] && xmm_i[sr][1] &&
+                            !expr_has_in_backstop(xmm_i[sr][0]) && !expr_has_in_backstop(xmm_i[sr][1])) {
+                            ExprP g[2] = { clone(xmm_i[sr][0]), clone(xmm_i[sr][1]) };
+                            if (emit_simd8_store_ilanes(b, OP(0), g, in.addr)) break;
+                        }
+                    }
+                    do_dst(b, OP(0), rvalue(OP(1)), in.addr);
+                    /* movd/movq into an xmm zero-extends the upper bits: lane 1 = 0.
+                     * (Enables the `movq xmm,r64; punpcklqdq xmm,xmm` broadcast.) */
+                    if (OP(0).type == X86_OP_REG) {
+                        Reg dr; int dw; map_reg(OP(0).reg, dr, dw);
+                        if (is_xmm(dr)) { regfile_hi[dr] = mkConst(0, 8); xmm_packed_var.erase(dr); }
+                    }
+                    /* `movq xmm, m64` LOAD: stock the two low int lanes so a following
+                     * 2-wide packed-int op stays faithful (real=false until it reads). */
+                    if (id == X86_INS_MOVQ && OP(0).type == X86_OP_REG &&
+                        OP(1).type == X86_OP_MEM && OP(1).size == 8) {
+                        Reg dr; int dw; map_reg(OP(0).reg, dr, dw);
+                        if (is_xmm(dr)) {
+                            ExprP m0 = rvalue(OP(1));
+                            if (m0 && m0->kind == EK::Mem && m0->a) {
+                                ExprP l0 = mkMem(clone(m0->a), 4, false);
+                                ExprP l1 = mkMem(mkBinary("+", clone(m0->a), mkConst(4, 8), 8), 4, false);
+                                populate_xmm_i2(dr, l0, l1);
+                            }
+                        }
+                    }
+                }
+                break;
+            case X86_INS_MOVLPS:
+                if (nop >= 2) do_dst(b, OP(0), rvalue(OP(1)), in.addr);
+                break;
+            case X86_INS_PUNPCKLQDQ: {
+                /* result = { dst[63:0], src[63:0] }: lane0 keeps dst's low half,
+                 * lane1 becomes src's low half. `punpcklqdq x,x` broadcasts. */
+                if (nop < 2 || OP(0).type != X86_OP_REG) break;
+                Reg dr; int dw; map_reg(OP(0).reg, dr, dw);
+                if (!is_xmm(dr)) break;
+                ExprP dlo = xmm_lo(dr), slo = simd_lane0(OP(1));
+                if (dlo && slo) set_xmm_lanes(dr, dlo, slo, b);
+                break;
+            }
+            case X86_INS_PADDQ:  case X86_INS_VPADDQ:
+            case X86_INS_PSUBQ:  case X86_INS_VPSUBQ:
+            case X86_INS_VPMULLQ:
+            case X86_INS_PAND:   case X86_INS_VPAND:
+            case X86_INS_POR:    case X86_INS_VPOR: {
+                /* packed 64-bit-lane ALU. 2-operand form: dst = dst OP src.
+                 * 3-operand VEX form: dst = src1 OP src2. Modeled lanewise; only
+                 * commits a result when BOTH lanes of both sources are tracked,
+                 * otherwise leaves the dest untouched (exactly the prior behavior). */
+                if (nop < 2 || OP(0).type != X86_OP_REG) break;
+                Reg dr; int dw; map_reg(OP(0).reg, dr, dw);
+                if (!is_xmm(dr)) break;
+                int ai = (nop >= 3) ? 1 : 0, bi = (nop >= 3) ? 2 : 1;
+                ExprP alo, ahi, blo, bhi;
+                if (!simd_src_lanes(OP(ai), alo, ahi)) break;
+                if (!simd_src_lanes(OP(bi), blo, bhi)) break;
+                const char* fop =
+                    (id==X86_INS_PADDQ||id==X86_INS_VPADDQ) ? "+" :
+                    (id==X86_INS_PSUBQ||id==X86_INS_VPSUBQ) ? "-" :
+                    (id==X86_INS_VPMULLQ)                   ? "*" :
+                    (id==X86_INS_PAND||id==X86_INS_VPAND)   ? "&" : "|";
+                set_xmm_lanes(dr, mkBinary(fop, alo, blo, 8),
+                                  mkBinary(fop, ahi, bhi, 8), b);
+                break;
+            }
+            case X86_INS_PSRLDQ: {
+                /* byte-granular logical right shift. The horizontal-reduction idiom
+                 * `psrldq xmm,8` moves lane1 into lane0 (lane1<-0); model only that. */
+                if (nop < 2 || OP(0).type != X86_OP_REG || OP(1).type != X86_OP_IMM) break;
+                Reg dr; int dw; map_reg(OP(0).reg, dr, dw);
+                if (!is_xmm(dr)) break;
+                int shb = (int)OP(1).imm;
+                /* 4x32 horizontal-reduce: `psrldq acc,8`/`,4` shifts the higher int32
+                 * lanes down (0-filled) so a following paddd folds the vector toward
+                 * lane 0 — isum's `paddd; psrldq 8; paddd; psrldq 4; paddd; movd` tree
+                 * collapsing the 4-lane accumulator to a scalar total. */
+                if ((shb % 4) == 0 && xmm_i[dr][0] && xmm_i[dr][1] &&
+                    xmm_i[dr][2] && xmm_i[dr][3]) {
+                    int sh = shb / 4;
+                    ExprP nl[4];
+                    for (int L = 0; L < 4; ++L)
+                        nl[L] = (L + sh < 4) ? clone(xmm_i[dr][L + sh]) : mkConst(0, 4);
+                    set_xmm_i4(dr, nl[0], nl[1], nl[2], nl[3], b);
+                    break;
+                }
+                ExprP hi = xmm_hi(dr);
+                if (shb == 8 && hi) set_xmm_lanes(dr, hi, mkConst(0, 8), b);
+                break;
+            }
+            case X86_INS_PMOVSXDQ: case X86_INS_PMOVZXDQ: {
+                /* widen 2 packed int32 -> 2 int64 (sign/zero extend). The head of an
+                 * auto-vectorized int->int64 sum reduction: `pmovsxdq xmm,[p]; paddq
+                 * acc,xmm`. Lane 0 = (i64)*(int*)p, lane 1 = (i64)*(int*)(p+4). */
+                if (nop < 2 || OP(0).type != X86_OP_REG) break;
+                Reg dr; int dw; map_reg(OP(0).reg, dr, dw);
+                if (!is_xmm(dr)) break;
+                bool sx = (id == X86_INS_PMOVSXDQ);
+                if (OP(1).type == X86_OP_MEM) {
+                    ExprP m0 = rvalue(OP(1));
+                    if (!m0 || m0->kind != EK::Mem || !m0->a) break;
+                    ExprP lo = mkMem(clone(m0->a), 4, !sx);
+                    ExprP hi = mkMem(mkBinary("+", clone(m0->a), mkConst(4, 8), 8), 4, !sx);
+                    set_xmm_lanes(dr, mkCast(sx ? "(long long)" : "(unsigned long long)", lo, 8),
+                                      mkCast(sx ? "(long long)" : "(unsigned long long)", hi, 8), b);
+                }
+                break;
+            }
+            /* ---- packed 32-bit FLOAT vector ops (4 lanes) ---- */
+            case X86_INS_MULPS: case X86_INS_ADDPS: case X86_INS_SUBPS:
+            case X86_INS_DIVPS: case X86_INS_MAXPS: case X86_INS_MINPS:
+            case X86_INS_VMULPS: case X86_INS_VADDPS: case X86_INS_VSUBPS:
+            case X86_INS_VDIVPS: case X86_INS_VMAXPS: case X86_INS_VMINPS: {
+                /* dst = dst OP src (2-op) / src1 OP src2 (3-op VEX), lane-wise over
+                 * the four floats. Only commits when BOTH sources yield 4 float lanes
+                 * (a memory operand supplies `*(float*)(p+4i)`), else leaves dst. */
+                if (nop < 2 || OP(0).type != X86_OP_REG) break;
+                Reg dr; int dw; map_reg(OP(0).reg, dr, dw);
+                if (!is_xmm(dr)) break;
+                int ai = (nop >= 3) ? 1 : 0, bi = (nop >= 3) ? 2 : 1;
+                bool ismax = (id==X86_INS_MAXPS||id==X86_INS_VMAXPS);
+                bool ismin = (id==X86_INS_MINPS||id==X86_INS_VMINPS);
+                const char* fop =
+                    (id==X86_INS_MULPS||id==X86_INS_VMULPS) ? "*" :
+                    (id==X86_INS_ADDPS||id==X86_INS_VADDPS) ? "+" :
+                    (id==X86_INS_SUBPS||id==X86_INS_VSUBPS) ? "-" : "/";
+                auto flane_op = [&](ExprP x, ExprP y) -> ExprP {
+                    ExprP e;
+                    if (ismax || ismin) {
+                        ExprP c = mkBinary(ismax ? ">" : "<", clone(x), clone(y), 4);
+                        e = mkTernary(c, clone(x), clone(y), 4);
+                    } else e = mkBinary(fop, x, y, 4);
+                    e->is_float = true; return e;
+                };
+                ExprP a[4], bb[4];
+                if (xmm_f_lanes(OP(ai), a) && xmm_f_lanes(OP(bi), bb)) {
+                    ExprP r[4];
+                    for (int i = 0; i < 4; ++i) r[i] = flane_op(a[i], bb[i]);
+                    set_xmm_f4(dr, r[0], r[1], r[2], r[3], b);
+                    break;
+                }
+                /* 2-wide (8-byte movsd-as-2-floats) remainder: only lanes 0,1 live. */
+                ExprP a2[2], b2[2];
+                if (xmm_f_lanes2(OP(ai), a2) && xmm_f_lanes2(OP(bi), b2)) {
+                    set_xmm_f2(dr, flane_op(a2[0], b2[0]), flane_op(a2[1], b2[1]), b);
+                }
+                break;
+            }
+            /* ---- packed 32-bit INTEGER arithmetic (4 lanes) ---- */
+            case X86_INS_PMULLD: case X86_INS_PADDD: case X86_INS_PSUBD: {
+                /* dst = dst OP src, lane-wise over the four ints. Only commits when BOTH
+                 * sources yield 4 int lanes (a movdqu load / prior packed-int op). */
+                if (nop < 2 || OP(0).type != X86_OP_REG) break;
+                Reg dr; int dw; map_reg(OP(0).reg, dr, dw);
+                if (!is_xmm(dr)) break;
+                const char* iop = (id==X86_INS_PMULLD) ? "*" :
+                                  (id==X86_INS_PADDD)  ? "+" : "-";
+                ExprP a[4], bb[4];
+                if (xmm_i_lanes(OP(0), a) && xmm_i_lanes(OP(1), bb)) {
+                    ExprP r[4];
+                    for (int i = 0; i < 4; ++i) r[i] = mkBinary(iop, a[i], bb[i], 4);
+                    set_xmm_i4(dr, r[0], r[1], r[2], r[3], b);
+                    break;
+                }
+                /* 2-wide (8-byte movq) remainder: only lanes 0,1 are live. */
+                ExprP a2[2], b2[2];
+                if (xmm_i_lanes2(OP(0), a2) && xmm_i_lanes2(OP(1), b2)) {
+                    ExprP r0 = mkBinary(iop, a2[0], b2[0], 4);
+                    ExprP r1 = mkBinary(iop, a2[1], b2[1], 4);
+                    set_xmm_i2(dr, r0, r1, b);
+                }
+                break;
+            }
+            case X86_INS_PSHUFD: {
+                /* pshufd dst, src, imm: dst[i] = src[(imm >> 2*i) & 3]. `pshufd x,x,0`
+                 * broadcasts lane 0 (the scalar splat after `movd xmm,reg`). */
+                if (nop < 3 || OP(0).type != X86_OP_REG || OP(2).type != X86_OP_IMM) break;
+                Reg dr; int dw; map_reg(OP(0).reg, dr, dw);
+                if (!is_xmm(dr)) break;
+                int imm = (int)OP(2).imm;
+                ExprP s[4];
+                bool have = xmm_i_lanes(OP(1), s);
+                /* broadcast of a scalar lane-0 (`movd`-loaded) that has no full vector */
+                ExprP sc = nullptr;
+                if (!have && OP(1).type == X86_OP_REG) {
+                    Reg s2; int sw2; map_reg(OP(1).reg, s2, sw2);
+                    if (is_xmm(s2) && xmm_i[s2][0]) sc = clone(xmm_i[s2][0]);
+                    else if (is_xmm(s2) && regfile[s2]) sc = clone(regfile[s2]);
+                }
+                auto lane = [&](int j) -> ExprP {
+                    if (have) return clone(s[j]);
+                    return (j == 0 && sc) ? clone(sc) : nullptr;
+                };
+                ExprP r0 = lane(imm & 3), r1 = lane((imm >> 2) & 3);
+                ExprP r2 = lane((imm >> 4) & 3), r3 = lane((imm >> 6) & 3);
+                if (r0 && r1 && r2 && r3) set_xmm_i4(dr, r0, r1, r2, r3, b);
+                break;
+            }
+            case X86_INS_SHUFPS: case X86_INS_VSHUFPS: {
+                /* shufps dst, src, imm: dst[0]=dst[imm&3], dst[1]=dst[(imm>>2)&3],
+                 * dst[2]=src[(imm>>4)&3], dst[3]=src[(imm>>6)&3]. `shufps x,x,0xff`
+                 * broadcasts lane 3; `shufps x,x,0` broadcasts a SCALAR lane 0 (the
+                 * `vec * scalar` splat) — for the latter a full vector isn't tracked,
+                 * so fall back to the scalar lane-0 value when a selector picks 0. */
+                int ii = 2;
+                if (nop < 3 || OP(0).type != X86_OP_REG || OP(ii).type != X86_OP_IMM) break;
+                Reg dr; int dw; map_reg(OP(0).reg, dr, dw);
+                if (!is_xmm(dr)) break;
+                int imm = (int)OP(ii).imm;
+                ExprP d[4], s[4];
+                bool haveD = xmm_f_lanes(OP(0), d);
+                bool haveS = xmm_f_lanes(OP(1), s);
+                ExprP dscal = haveD ? nullptr : xmm_scalar_f(OP(0));
+                ExprP sscal = haveS ? nullptr : xmm_scalar_f(OP(1));
+                auto dlane = [&](int i)->ExprP { if (haveD) return clone(d[i]); return (i==0 && dscal) ? clone(dscal) : nullptr; };
+                auto slane = [&](int i)->ExprP { if (haveS) return clone(s[i]); return (i==0 && sscal) ? clone(sscal) : nullptr; };
+                ExprP r0 = dlane(imm & 3), r1 = dlane((imm >> 2) & 3);
+                ExprP r2 = slane((imm >> 4) & 3), r3 = slane((imm >> 6) & 3);
+                if (r0 && r1 && r2 && r3) set_xmm_f4(dr, r0, r1, r2, r3, b);
+                break;
+            }
+            case X86_INS_UNPCKLPS: case X86_INS_UNPCKHPS:
+            case X86_INS_MOVLHPS:  case X86_INS_MOVHLPS: {
+                /* unpcklps dst,src -> {d0,s0,d1,s1}; unpckhps -> {d2,s2,d3,s3};
+                 * movlhps -> {d0,d1,s0,s1}; movhlps -> {s2,s3,d2,d3}. */
+                if (nop < 2 || OP(0).type != X86_OP_REG) break;
+                Reg dr; int dw; map_reg(OP(0).reg, dr, dw);
+                if (!is_xmm(dr)) break;
+                ExprP d[4], s[4];
+                bool dok = xmm_f_lanes(OP(0), d), sok = xmm_f_lanes(OP(1), s);
+                /* `unpcklps` combining two SCALARS (each xmm holds one float in lane0,
+                 * the Vec2 return-pack idiom `{x,y}` before `movq rax,xmm`): fall back
+                 * to the scalar lane-0 value so the pack is tracked. */
+                if (id == X86_INS_UNPCKLPS && (!dok || !sok)) {
+                    ExprP ds = dok ? clone(d[0]) : xmm_scalar_f(OP(0));
+                    ExprP ss = sok ? clone(s[0]) : xmm_scalar_f(OP(1));
+                    if (ds && ss) { set_xmm_f4(dr, ds, ss, nullptr, nullptr, b); break; }
+                }
+                if (!dok || !sok) break;
+                if (id == X86_INS_UNPCKLPS)
+                    set_xmm_f4(dr, clone(d[0]), clone(s[0]), clone(d[1]), clone(s[1]), b);
+                else if (id == X86_INS_UNPCKHPS)
+                    set_xmm_f4(dr, clone(d[2]), clone(s[2]), clone(d[3]), clone(s[3]), b);
+                else if (id == X86_INS_MOVLHPS)
+                    set_xmm_f4(dr, clone(d[0]), clone(d[1]), clone(s[0]), clone(s[1]), b);
+                else /* MOVHLPS */
+                    set_xmm_f4(dr, clone(s[2]), clone(s[3]), clone(d[2]), clone(d[3]), b);
+                break;
+            }
+            case X86_INS_ADDSS: case X86_INS_ADDSD: case X86_INS_SUBSS:
+            case X86_INS_SUBSD: case X86_INS_MULSS: case X86_INS_MULSD:
+            case X86_INS_DIVSS: case X86_INS_DIVSD: {
+                if (nop < 2) break;
+                const char* fop =
+                    (id==X86_INS_ADDSS||id==X86_INS_ADDSD) ? "+" :
+                    (id==X86_INS_SUBSS||id==X86_INS_SUBSD) ? "-" :
+                    (id==X86_INS_MULSS||id==X86_INS_MULSD) ? "*" : "/";
+                int w = (id==X86_INS_ADDSD||id==X86_INS_SUBSD||
+                         id==X86_INS_MULSD||id==X86_INS_DIVSD) ? 8 : 4;
+                ExprP r = mkBinary(fop, fp_src(OP(0), w), fp_src(OP(1), w), w);
+                r->is_float = true;
+                do_dst(b, OP(0), r, in.addr);
+                break;
+            }
+            case X86_INS_MAXSS: case X86_INS_MAXSD:
+            case X86_INS_MINSS: case X86_INS_MINSD: {
+                /* dest = max/min(dest, src). x86 MAXSS/MINSS return the SECOND
+                 * operand (src) when the compare is unordered (either is NaN) or
+                 * equal-to-src: `MAX = (dst > src) ? dst : src`, `MIN = (dst < src)
+                 * ? dst : src`. Modeling it the other way round — `(dst<src)?src:dst`
+                 * — is algebraically equal for ordered values but picks DST (=NaN)
+                 * on a NaN dst instead of src, so a maxss-reduction over an array
+                 * with a NaN element returned NaN where the CPU returns the running
+                 * value. Select dst on the ordered compare, fall through to src. */
+                if (nop < 2) break;
+                int w = (id==X86_INS_MAXSD||id==X86_INS_MINSD) ? 8 : 4;
+                bool ismax = (id==X86_INS_MAXSS||id==X86_INS_MAXSD);
+                ExprP d = as_float(rvalue(OP(0)), w), s = as_float(rvalue(OP(1)), w);
+                ExprP cmp = mkBinary(ismax ? ">" : "<", clone(d), clone(s), w);
+                ExprP r = mkTernary(cmp, clone(d), clone(s), w);
+                r->is_float = true;
+                do_dst(b, OP(0), r, in.addr);
+                break;
+            }
+            case X86_INS_SQRTSS: case X86_INS_SQRTSD: {
+                /* dest = sqrt(src). MSVC INLINES sqrtf/sqrt as a fast path
+                 * (`xorps dst,dst; ucomiss 0,x; ja slow; sqrtss dst,x`), and the
+                 * dep-breaking `xorps dst,dst` sits right before it — so WITHOUT
+                 * modeling sqrtss the dst keeps the const-0 and the function returns
+                 * 0.0 instead of the root (a normalize/length scale collapses to 0,
+                 * zeroing all output geometry). Value-lift it as a float intrinsic;
+                 * the src is OP(1) (fp_src forwards a spilled lane). */
+                if (nop < 2) break;
+                int w = (id==X86_INS_SQRTSD) ? 8 : 4;
+                ExprP src = fp_src(OP(1), w);
+                auto call = std::make_shared<Expr>();
+                call->kind = EK::Call; call->callee = (w >= 8) ? "sqrt" : "sqrtf";
+                call->width = w; call->is_float = true; call->ret_kind = (w >= 8) ? 4 : 3;
+                if (src) call->args.push_back(src);
+                used_sqrt = true;
+                do_dst(b, OP(0), call, in.addr);
+                break;
+            }
+            case X86_INS_COMISS: case X86_INS_UCOMISS:
+            case X86_INS_COMISD: case X86_INS_UCOMISD: {
+                if (nop < 2) break;
+                int w = (id==X86_INS_COMISD||id==X86_INS_UCOMISD) ? 8 : 4;
+                flags = FlagSrc();
+                flags.valid = true; flags.is_fcmp = true;
+                flags.a = as_float(rvalue(OP(0)), w);
+                flags.b = as_float(rvalue(OP(1)), w); flags.width = w;
+                break;
+            }
+            case X86_INS_CVTSI2SS: case X86_INS_CVTSI2SD: {
+                /* int -> float/double. Emit an EXPLICIT (float)/(double) cast so
+                 * the integer value is converted (not reinterpreted) AND the
+                 * downstream float op sees a float-typed Cast, never the bare int
+                 * variable — otherwise a divisor like cvtsi2sd xmm1,[n] would taint
+                 * the int count `n` as float. */
+                if (nop < 2) break;
+                int w = (id==X86_INS_CVTSI2SD) ? 8 : 4;
+                ExprP c = mkCast(w >= 8 ? "(double)" : "(float)", rvalue(OP(1)), w, false);
+                c->is_float = true;
+                do_dst(b, OP(0), c, in.addr);
+                break;
+            }
+            case X86_INS_CVTSS2SD: case X86_INS_CVTSD2SS:
+            case X86_INS_CVTPS2PD: case X86_INS_CVTPD2PS: {
+                /* float<->double precision change. Emit an EXPLICIT (double)/(float)
+                 * cast of the source so the value's WIDTH changes (4<->8) via a fresh
+                 * Cast node — otherwise a following `movsd [d],xmm` widens the source
+                 * `*(float*)` Mem IN PLACE to `*(double*)`, silently dropping the
+                 * cvtps2pd float->double conversion (fun_00013750). The packed
+                 * cvtps2pd/cvtpd2ps are modeled on their low (scalar) element — better
+                 * than the previous total drop; genuine 2-wide use stays approximate. */
+                if (nop < 2) break;
+                bool to_double = (id==X86_INS_CVTSS2SD || id==X86_INS_CVTPS2PD);
+                int w = to_double ? 8 : 4;
+                ExprP src = rvalue(OP(1));
+                ExprP c = mkCast(to_double ? "(double)" : "(float)", src, w, false);
+                c->is_float = true;
+                do_dst(b, OP(0), c, in.addr);
+                break;
+            }
+            case X86_INS_CVTTSS2SI: case X86_INS_CVTTSD2SI:
+            case X86_INS_CVTSS2SI: case X86_INS_CVTSD2SI: {
+                /* float/double -> signed int (truncating). The SOURCE is FP: a mem
+                 * operand must render `*(double*)`/`*(float*)` (not the raw qword/dword
+                 * bit pattern) so `(long long)m->d` converts the VALUE. */
+                if (nop < 2) break;
+                int w = OP(0).size ? OP(0).size : 4;
+                bool src_dbl = (id==X86_INS_CVTTSD2SI || id==X86_INS_CVTSD2SI);
+                ExprP src = rvalue(OP(1));
+                if (src) {
+                    src->is_float = true;
+                    if (src->kind == EK::Mem) src->width = src_dbl ? 8 : 4;
+                }
+                do_dst(b, OP(0), mkCast(cast_str(w, false), src, w, false), in.addr);
+                break;
+            }
+            case X86_INS_CVTDQ2PS: case X86_INS_CVTDQ2PD: {
+                /* packed int32 -> float/double. Modeled as an explicit float cast
+                 * of the (scalar) source. This completes the truncate idiom
+                 * `cvttss2si; movd xmm,eax; cvtdq2ps` so a float-returning function
+                 * renders `(float)(int)x` — clearly a deliberate float-valued
+                 * truncation, not a stray `(int)` in a float return. */
+                if (nop < 2) break;
+                int w = (id==X86_INS_CVTDQ2PD) ? 8 : 4;
+                ExprP c = mkCast(w >= 8 ? "(double)" : "(float)", rvalue(OP(1)), w, false);
+                c->is_float = true;
+                do_dst(b, OP(0), c, in.addr);
+                break;
+            }
+            case X86_INS_XORPS: case X86_INS_XORPD: case X86_INS_PXOR:
+                /* `xorps/xorpd/pxor x,x` zeroes an xmm — but xorps is ALSO the
+                 * shortest encoding the compiler uses to zero an INTEGER SIMD
+                 * accumulator (paddq/paddd reductions: popcount, integer dot/saxpy).
+                 * Marking the zero `is_float` then mis-types the whole integer
+                 * reduction `float` (0.0f seed -> float temps -> `double*` result).
+                 * Leave it a plain integer 0: a GENUINE float accumulator re-acquires
+                 * float-ness from its actual scalar-FP def (addss/mulss via as_float),
+                 * so float code is unaffected while integer reductions stay integer. */
+                if (nop >= 2 && OP(0).type==X86_OP_REG && OP(1).type==X86_OP_REG &&
+                    OP(0).reg == OP(1).reg) {
+                    ExprP z = mkConst(0, (id==X86_INS_XORPD) ? 8 : 4);
+                    do_dst(b, OP(0), z, in.addr);
+                    /* zero lane 1 too so a 2x64 packed accumulator (`xorps acc,acc;
+                     * paddq acc,x` int64-sum reduction) has BOTH lanes tracked. */
+                    Reg zr; int zw; map_reg(OP(0).reg, zr, zw);
+                    if (is_xmm(zr)) {
+                        regfile_hi[zr] = mkConst(0, 8);
+                        /* zero all four 32-bit lanes too so a 4x32 packed accumulator
+                         * (`xorps acc,acc; paddd acc,x` int-sum reduction, isum) has
+                         * every lane tracked from the seed. real=false: ambiguous until
+                         * a paddd reads them (a genuine float acc re-acquires float-ness
+                         * from its scalar-FP def, and never reads these int lanes). */
+                        ExprP zl[4] = { mkConst(0,4), mkConst(0,4), mkConst(0,4), mkConst(0,4) };
+                        populate_xmm_i(zr, zl);
+                    }
+                    break;
+                }
+                /* `xorps/xorpd xmm, [sign-mask const]` is the scalar FP NEGATE
+                 * idiom (`-x`, flipping just the sign bit); wrapped in an
+                 * `if (x<0)` it forms fabs. Unmodeled, the negate was silently
+                 * DROPPED -> gauss_solve picked the wrong pivot and vec_norms summed
+                 * signed values. Recognize the .rdata mask and emit `-x`. */
+                if (id != X86_INS_PXOR && nop >= 2 && OP(0).type==X86_OP_REG) {
+                    /* Read the sign-mask lanes from EITHER a rip-relative memory
+                     * operand OR a register holding the mask (loaded earlier via
+                     * `movss xmm1,[mask]; xorps xmm0,xmm1` — the register-mask negate
+                     * that arr_abs's scalar-unrolled `a[i]=-a[i]` uses). Mirrors the
+                     * andps abs handler; without the register form the negate — and
+                     * thus the store of `a[i]=a[i]` — was DSE'd away. */
+                    uint32_t lo = 0, hi = 0; bool have = false;
+                    if (OP(1).type==X86_OP_MEM && OP(1).mem.base == X86_REG_RIP &&
+                        OP(1).mem.index == X86_REG_INVALID) {
+                        uint64_t addr = cur_insn_addr + cur_insn_size + (uint64_t)OP(1).mem.disp;
+                        int32_t l2, h2;
+                        if (read_i32(addr, l2) && read_i32(addr + 4, h2)) { lo=(uint32_t)l2; hi=(uint32_t)h2; have=true; }
+                    } else if (OP(1).type == X86_OP_REG) {
+                        ExprP mv = rvalue(OP(1));
+                        if (mv && mv->kind == EK::Const) {
+                            /* a movss-loaded 4-byte mask is sign-extended to 64-bit
+                             * (0x80000000 -> 0xffffffff80000000); only `lo` is real
+                             * for a width-4 const, so force hi=0 there. */
+                            lo = (uint32_t)(uint64_t)mv->cval;
+                            hi = (mv->width >= 8) ? (uint32_t)((uint64_t)mv->cval >> 32) : 0u;
+                            have = true;
+                        } else if (mv && mv->kind == EK::Mem && mv->a && mv->a->kind == EK::Const) {
+                            uint64_t a = (uint64_t)mv->a->cval; int32_t l2, h2;
+                            if (read_i32(a, l2) && read_i32(a + 4, h2)) { lo=(uint32_t)l2; hi=(uint32_t)h2; have=true; }
+                        }
+                    }
+                    if (have) {
+                        /* xorps is used for BOTH single and double negate (it is a
+                         * bitwise sign flip). single mask = {0x80000000,0}; double
+                         * mask = {0,0x80000000} (sign bit 63 lands in the high
+                         * dword of the low qword). Infer the width from which. */
+                        int negw = 0;
+                        if (lo == 0x80000000u && hi == 0) negw = 4;
+                        else if (lo == 0 && hi == 0x80000000u) negw = 8;
+                        else if (lo == 0x80000000u && hi == 0x80000000u)
+                            negw = (id == X86_INS_XORPD) ? 8 : 4;
+                        if (negw) {
+                            ExprP r = mkUnary("-", rvalue(OP(0)), negw);
+                            r->is_float = true;
+                            do_dst(b, OP(0), r, in.addr);
+                        }
+                    }
+                }
+                break;
+            case X86_INS_ANDPS: case X86_INS_ANDPD: {
+                /* `andps/andpd xmm, [abs-mask]` clears the FP sign bit(s) = absolute
+                 * value (`fabs`). single mask lane = 0x7fffffff, double lane =
+                 * 0x7fffffffffffffff ({0xffffffff,0x7fffffff}). The mask is often
+                 * loaded into a register first (`movdqa xmm0,[m]; andps x,xmm0`), so we
+                 * read it from BOTH a rip-relative memory operand AND a register whose
+                 * tracked value is the folded mask const / .rdata Mem. Unmodeled, the
+                 * abs was dropped, changing range-check semantics (fun_000057d0). */
+                if (nop < 2 || OP(0).type != X86_OP_REG) break;
+                uint32_t lo = 0, hi = 0; bool have = false;
+                if (OP(1).type == X86_OP_MEM && OP(1).mem.base == X86_REG_RIP &&
+                    OP(1).mem.index == X86_REG_INVALID) {
+                    uint64_t a = cur_insn_addr + cur_insn_size + (uint64_t)OP(1).mem.disp;
+                    int32_t l2, h2;
+                    if (read_i32(a, l2) && read_i32(a + 4, h2)) { lo=(uint32_t)l2; hi=(uint32_t)h2; have=true; }
+                } else if (OP(1).type == X86_OP_REG) {
+                    ExprP mv = rvalue(OP(1));
+                    if (mv && mv->kind == EK::Const) {
+                        /* width-4 mask const is sign-extended; only lo is real. */
+                        lo = (uint32_t)(uint64_t)mv->cval;
+                        hi = (mv->width >= 8) ? (uint32_t)((uint64_t)mv->cval >> 32) : 0u;
+                        have = true;
+                    } else if (mv && mv->kind == EK::Mem && mv->a && mv->a->kind == EK::Const) {
+                        uint64_t a = (uint64_t)mv->a->cval; int32_t l2, h2;
+                        if (read_i32(a, l2) && read_i32(a + 4, h2)) { lo=(uint32_t)l2; hi=(uint32_t)h2; have=true; }
+                    }
+                }
+                int absw = 0;
+                if (have) {
+                    if (lo==0x7fffffffu && hi==0) absw = 4;
+                    else if (lo==0xffffffffu && hi==0x7fffffffu) absw = 8;
+                    else if (lo==0x7fffffffu && hi==0x7fffffffu) absw = (id==X86_INS_ANDPD) ? 8 : 4;
+                }
+                if (absw) {
+                    ExprP src = rvalue(OP(0));
+                    auto call = std::make_shared<Expr>();
+                    call->kind = EK::Call; call->callee = (absw >= 8) ? "__fabs" : "__fabsf";
+                    call->width = absw; call->is_float = true;
+                    if (src) call->args.push_back(src);
+                    used_fabs = true;
+                    do_dst(b, OP(0), call, in.addr);
+                }
+                break;
+            }
+            case X86_INS_CMP:
+                if (nop >= 2) set_flags_cmp(x);
+                break;
+            case X86_INS_TEST:
+                if (nop >= 2) set_flags_test(x);
+                break;
+            case X86_INS_CALL:
+                lift_call(b, in);
+                break;
+            case X86_INS_XCHG: {
+                /* xchg dst, src atomically SWAPS the two operands: tmp=dst; dst=src;
+                 * src=tmp. When dst is memory this is the lock-release/lock-acquire
+                 * idiom (`xor eax,eax; xchg [lock],eax` stores 0 to release). With no
+                 * handler the whole instruction fell through and the STORE to memory
+                 * was DROPPED — the recompiled code never released the lock
+                 * (fun_0005bf90/c400/c680/c710/c8a0). Read BOTH operands before either
+                 * write (they swap). The memory store is a real side effect; the
+                 * register half is usually a dead load the DSE removes. */
+                if (nop < 2) break;
+                int w0 = OP(0).size ? OP(0).size : 4;
+                ExprP d_old = rvalue(OP(0));
+                ExprP s_old = rvalue(OP(1));
+                /* freeze a memory dst's old value so the register half sees the
+                 * PRE-swap value, not the just-stored one (the mem expr re-reads). */
+                if (OP(0).type == X86_OP_MEM) d_old = snapshot_to_temp(b, d_old, w0, in.addr);
+                do_dst(b, OP(0), s_old, in.addr);   /* dst = old src (the store) */
+                do_dst(b, OP(1), d_old, in.addr);   /* src = old dst */
+                break;
+            }
+            case X86_INS_XADD: {
+                /* lock xadd dst, src atomically: tmp = dst; dst = dst + src; src =
+                 * tmp — InterlockedExchangeAdd. The src REGISTER receives the OLD
+                 * dst value; dst gets the sum. With no handler the whole insn fell
+                 * through: the memory ADD was DROPPED and src kept its input, so
+                 * `mov eax,1; lock xadd [ctr],eax; inc eax; mov [obj+0x10],eax`
+                 * folded to the constant 2 and never incremented the shared counter
+                 * (profapi fun_000098d4: the per-object sequence id). */
+                if (nop < 2) break;
+                int w0 = OP(0).size ? OP(0).size : 4;
+                ExprP d_old = rvalue(OP(0));      /* old dst value */
+                ExprP s_old = rvalue(OP(1));      /* addend (src register) */
+                /* freeze the old dst so the src half sees the PRE-add value, not the
+                 * just-stored sum (a mem dst expr would otherwise re-read it). */
+                if (OP(0).type == X86_OP_MEM) d_old = snapshot_to_temp(b, d_old, w0, in.addr);
+                ExprP sum = mkBinary("+", clone(d_old), s_old, w0);
+                do_dst(b, OP(0), sum, in.addr);   /* dst = old dst + src (the store) */
+                do_dst(b, OP(1), d_old, in.addr); /* src = old dst */
+                set_flags_arith(clone(sum), w0);  /* xadd sets ZF/SF/CF from the sum */
+                break;
+            }
+            case X86_INS_CMPXCHG: {
+                /* lock cmpxchg dst, src: compares the accumulator (al/ax/eax/rax)
+                 * with dst and sets ZF = (acc == dst); if equal dst=src, else
+                 * acc=dst. The following je/jne tests CAS success. Model the FLAG
+                 * as cmp(acc, dst) so the spin-lock renders the REAL condition
+                 * (`if (0 == *(int*)0x174200)`) instead of the stale `if (0 == 0)`
+                 * left over from a preceding `xor eax,eax` (the atomics gap).
+                 * AFTER cmpxchg, rax = dst ALWAYS (on failure acc<-dst; on success
+                 * acc==dst so acc IS dst) — so set rax to the dst VALUE, not a
+                 * backstop: a spin-loop's `cmp rcx,rax; jne` re-reads the current
+                 * memory value, not `in_RAX` (fun_0005d828). */
+                if (nop >= 2) {
+                    int w = OP(0).size ? OP(0).size : 4;
+                    ExprP av = reg_value(R_RAX, w);
+                    /* freeze the accumulator too when it is ITSELF a live memory read:
+                     * a CAS whose expected value came from `mov eax,[p]` on the SAME
+                     * cell (`cas_add`: do{old=*p;new=old+d;}while(cmpxchg(p,new,old)!=old)).
+                     * Otherwise the post-store flag `av == dv` re-reads the now-updated
+                     * *p, so `new == old` is false for any nonzero delta and the retry
+                     * `jne` loop NEVER exits (infinite spin). */
+                    if (reads_mem(av)) av = snapshot_to_temp(b, av, w, in.addr);
+                    ExprP dv = rvalue(OP(0));      /* old dst (memory) value */
+                    /* freeze old dst so the CAS ternary, the ZF flag, AND rax all see
+                     * the pre-store value (else the flag re-reads the stored value and
+                     * inverts the acquire/release test — fun_0005bf90 spin lock). */
+                    if (OP(0).type == X86_OP_MEM) dv = snapshot_to_temp(b, dv, w, in.addr);
+                    ExprP sv = rvalue(OP(1));      /* desired (src) */
+                    /* CAS STORE: if (acc == dst) dst = src; else dst is unchanged.
+                     * The old handler modeled only the FLAG and left rax = dst, but
+                     * DROPPED the store — so a lock acquire (`lock cmpxchg [lock],
+                     * tid`) or an atomic bit-set (`bts;lock cmpxchg`) never wrote back
+                     * (fun_0005d828 spin-lock, fun_00076164). A ternary store is
+                     * behavior-faithful under the single-threaded oracle and captures
+                     * the write. do_dst handles both a memory and a register dst. */
+                    ExprP casv = mkTernary(mkBinary("==", clone(av), clone(dv), w),
+                                           sv, clone(dv), w);
+                    do_dst(b, OP(0), casv, in.addr);
+                    flags = FlagSrc();
+                    flags.valid = true; flags.is_cmp = true;
+                    flags.a = av; flags.b = clone(dv); flags.width = w;
+                    regfile[R_RAX] = dv;           /* cmpxchg leaves acc = old dst */
+                }
+                break;
+            }
+            case X86_INS_CPUID: {
+                /* CPUID(leaf in eax, subleaf in ecx) writes the 4 result registers.
+                 * Model each as a `__cpuid_e{a,b,c,d}x(leaf, subleaf)` intrinsic so
+                 * the CPU-feature/vendor-string reads render `__cpuid_ebx(0,0) ^
+                 * 0x756e6547` ("Genu") instead of leaking `in_RBX` (fun_0005de58,
+                 * the __isa_available dispatcher). Each intrinsic is a well-defined
+                 * pure function of (leaf,subleaf), so this is faithful, not a guess. */
+                ExprP leaf = reg_value(R_RAX, 4);
+                ExprP sub  = reg_value(R_RCX, 4);
+                auto mk = [&](const char* fn)->ExprP {
+                    auto c = std::make_shared<Expr>();
+                    c->kind = EK::Call; c->callee = fn; c->width = 4; c->ret_kind = 1;
+                    c->args.push_back(clone(leaf)); c->args.push_back(clone(sub));
+                    return c;
+                };
+                used_cpuid = true;
+                regfile[R_RAX] = mk("__cpuid_eax"); regfile[R_RBX] = mk("__cpuid_ebx");
+                regfile[R_RCX] = mk("__cpuid_ecx"); regfile[R_RDX] = mk("__cpuid_edx");
+                break;
+            }
+            case X86_INS_STMXCSR: case X86_INS_VSTMXCSR: {
+                /* store MXCSR -> m32. Model as `*(unsigned*)m = __readmxcsr();` so the
+                 * destination slot is DEFINED with the real control word (a later
+                 * read-modify-write of it is meaningful, not a stale backstop). */
+                if (nop < 1) break;
+                auto call = std::make_shared<Expr>();
+                call->kind = EK::Call; call->callee = "__readmxcsr";
+                call->width = 4; call->ret_kind = 1;
+                used_mxcsr = true;
+                do_dst(b, OP(0), call, in.addr);
+                break;
+            }
+            case X86_INS_LDMXCSR: case X86_INS_VLDMXCSR: {
+                /* load MXCSR <- m32. A genuine SIDE EFFECT that CONSUMES m32: emit
+                 * `__writemxcsr(*(unsigned*)m);` as a call statement. Without a live
+                 * consumer the whole control-word construction (the bt/jcc field
+                 * selects feeding it) is dead-store-eliminated, leaving empty `{}`
+                 * branch bodies (fun_000828f0). The read keeps that dataflow live. */
+                if (nop < 1) break;
+                ExprP arg = rvalue(OP(0));
+                auto call = std::make_shared<Expr>();
+                call->kind = EK::Call; call->callee = "__writemxcsr";
+                call->width = 0; call->ret_kind = 5; /* void */
+                used_mxcsr = true;
+                if (arg) call->args.push_back(arg);
+                Stmt s; s.kind = SK::Call; s.rhs = call; s.addr = in.addr;
+                b.stmts.push_back(std::move(s));
+                break;
+            }
+            case X86_INS_STOSB: case X86_INS_STOSW:
+            case X86_INS_STOSD: case X86_INS_STOSQ: {
+                /* `rep stos` fills rcx elements at [rdi] with al/ax/eax/rax. Unmodeled,
+                 * the whole memory fill was silently DROPPED (fun_0000dc70's
+                 * `rep stosw 0xffff` init of 0x9b words). Model as the MSVC __stos*
+                 * intrinsic (a real side-effecting call), then advance rdi and zero
+                 * rcx as the rep does. A bare (non-rep) stos stores one element. */
+                int sz = (id==X86_INS_STOSB)?1:(id==X86_INS_STOSW)?2:(id==X86_INS_STOSD)?4:8;
+                bool has_rep = false;
+                for (int pi = 0; pi < 4; ++pi)
+                    if (x.prefix[pi] == X86_PREFIX_REP) { has_rep = true; break; }
+                ExprP val = reg_value(R_RAX, sz);
+                if (has_rep) {
+                    ExprP dst = reg_value(R_RDI, 8);
+                    ExprP cnt = reg_value(R_RCX, 8);
+                    const char* fn = (sz==1)?"__stosb":(sz==2)?"__stosw":(sz==4)?"__stosd":"__stosq";
+                    auto call = std::make_shared<Expr>();
+                    call->kind = EK::Call; call->callee = fn; call->width = 0; call->ret_kind = 5;
+                    /* cast args to the emitted __stos* prototype so the call is not
+                     * C4024/C4047 (dst is a `unsigned <T>*`, val `unsigned <T>`, cnt
+                     * `unsigned long long`). */
+                    const char* pt = (sz==1)?"(unsigned char*)":(sz==2)?"(unsigned short*)":
+                                     (sz==4)?"(unsigned long*)":"(unsigned long long*)";
+                    const char* vt = (sz==1)?"(unsigned char)":(sz==2)?"(unsigned short)":
+                                     (sz==4)?"(unsigned long)":"(unsigned long long)";
+                    if (dst) call->args.push_back(mkCast(pt, dst, 8, true));
+                    if (val) call->args.push_back(mkCast(vt, val, sz, true));
+                    if (cnt) call->args.push_back(mkCast("(unsigned long long)", cnt, 8, true));
+                    Stmt s; s.kind = SK::Call; s.rhs = call; s.addr = in.addr;
+                    b.stmts.push_back(std::move(s));
+                    used_stos = true;
+                    regfile[R_RDI] = mkBinary("+", reg_value(R_RDI,8),
+                                     mkBinary("*", reg_value(R_RCX,8), mkConst(sz,8), 8), 8);
+                    regfile[R_RCX] = mkConst(0, 8);
+                } else {
+                    ExprP lv = mkMem(reg_value(R_RDI, 8), sz, false);
+                    emit_store(b, lv, truncate(val, sz), in.addr);
+                    regfile[R_RDI] = mkBinary("+", reg_value(R_RDI,8), mkConst(sz,8), 8);
+                }
+                break;
+            }
+            default: {
+                CC sc = setcc_of(id);
+                if (sc != CC::NONE) {
+                    if (nop < 1) break;
+                    ExprP cond = cc_to_expr(sc, flags);
+                    do_dst(b, OP(0), cond, in.addr);
+                    break;
+                }
+                CC mc = cmovcc_of(id);
+                if (mc != CC::NONE) {
+                    if (nop < 2) break;
+                    int w = OP(0).size ? OP(0).size : 4;
+                    ExprP cond = cc_to_expr(mc, flags);
+                    ExprP newv = rvalue(OP(1));
+                    ExprP cur  = rvalue(OP(0));
+                    ExprP tern = mkTernary(cond, newv, cur, w);
+                    /* Bind a non-trivial cmov result to a temp so a dest register
+                     * reused across later accesses (a cmov index threaded through a
+                     * chain of array/struct derefs) re-reads the temp instead of
+                     * re-inlining — and EXPONENTIALLY nesting — the ternary at every
+                     * use (an 81x-cloned index -> a 5 KB line). copy_propagate folds
+                     * it straight back when the result is used only once, so simple
+                     * cmovs stay clean. */
+                    if (node_count(tern) > 6 && OP(0).type == X86_OP_REG) {
+                        std::string tn = "t" + std::to_string(++temp_seq);
+                        var_width[tn] = w; if (w >= 8) var_is_ll[tn] = true;
+                        Stmt s; s.kind = SK::Assign; s.lhs = mkVar(tn, w);
+                        s.rhs = tern; s.addr = in.addr;
+                        b.stmts.push_back(std::move(s));
+                        do_dst(b, OP(0), mkVar(tn, w), in.addr);
+                    } else {
+                        do_dst(b, OP(0), tern, in.addr);
+                    }
+                    break;
+                }
+                if (in.is_jcc || in.is_jmp || in.is_ret) break;
+                /* An unmodeled op that WRITES a register still DEFINES it: leaving
+                 * the dest undefined makes a later read fall back to the misleading
+                 * entry-value placeholder `in_<REG>` (pmovmskb/tzcnt/lzcnt/... in
+                 * SIMD/bit-twiddling code read a garbage "incoming" value). Represent
+                 * the result as an opaque intrinsic of the mnemonic so the register
+                 * is DEFINED and the op is documented, not silently dropped. Only for
+                 * a single GPR destination; side-effect-free ops (fences, prefetch,
+                 * with no reg dest) are still ignored. */
+                if (nop >= 1 && OP(0).type == X86_OP_REG &&
+                    (OP(0).access & CS_AC_WRITE) && !in.mnem.empty()) {
+                    Reg dr; int dw; map_reg(OP(0).reg, dr, dw);
+                    bool gpr = (dr >= R_RAX && dr <= R_R15);
+                    if (gpr) {
+                        auto call = std::make_shared<Expr>();
+                        call->kind = EK::Call;
+                        call->callee = "__" + sani(in.mnem);
+                        int cw = (dw >= 8) ? 8 : 4;
+                        call->width = cw; call->ret_kind = (cw >= 8) ? 2 : 1;
+                        /* A read-modify-write dest (rol/ror/adc/sbb: OP(0) is BOTH
+                         * source and destination) contributes its CURRENT value as
+                         * the first arg — else `rol x,n` renders `x = __rol(n)`,
+                         * DROPPING the rotated value `x` entirely (`__rol()` empty). */
+                        int start = 1;
+                        if (OP(0).access & CS_AC_READ) {
+                            call->args.push_back(rvalue(OP(0)));
+                            start = 1;   /* still add the other operands below */
+                        }
+                        for (int k = start; k < nop && k < 4; ++k)
+                            if (OP(k).type == X86_OP_REG || OP(k).type == X86_OP_MEM ||
+                                OP(k).type == X86_OP_IMM)
+                                call->args.push_back(rvalue(OP(k)));
+                        extern_callees[call->callee] = call->ret_kind;
+                        do_dst(b, OP(0), call, in.addr);
+                    }
+                }
+                break;
+            }
+        }
+    }
+
+    bool is_rsp_adjust(const cs_x86& x) {
+        if (x.op_count != 2) return false;
+        if (x.operands[0].type != X86_OP_REG || x.operands[1].type != X86_OP_IMM)
+            return false;
+        Reg r; int w; map_reg(x.operands[0].reg, r, w);
+        return r == R_RSP;
+    }
+
+    /* Extend a value read at source width `sw` to destination width `dw`, either
+     * zero- (uns=true) or sign- (uns=false) extended. Produces a value of width
+     * dw with minimal casts. */
+    ExprP ext_to(ExprP v, int sw, int dw, bool uns) {
+        if (dw < 4) dw = 4;   /* sub-dword dests still occupy >=int in C */
+        if (v->kind == EK::Const) {
+            int64_t cv = v->cval;
+            uint64_t um;
+            int64_t sm;
+            if (sw == 1) { um = cv & 0xFF; sm = (int8_t)cv; }
+            else if (sw == 2) { um = cv & 0xFFFF; sm = (int16_t)cv; }
+            else { um = (uint32_t)cv; sm = (int32_t)cv; }
+            return uns ? mkConst((int64_t)um, dw, true) : mkConst(sm, dw, false);
+        }
+        /* If the value is already a typed read of width sw, a single cast to the
+         * destination type captures the extension when the source value's own
+         * width matches sw. We cast to (signed/unsigned) of width sw first to
+         * fix the source interpretation, then the C usual conversions widen. To
+         * keep it minimal we collapse to one cast when sw>=4. */
+        if (sw >= 4) {
+            return mkCast(cast_str(dw, uns), v, dw, uns);
+        }
+        /* Narrow source (byte/word). The result MUST be a width-dw value so later
+         * reads observe the extended quantity, not a narrow memory access. If the
+         * value is already a typed read of the source width with matching sign, a
+         * single dest-width cast suffices: (int)*(signed char*)p. Otherwise fix
+         * the source sign first, then widen. */
+        bool src_ok = (v->width == sw) &&
+                      (v->kind == EK::Mem || v->kind == EK::Var) &&
+                      (v->is_unsigned == uns);
+        if (src_ok)
+            return mkCast(cast_str(dw, uns), v, dw, uns);
+        ExprP narrow = mkCast(cast_str(sw, uns), v, sw, uns);
+        return mkCast(cast_str(dw, uns), narrow, dw, uns);
+    }
+
+    void arith2(Block& b, const cs_x86& x, const std::string& op, uint64_t addr,
+                bool unsigned_shift = false) {
+        if (x.op_count < 2) return;
+        const cs_x86_op& d = x.operands[0];
+        const cs_x86_op& s = x.operands[1];
+        int w = d.size ? d.size : 4;
+        ExprP lhs = rvalue(d);
+        ExprP rhs = norm_shift_count(rvalue(s));
+        bool uns = unsigned_shift;
+        /* A LOGICAL right shift (shr) reads its operand ZERO-extended. For an 8/16-
+         * bit sub-register, rvalue() returns a SIGNED narrowing (`(short)x` /
+         * `(signed char)x`) which, when C promotes it to int for the shift, SIGN-
+         * extends — so `movzx edi,ax; shr di,0xf` (extract bit 15) mis-rendered as
+         * `(unsigned int)((short)ax) >> 15`, giving 0xFFFF for ax=0x8000 instead of
+         * 1. Re-cast the operand UNSIGNED at the sub-register width so the high bits
+         * are zero. Only for logical shifts and sub-int widths; wider/signed shifts
+         * are unchanged. */
+        if (unsigned_shift && w < 4 && lhs) {
+            if (lhs->kind == EK::Cast && lhs->a && lhs->width == w)
+                lhs = mkCast(cast_str(w, true), clone(lhs->a), w, true);
+            else
+                lhs = mkCast(cast_str(w, true), lhs, w, true);
+        }
+        ExprP res = mkBinary(op, lhs, rhs, w, uns);
+        do_dst(b, d, res, addr);
+        set_flags_dst(d, res, w);
+    }
+
+    /* The shift count of a variable shift comes from CL (8-bit), which the lifter
+     * wraps in a narrowing `(signed char)`/`(unsigned char)` cast. C promotes
+     * the shift count to int anyway, so that cast is pure noise — strip it so we
+     * emit `x << n` / `x >> (32 - n)` instead of `x << (signed char)n`. */
+    ExprP norm_shift_count(const ExprP& cnt) {
+        ExprP c = cnt;
+        while (c && c->kind == EK::Cast && c->a &&
+               (c->width == 1 || c->width == 2)) {
+            c = c->a;
+        }
+        return c ? c : cnt;
+    }
+
+    /* SAR dst, imm.  A signed arithmetic right shift by a constant is the
+     * compiler's lowering of `x / (1<<k)` for a power-of-two divisor when the
+     * sign-correction has already been applied (MSVC /Od emits
+     *   tmp = x + (x >>u (W-1));  result = tmp SAR k
+     * for k==1, or  x + ((x SAR (W-1)) >>u (W-k))  in general).  We must NOT
+     * render that as `>>` because signed `/` rounds toward zero whereas `>>`
+     * rounds toward -inf; they differ for negatives.  Detect the
+     * sign-bias-then-shift shape and re-emit it as `/ (1<<k)`.  Plain SAR with
+     * no sign bias stays a `>>` (it is a genuine arithmetic shift in source). */
+    void sar_or_div(Block& b, const cs_x86& x, uint64_t addr) {
+        if (x.op_count < 2) { arith2(b, x, ">>", addr, false); return; }
+        const cs_x86_op& d = x.operands[0];
+        const cs_x86_op& s = x.operands[1];
+        int w = d.size ? d.size : 4;
+        ExprP lhs = rvalue(d);
+        ExprP rhs = norm_shift_count(rvalue(s));
+        /* only handle a constant shift amount */
+        if (rhs && rhs->kind == EK::Const && rhs->cval >= 1 && rhs->cval < 64) {
+            int k = (int)rhs->cval;
+            int signbit = w * 8 - 1;
+            ExprP base = sign_bias_base(lhs, w, signbit);
+            if (base) {
+                int64_t divisor = (int64_t)1 << k;
+                ExprP res = mkBinary("/", base, mkConst(divisor, w), w);
+                do_dst(b, d, res, addr);
+                set_flags_dst(d, res, w);
+                return;
+            }
+        }
+        ExprP res = mkBinary(">>", lhs, rhs, w, false);
+        do_dst(b, d, res, addr);
+        set_flags_dst(d, res, w);
+    }
+
+    /* If `e` has the signed-divide sign-bias shape `base + bias` where bias is
+     * the isolated sign bit of base (base >>u (W-1)), or
+     * `base + ((base SAR (W-1)) >>u (W-k))`, return `base`; else nullptr. */
+    ExprP sign_bias_base(const ExprP& e, int w, int signbit) {
+        if (!e || e->kind != EK::Binary || e->op != "+") return nullptr;
+        ExprP a = e->a, c = e->b;
+        /* the bias may be on either side of the + */
+        for (int swap = 0; swap < 2; ++swap) {
+            ExprP base = swap ? c : a;
+            ExprP bias = swap ? a : c;
+            if (!base || !bias) continue;
+            /* form 1:  bias == base >>u signbit  */
+            if (bias->kind == EK::Binary && bias->op == ">>" && bias->is_unsigned &&
+                bias->b && bias->b->kind == EK::Const && bias->b->cval == signbit &&
+                exprEqual(bias->a, base))
+                return clone(base);
+            /* form 2:  bias == (base SAR signbit) >>u (W - k)  -- the SAR of the
+             * sign extends to all-ones/zeros; we accept any unsigned-shift of a
+             * sign-replicating expression of the same base. */
+            if (bias->kind == EK::Binary && bias->op == ">>" && bias->is_unsigned &&
+                bias->a && bias->a->kind == EK::Binary && bias->a->op == ">>" &&
+                bias->a->b && bias->a->b->kind == EK::Const &&
+                bias->a->b->cval == signbit && exprEqual(bias->a->a, base))
+                return clone(base);
+        }
+        return nullptr;
+    }
+
+    void incdec(Block& b, const cs_x86& x, const std::string& op, uint64_t addr) {
+        if (x.op_count < 1) return;
+        const cs_x86_op& d = x.operands[0];
+        int w = d.size ? d.size : 4;
+        ExprP res = mkBinary(op, rvalue(d), mkConst(1, w), w);
+        do_dst(b, d, res, addr);
+        set_flags_dst(d, res, w);
+    }
+
+    /* Win64 passes args 5+ on the stack at [rsp+0x20], [rsp+0x28], ... (just above
+     * the 0x20 shadow space). Count the CONTIGUOUS run of such outgoing-arg stores
+     * immediately before a call so a 6-arg call (e.g. a `vsnprintf` formatter with a
+     * trailing va_list) is not truncated to its 4 register args. Shadow-space homing
+     * (disp 8/0x10/0x18, < 0x20) is excluded. Caller-side only — callees are declared
+     * unparenthesized, so an occasional over-count just passes a harmless extra arg. */
+    /* Reaching-def argument count for an UNKNOWN-arity callee (import / indirect).
+     * The Win64 arg registers rcx/rdx/r8/r9 (+xmm0-3) are VOLATILE — clobbered by
+     * every call — so an arg register not WRITTEN since the prior call in this block
+     * holds a clobbered value, never a real argument (`ShowCursor(0,0xfffffffc,t5)`
+     * passed two stale leftovers from a preceding SetWindowLongPtrW). Returns the
+     * contiguous count of positions [0..3] actually set up since the last in-block
+     * call; -1 if NO prior call is visible (args may be incoming params / set in a
+     * predecessor — don't gate). Fills xmm_arg[pos] for a float/double arg in xmmN. */
+    int reaching_argc(const Insn& callin, const Block& b, bool xmm_arg[4]) {
+        for (int k = 0; k < 4; ++k) xmm_arg[k] = false;
+        int pos = -1;
+        for (int k = 0; k < (int)b.insn_idx.size(); ++k)
+            if (insns[b.insn_idx[k]].addr == callin.addr) { pos = k; break; }
+        if (pos < 0) return -1;
+        bool int_set[4] = {false,false,false,false};
+        bool xmm_set[4] = {false,false,false,false};
+        bool prior_call = false;
+        for (int k = pos - 1; k >= 0; --k) {
+            const Insn& pi = insns[b.insn_idx[k]];
+            if (pi.is_call) { prior_call = true; break; }
+            const cs_x86& xx = pi.x86;
+            for (int o = 0; o < xx.op_count; ++o) {
+                if (xx.operands[o].type != X86_OP_REG) continue;
+                if (!(xx.operands[o].access & CS_AC_WRITE)) continue;
+                Reg r; int w; map_reg(xx.operands[o].reg, r, w);
+                if      (r==R_RCX)  int_set[0]=true; else if (r==R_RDX)  int_set[1]=true;
+                else if (r==R_R8)   int_set[2]=true; else if (r==R_R9)   int_set[3]=true;
+                else if (r==R_XMM0) xmm_set[0]=true; else if (r==R_XMM1) xmm_set[1]=true;
+                else if (r==R_XMM2) xmm_set[2]=true; else if (r==R_XMM3) xmm_set[3]=true;
+            }
+        }
+        /* Gate only when the entering volatiles are KNOWN clobbered: a prior in-block
+         * call, OR a call that definitely executed on EVERY path before this block
+         * (the cross-block state-machine case — args set up in this block, the
+         * clobbering call in a predecessor). Otherwise the regs may be incoming
+         * params or set in a predecessor -> don't gate. */
+        bool clobbered = prior_call ||
+            (b.id >= 0 && b.id < (int)call_before_block.size() && call_before_block[b.id]);
+        if (!clobbered) return -1;
+        int n = 0;
+        while (n < 4 && (int_set[n] || xmm_set[n])) {
+            if (xmm_set[n] && !int_set[n]) xmm_arg[n] = true;
+            ++n;
+        }
+        return n;
+    }
+
+    /* call_before_block[b] = a call instruction definitely executed on EVERY path
+     * from the function entry to block b's entry (so the Win64 volatile arg
+     * registers are clobbered on entry to b). A forward "must" dataflow: optimistic
+     * init (all 1 except entry), iterate down. Used by reaching_argc to gate
+     * cross-block stale-arg passing. */
+    std::vector<char> call_before_block;
+    void compute_call_before_block() {
+        int nb = (int)blocks.size();
+        call_before_block.assign(nb, 0);
+        if (nb == 0) return;
+        std::vector<char> has_call(nb, 0);
+        for (int i = 0; i < nb; ++i)
+            for (int idx : blocks[i].insn_idx)
+                if (idx >= 0 && idx < (int)insns.size() && insns[idx].is_call) { has_call[i] = 1; break; }
+        int entry = entry_block();
+        for (int i = 0; i < nb; ++i) call_before_block[i] = (i == entry) ? 0 : 1;
+        bool changed = true; int guard = 0;
+        while (changed && guard++ < 100000) {
+            changed = false;
+            for (int i = 0; i < nb; ++i) {
+                if (i == entry) continue;
+                char v;
+                if (blocks[i].pred.empty()) v = 0;     /* unreachable / no preds */
+                else {
+                    v = 1;
+                    for (int p : blocks[i].pred)
+                        if (p >= 0 && p < nb) v = v && (call_before_block[p] || has_call[p]);
+                }
+                if (v != call_before_block[i]) { call_before_block[i] = v; changed = true; }
+            }
+        }
+    }
+
+    int outgoing_stack_args(const Insn& callin, const Block& b) {
+        int pos = -1;
+        for (int k = 0; k < (int)b.insn_idx.size(); ++k)
+            if (insns[b.insn_idx[k]].addr == callin.addr) { pos = k; break; }
+        if (pos < 0) return 0;
+        std::set<int> slots;
+        for (int k = pos - 1; k >= 0; --k) {
+            const Insn& in = insns[b.insn_idx[k]];
+            if (in.is_call) break;                 /* a prior call resets the area  */
+            const cs_x86& x = in.x86;
+            if (x.op_count == 2 && x.operands[0].type == X86_OP_MEM &&
+                (in.id == X86_INS_MOV || in.id == X86_INS_MOVSS ||
+                 in.id == X86_INS_MOVSD || in.id == X86_INS_MOVAPS)) {
+                const x86_op_mem& m = x.operands[0].mem;
+                Reg base = R_NONE; int t;
+                if (m.base != X86_REG_INVALID) map_reg(m.base, base, t);
+                if (base == R_RSP && m.index == X86_REG_INVALID &&
+                    m.disp >= 0x20 && ((m.disp - 0x20) % 8) == 0 && m.disp <= 0x20 + 8 * 11)
+                    slots.insert((int)((m.disp - 0x20) / 8));
+            }
+        }
+        int n = 0; while (slots.count(n)) n++;     /* contiguous from the 5th slot  */
+        return n;
+    }
+
+    /* An indirect call whose target folds to a constant absolute VA — a function
+     * pointer loaded from a read-only global table (`mov rax,[g]; call rax`, g in
+     * .rdata) — names the real function instead of `((funcptr)0x180084990)(...)`,
+     * so the call-graph / xref edge is recovered. Handles both absolute (base+rva)
+     * and bare-rva constants. */
+    /* float_mask of the most recently resolved callee (which param positions are
+     * XMM float/double args). Read by the call-site arg builder to pull each arg
+     * from xmm[i] instead of the integer reg. Reset per lift_call. */
+    unsigned char cc_float_mask = 0;
+    bool cc_pc_from_sig = false;   /* did the last resolved callee's pc come from sigtab? */
+
+    bool const_callee_name(const ExprP& target, std::string& nm, int& rk, int& pc) {
+        ExprP f = fold(clone(target));
+        if (!f || f->kind != EK::Const) return false;
+        uint64_t addr = (uint64_t)f->cval;
+        uint64_t rva = (addr >= e->base && e->base) ? (addr - e->base) : addr;
+        /* a call target is, by construction, a code address. Accept any in-image
+         * RVA (preferring a known function for its sigtab arity). Resolving even
+         * an engine-unidentified target restores the call-graph edge. */
+        if (rva == 0 || rva >= e->image_size) return false;
+        nm = name_for_rva(rva);
+        if (nm.empty()) return false;
+        rk = 2; pc = 4; cc_pc_from_sig = false;
+        if (sigtab && sigtab->count(rva)) {
+            rk = sigtab->at(rva).ret_kind; pc = sigtab->at(rva).param_count;
+            cc_float_mask = sigtab->at(rva).float_mask;
+            cc_pc_from_sig = true;
+        }
+        return true;
+    }
+
+    /* Known arities/return-kinds for common imported Win32 / CRT / COM APIs. The
+     * Win64 arg registers are volatile, so a callee's true arity cannot be
+     * recovered from the call site when the caller's own params sit in unused arg
+     * registers — `GetSystemMetrics(0x22, a2, t711, a4)` shows 3 phantom leftovers.
+     * A signature table (as IDA/Ghidra ship) fixes it for EVERY binary. Matches the
+     * bare or A/W-suffixed name. Returns false when unknown (fall back to reaching-
+     * def gating). rk: 0 void, 1 int, 2 long long/pointer. */
+    static bool known_api(const std::string& nm, int& argc, int& rk) {
+        struct E { const char* n; int a; int r; };
+        static const E tbl[] = {
+            /* kernel32 */
+            {"GetLastError",0,1},{"SetLastError",1,0},{"GetCurrentThreadId",0,1},
+            {"GetCurrentProcessId",0,1},{"GetCurrentProcess",0,2},{"GetCurrentThread",0,2},
+            {"GetTickCount",0,1},{"GetTickCount64",0,2},{"QueryPerformanceCounter",1,1},
+            {"QueryPerformanceFrequency",1,1},{"Sleep",1,0},{"CloseHandle",1,1},
+            {"GetProcAddress",2,2},{"GetModuleHandle",1,2},{"LoadLibrary",1,2},
+            {"FreeLibrary",1,1},{"GetStdHandle",1,2},{"ExitProcess",1,0},
+            {"HeapAlloc",3,2},{"HeapFree",3,1},{"HeapReAlloc",4,2},{"GetProcessHeap",0,2},
+            {"VirtualAlloc",4,2},{"VirtualFree",3,1},{"VirtualProtect",4,1},
+            {"EnterCriticalSection",1,0},{"LeaveCriticalSection",1,0},
+            {"InitializeCriticalSection",1,0},{"DeleteCriticalSection",1,0},
+            {"WriteFile",5,1},{"ReadFile",5,1},{"GetFileSize",2,1},
+            {"MultiByteToWideChar",6,1},{"WideCharToMultiByte",8,1},
+            {"FormatMessage",7,1},{"OutputDebugString",1,0},{"IsDebuggerPresent",0,1},
+            /* user32 */
+            {"GetSystemMetrics",1,1},{"MessageBox",4,1},{"ShowWindow",2,1},
+            {"ShowCursor",1,1},{"GetDC",1,2},{"ReleaseDC",2,1},{"DestroyWindow",1,1},
+            {"DefWindowProc",4,2},{"SendMessage",4,2},{"PostMessage",4,1},
+            {"GetWindowLongPtr",2,2},{"SetWindowLongPtr",3,2},{"GetClientRect",2,1},
+            {"GetWindowRect",2,1},{"SetWindowPos",7,1},{"UpdateWindow",1,1},
+            {"InvalidateRect",3,1},{"GetCursorPos",1,1},{"SetCursorPos",2,1},
+            /* ole32 / combase */
+            {"CoInitialize",1,1},{"CoInitializeEx",2,1},{"CoUninitialize",0,0},
+            {"CoCreateInstance",5,1},{"CoTaskMemAlloc",1,2},{"CoTaskMemFree",1,0},
+            {"RevokeDragDrop",1,1},{"RegisterDragDrop",2,1},{"OleInitialize",1,1},
+            /* CRT */
+            {"malloc",1,2},{"free",1,0},{"realloc",2,2},{"calloc",2,2},
+            {"memcpy",3,2},{"memmove",3,2},{"memset",3,2},{"memcmp",3,1},
+            {"strlen",1,2},{"strcmp",2,1},{"strncmp",3,1},{"strcpy",2,2},
+            {"strncpy",3,2},{"strcat",2,2},{"strchr",2,2},{"strstr",2,2},
+            {"wcslen",1,2},{"abort",0,0},{"exit",1,0},{"_errno",0,2},
+            {"wcscmp",2,1},{"wcscpy",2,2},{"wcscat",2,2},{"wcschr",2,2},{"wcsncmp",3,1},
+            {"_XcptFilter",2,1},{"_amsg_exit",1,0},{"_initterm",2,0},{"__C_specific_handler",4,1},
+            /* TLS (kernel32) — these were defaulting to 4-args-then-trim, giving the
+             * wrong count (TlsFree(x,a2), TlsAlloc(a1,..), TlsGetValue()). */
+            {"TlsAlloc",0,1},{"TlsFree",1,1},{"TlsGetValue",1,2},{"TlsSetValue",2,1},
+            /* time (kernel32) */
+            {"GetSystemTimeAsFileTime",1,0},{"GetSystemTime",1,0},{"GetLocalTime",1,0},
+            {"SystemTimeToFileTime",2,1},{"FileTimeToSystemTime",2,1},
+            {"FileTimeToLocalFileTime",2,1},{"GetFileTime",4,1},{"SetFileTime",4,1},
+            /* file / module (kernel32) */
+            {"CreateFile",7,2},{"DeleteFile",1,1},{"GetFileAttributes",1,1},
+            {"GetFileAttributesEx",3,1},{"SetFilePointer",4,1},{"SetFilePointerEx",5,1},
+            {"GetFileSizeEx",2,1},{"FlushFileBuffers",1,1},{"SetEndOfFile",1,1},
+            {"GetModuleFileName",3,1},{"GetModuleHandleEx",3,1},{"LoadLibraryEx",3,2},
+            {"GetFullPathName",4,1},{"GetTempPath",2,1},{"GetTempFileName",4,1},
+            {"FindFirstFile",2,2},{"FindNextFile",2,1},{"FindClose",1,1},
+            {"GetEnvironmentVariable",3,1},{"ExpandEnvironmentStrings",3,1},
+            /* memory (kernel32) */
+            {"LocalAlloc",2,2},{"LocalFree",1,2},{"LocalLock",1,2},{"LocalUnlock",1,1},
+            {"GlobalAlloc",2,2},{"GlobalFree",1,2},{"GlobalLock",1,2},{"GlobalUnlock",1,1},
+            {"RtlCaptureContext",1,0},{"RaiseException",4,0},
+            /* sync (kernel32) */
+            {"WaitForSingleObject",2,1},{"WaitForMultipleObjects",4,1},
+            {"WaitForSingleObjectEx",3,1},{"WaitForMultipleObjectsEx",5,1},
+            {"CreateThread",6,2},{"CreateEvent",4,2},{"SetEvent",1,1},{"ResetEvent",1,1},
+            {"CreateMutex",3,2},{"ReleaseMutex",1,1},
+            {"CreateSemaphore",4,2},{"OpenSemaphore",3,2},{"ReleaseSemaphore",3,1},
+            {"CreateSemaphoreEx",6,2},
+            /* path helpers (kernel32) — were defaulting to 4 args, leaving a stale
+             * leftover register as a phantom 4th arg (GetShortPathNameW(p,b,n,-1)). */
+            {"GetShortPathName",3,1},{"GetLongPathName",3,1},
+            {"GetFinalPathNameByHandle",4,1},{"PathFileExists",1,1},
+            /* SRW locks / one-time init / threadpool (kernel32) — 1-arg lock ops
+             * were showing 2 (AcquireSRWLockShared(a2,a2)); pool ops showed 0. */
+            {"InitializeSRWLock",1,0},{"AcquireSRWLockShared",1,0},
+            {"ReleaseSRWLockShared",1,0},{"AcquireSRWLockExclusive",1,0},
+            {"ReleaseSRWLockExclusive",1,0},{"TryAcquireSRWLockExclusive",1,1},
+            {"TryAcquireSRWLockShared",1,1},
+            {"InitOnceExecuteOnce",4,1},{"InitOnceBeginInitialize",4,1},
+            {"InitOnceComplete",3,1},{"InitOnceInitialize",1,0},
+            {"CreateThreadpoolTimer",3,2},{"SetThreadpoolTimer",4,0},
+            {"CloseThreadpoolTimer",1,0},{"WaitForThreadpoolTimerCallbacks",2,0},
+            {"CreateThreadpoolWork",3,2},{"SubmitThreadpoolWork",1,0},
+            {"CloseThreadpoolWork",1,0},{"WaitForThreadpoolWorkCallbacks",2,0},
+            {"CreateThreadpoolWait",3,2},{"SetThreadpoolWait",3,0},
+            {"CreateFileMapping",6,2},{"MapViewOfFile",5,2},{"UnmapViewOfFile",1,1},
+            {"DuplicateHandle",7,1},{"GetOverlappedResult",4,1},
+            {"InitializeCriticalSectionAndSpinCount",2,1},{"TryEnterCriticalSection",1,1},
+            {"InterlockedIncrement",1,1},{"InterlockedDecrement",1,1},
+            {"InterlockedExchange",2,1},{"InterlockedCompareExchange",3,1},
+            /* strings (kernel32) */
+            {"lstrlen",1,1},{"lstrcmp",2,1},{"lstrcmpi",2,1},{"lstrcpy",2,2},
+            {"lstrcpyn",3,2},{"lstrcat",2,2},
+            /* registry (advapi32) */
+            {"RegOpenKeyEx",5,1},{"RegCreateKeyEx",9,1},{"RegQueryValueEx",6,1},
+            {"RegSetValueEx",6,1},{"RegCloseKey",1,1},{"RegDeleteValue",2,1},
+            {"RegEnumKeyEx",8,1},{"RegEnumValue",8,1},{"RegQueryInfoKey",12,1},
+            /* NT syscalls (ntdll) — NTSTATUS return (rk 1). These are called via the
+             * import thunk, so pc defaulted to 4 and the 5th+ STACK args were dropped
+             * (NtDeviceIoControlFile has 10, NtClose only 1). Definitive arities: */
+            {"NtClose",1,1},{"ZwClose",1,1},
+            {"NtDeviceIoControlFile",10,1},{"ZwDeviceIoControlFile",10,1},
+            {"NtFsControlFile",10,1},
+            {"NtOpenFile",6,1},{"ZwOpenFile",6,1},
+            {"NtCreateFile",11,1},{"ZwCreateFile",11,1},
+            {"NtReadFile",9,1},{"NtWriteFile",9,1},
+            {"NtQueryInformationFile",5,1},{"NtSetInformationFile",5,1},
+            {"NtQueryVolumeInformationFile",5,1},
+            {"NtWaitForSingleObject",3,1},{"NtSetEvent",2,1},{"NtClearEvent",1,1},
+            {"NtAllocateVirtualMemory",6,1},{"NtFreeVirtualMemory",4,1},
+            {"NtProtectVirtualMemory",5,1},{"NtQueryVirtualMemory",6,1},
+            {"NtOpenKey",3,1},{"NtCreateKey",7,1},{"NtQueryValueKey",6,1},
+            {"NtSetValueKey",6,1},{"NtDeleteValueKey",2,1},{"NtEnumerateValueKey",6,1},
+            {"NtQueryInformationProcess",5,1},{"NtQueryInformationThread",5,1},
+            {"NtQuerySystemInformation",4,1},{"NtQueryInformationToken",5,1},
+            {"NtOpenProcessToken",3,1},{"NtOpenThreadToken",4,1},
+            /* Rtl heap / helpers (ntdll) — pointer return (rk 2) for allocators */
+            {"RtlAllocateHeap",3,2},{"RtlFreeHeap",3,1},{"RtlReAllocateHeap",4,2},
+            {"RtlSizeHeap",3,2},{"RtlCreateHeap",6,2},{"RtlDestroyHeap",1,2},
+            {"RtlInitUnicodeString",2,0},{"RtlInitAnsiString",2,0},
+            {"RtlFreeUnicodeString",1,0},{"RtlCompareUnicodeString",3,1},
+            {"RtlEqualUnicodeString",3,1},{"RtlCopyUnicodeString",2,0},
+            {"RtlNtStatusToDosError",1,1},{"RtlGetLastWin32Error",0,1},
+            {"RtlSetLastWin32Error",1,0},{"RtlEnterCriticalSection",1,1},
+            {"RtlLeaveCriticalSection",1,1},{"RtlDeleteCriticalSection",1,1},
+            {"RtlInitializeCriticalSection",1,1},
+            /* delay-load runtime helper (returns FARPROC pointer, rk 2). Called via
+             * the delay-import IAT with 5+ args set up on the stack. */
+            {"ResolveDelayLoadedAPI",6,2},{"__delayLoadHelper2",2,2},
+            {"DelayLoadFailureHook",2,2},
+        };
+        /* strip a trailing 'A'/'W' ANSI/wide suffix for the lookup */
+        std::string base = nm;
+        if (base.size() > 1 && (base.back() == 'A' || base.back() == 'W')) {
+            char p = base[base.size() - 2];
+            if (p >= 'a' && p <= 'z') base.pop_back();   /* only if it reads like a word */
+        }
+        for (const E& e : tbl)
+            if (nm == e.n || base == e.n) { argc = e.a; rk = e.r; return true; }
+        return false;
+    }
+
+    void lift_call(Block& b, const Insn& in) {
+        std::string callee; bool indirect = false; int ret_kind = 1; int pc = 4;
+        ExprP itgt;   /* indirect-call target, kept as a live child for dataflow */
+        const cs_x86& x = in.x86;
+        uint64_t target = 0; bool have_target = false;
+        cc_float_mask = 0;   /* reset; set when a callee sig is resolved */
+        cc_pc_from_sig = false;  /* reset; set true when pc comes from sigtab */
+
+        /* Drop compiler-inserted security/runtime housekeeping calls entirely:
+         * the stack cookie check and CRT init guards have no observable effect on
+         * the recovered C and would crash the recompiled output (cookie mismatch)
+         * or fail to link. */
+        /* `... xor reg, rsp; call F` is the stack-cookie check regardless of
+         * whether F resolved to a name. Dropping it (and NOT clobbering rax) is
+         * essential: otherwise the call's return-temp overwrites the function's
+         * real return value set just before the epilogue (ip_octet_valid returned
+         * 0 instead of 1, my_itoa returned 0 instead of len). */
+        if (cookie_call_addrs.count(in.addr) || is_cookie_xor(prev_insn)) return;
+        /* drop the prologue __chkstk stack-probe call (recorded by scan_prologue).
+         * It only touches rsp; eliding it keeps rax intact for the `sub rsp,rax`. */
+        if (chkstk_call_addrs.count(in.addr)) return;
+        if (in.has_branch_target) {
+            std::string nm = name_for_rva(in.branch_target);
+            if (nm == "__security_check_cookie" ||
+                nm == "__GSHandlerCheck" ||
+                nm.rfind("__security", 0) == 0 ||
+                nm == "_RTC_CheckEsp" ||
+                nm.rfind("_RTC_", 0) == 0 ||
+                nm.rfind("__chkstk", 0) == 0 ||
+                nm == "__chkstk") {
+                /* drop entirely; these housekeeping calls preserve all
+                 * caller-visible state including the return value in rax, so we
+                 * must NOT clobber regfile[RAX] here. */
+                return;
+            }
+        }
+
+        if (in.has_branch_target) {
+            target = in.branch_target; have_target = true;
+            callee = name_for_rva(in.branch_target);
+            /* import? render via the imported name directly */
+            bool is_import = false;
+            for (size_t i = 0; i < e->import_len; ++i)
+                if (e->imports[i].iat_rva == in.branch_target) { is_import = true; break; }
+            if (sigtab && sigtab->count(in.branch_target)) {
+                const FuncSig& s = sigtab->at(in.branch_target);
+                ret_kind = s.ret_kind; pc = s.param_count;
+                cc_float_mask = s.float_mask;
+                cc_pc_from_sig = true;
+                extern_callees[callee] = ret_kind;
+            } else {
+                /* unknown direct target: assume returns long long, 4 args */
+                ret_kind = 2; pc = 4;
+                extern_callees[callee] = ret_kind;
+            }
+            /* A `j_<api>` import thunk (`jmp qword ptr [IAT]`) has a jmp-only body,
+             * so build_sig_table recovered 0 params for it and EVERY call site
+             * dropped all args (`j_memset()` for a 3-arg memset, `j_memcmp()` for a
+             * 3-arg memcmp). Recover the true arity/return-kind from the API it
+             * forwards to: strip the `j_` and consult the known-API table. This
+             * overrides the thunk's under-counted sigtab entry. */
+            if (callee.rfind("j_", 0) == 0) {
+                int aargc, ark;
+                if (known_api(callee.substr(2), aargc, ark)) {
+                    pc = aargc; ret_kind = ark; cc_float_mask = 0;
+                    cc_pc_from_sig = true;
+                }
+            }
+            (void)is_import;
+        } else if (x.op_count >= 1) {
+            const cs_x86_op& t = x.operands[0];
+            if (t.type == X86_OP_MEM) {
+                /* indirect call through memory (IAT / vtable). rip-relative IAT
+                 * slot: name it if it is an import slot. */
+                const x86_op_mem& m = t.mem;
+                if (m.base == X86_REG_RIP && m.index == X86_REG_INVALID) {
+                    uint64_t abs = in.addr + in.size + (uint64_t)m.disp;
+                    std::string nm;
+                    for (size_t i = 0; i < e->import_len; ++i)
+                        if (e->imports[i].iat_rva == abs && e->imports[i].name[0]) {
+                            nm = sani(e->imports[i].name); break;
+                        }
+                    if (!nm.empty()) {
+                        callee = nm; ret_kind = 2; pc = 4;
+                        extern_callees[nm] = 2;
+                    } else {
+                        ExprP md = resolve_mem(t, 8);
+                        std::string fn; int rk2, pc2;
+                        if (const_callee_name(md, fn, rk2, pc2)) {
+                            callee = fn; ret_kind = rk2; pc = pc2; extern_callees[fn] = rk2;
+                        } else {
+                            callee = "((long long(*)())(" + render(md) + "))";
+                            indirect = true; ret_kind = 2; pc = 4; itgt = md;
+                        }
+                    }
+                } else {
+                    ExprP md = resolve_mem(t, 8);
+                    std::string nm; int rk2, pc2;
+                    if (const_callee_name(md, nm, rk2, pc2)) {
+                        callee = nm; ret_kind = rk2; pc = pc2; extern_callees[nm] = rk2;
+                    } else {
+                        callee = "((long long(*)())(" + render(md) + "))";
+                        indirect = true; ret_kind = 2; pc = 4; itgt = md;
+                    }
+                }
+            } else if (t.type == X86_OP_REG) {
+                Reg r; int w; map_reg(t.reg, r, w);
+                ExprP rv = reg_value(r, 8);
+                std::string nm; int rk2, pc2;
+                if (const_callee_name(rv, nm, rk2, pc2)) {
+                    callee = nm; ret_kind = rk2; pc = pc2; extern_callees[nm] = rk2;
+                } else {
+                    callee = "((long long(*)())(" + render(rv) + "))";
+                    indirect = true; ret_kind = 2; pc = 4; itgt = rv;
+                }
+            } else {
+                callee = "((long long(*)())0)"; indirect = true; ret_kind = 2; pc = 4;
+            }
+        }
+        (void)have_target; (void)target;
+
+        /* Exact arity/return-kind for a recognized imported API — definitive for
+         * every binary, so it overrides the pc=4 default and skips the reaching-def
+         * heuristic (which cannot see a 1-arg `GetSystemMetrics` when the caller's
+         * own params still sit in rdx/r8/r9). */
+        if (!cc_pc_from_sig && !indirect && !callee.empty()) {
+            int aargc, ark;
+            if (known_api(callee, aargc, ark)) {
+                pc = aargc; ret_kind = ark; cc_float_mask = 0;
+                cc_pc_from_sig = true;
+                extern_callees[callee] = ret_kind;
+            }
+        }
+
+        /* UNKNOWN-arity callee (import / indirect, pc defaulted to 4): gate the arg
+         * count by reaching definitions. A volatile arg register (rcx/rdx/r8/r9,
+         * xmm0-3) not written since the prior in-block call holds a clobbered
+         * leftover, never an argument — `GetTickCount()`, `ShowCursor(0)` were
+         * rendered with 1-3 stale args. NARROWS ONLY (never widens), and is gated to
+         * NON-sigtab callees so a typed internal call is never touched (corpus-safe).*/
+        if (!cc_pc_from_sig) {
+            bool xmm_arg[4];
+            int rc = reaching_argc(in, b, xmm_arg);
+            if (rc >= 0 && rc < pc) {
+                pc = rc;
+                cc_float_mask = 0;
+                for (int k = 0; k < 4; ++k) if (xmm_arg[k]) cc_float_mask |= (1u << k);
+            }
+        }
+
+        auto call = std::make_shared<Expr>();
+        call->kind = EK::Call; call->callee = callee; call->indirect = indirect;
+        call->width = 8; call->ret_kind = ret_kind;
+        /* Keep an indirect target as a live child (see the tail-call path): a value
+         * used ONLY inside the callee string is invisible to dataflow, so its def is
+         * eliminated as "unused" while the string use survives -> undeclared temp. */
+        if (indirect && itgt) call->a = itgt;
+        Reg argregs[4] = { R_RCX, R_RDX, R_R8, R_R9 };
+        /* Caller-side stack-arg recovery (Win64 args 5+ at [rsp+0x20],[rsp+0x28],...).
+         * Restricted to ANONYMOUS callees (`fun_/sub_/j_`, declared unparenthesized)
+         * that already consume all 4 register args. A NAMED/exported callee has a
+         * real prototype, so passing it an extra arg is a hard error (`dist_sq(int,
+         * int,int,int)` -> C2197) AND a 4-arg callee's `[rsp+0x20]` store is just a
+         * local spill — both excluded by the name gate. An unparenthesized callee
+         * accepts extra args harmlessly, so this only ever ADDS a genuinely-present
+         * stack arg (fun_0006708c: 4 reg args + 2 stack -> 6, recovering the va_list)
+         * and never breaks a typed call. */
+        bool anon_callee = !indirect &&
+            (callee.rfind("fun_", 0) == 0 || callee.rfind("sub_", 0) == 0 ||
+             callee.rfind("j_", 0) == 0);
+        if (anon_callee && pc >= 4) {
+            int sa = outgoing_stack_args(in, b);
+            if (sa > 0 && 4 + sa > pc) pc = 4 + sa;
+        }
+        if (pc < 0) pc = 0;
+        if (pc > 16) pc = 16;
+        Reg xmmregs[4] = { R_XMM0, R_XMM1, R_XMM2, R_XMM3 };
+        for (int i = 0; i < pc; ++i) {
+            if (i < 4) {
+                /* a float/double param at position i arrives in xmm[i], not the
+                 * integer reg — pull from the right register class per the callee's
+                 * recovered float_mask so `nr_sqrt((double)len2)` keeps its argument
+                 * instead of rendering `nr_sqrt()`. */
+                if (cc_float_mask & (1u << i)) {
+                    ExprP fv = reg_value(xmmregs[i], 8);
+                    /* a float const passed in the INTEGER reg (`mov r8d,0x3f800000; call`,
+                     * varargs) — xmm[i] was never written (a backstop), so use the int-reg
+                     * const as the float bits. The callee's float_mask already proves this
+                     * position is float, so reinterpreting its constant is value-correct. */
+                    if ((!fv || expr_has_in_backstop(fv))) {
+                        ExprP iv = reg_value(argregs[i], 8);
+                        if (iv && iv->kind == EK::Const && !iv->is_float) fv = iv;
+                    }
+                    if (fv) {
+                        fv->is_float = true;
+                        /* pick float vs double for a raw immediate: a 32-bit-fitting bit
+                         * pattern is a `float` (1.0f), a wider one a `double`. */
+                        if (fv->kind == EK::Const)
+                            fv->width = (fv->cval >= -0x80000000LL && fv->cval <= 0xFFFFFFFFLL) ? 4 : 8;
+                    }
+                    call->args.push_back(fv);
+                } else {
+                    call->args.push_back(reg_value(argregs[i], 8));
+                }
+            } else {
+                /* 5th+ argument: the caller stores it to the outgoing arg area at
+                 * [rsp + 0x20 + 8*(i-4)] before the call (x64 convention). Read
+                 * that slot's tracked value so the call passes the right count. */
+                int64_t off = 0x20 + 8 * (int64_t)(i - 4);
+                std::string nm = slot_name(off, 8);
+                int w = var_width.count(nm) ? var_width[nm] : 8;
+                call->args.push_back(mkVar(nm, w));
+            }
+        }
+
+        /* ALWAYS bind the result to a temp, even for a "void" callee: return-type
+         * detection is imperfect, and a caller that reads `ax`/`eax`/`rax` after
+         * the call (e.g. `call f; movsx edi,ax; cmp edi,2`) must see the real value
+         * instead of the `0` fallback. Genuinely-void calls whose temp is never
+         * read are reduced back to a bare call statement by
+         * simplify_unused_call_temps() after dataflow. */
+        {
+            std::string tn = "t" + std::to_string(++temp_seq);
+            call_temps.insert(tn);
+            /* a float/double callee (ret_kind 3/4) returns in XMM0, NOT rax. Binding
+             * the result to rax dropped the value: `my_sqrt(len2)` rendered as a
+             * void `fun_x();` and the following divsd read a stale xmm0, so
+             * vec3_normalize/ray_sphere lost the sqrt entirely. Bind to XMM0 and
+             * type the temp float so the value flows into the FP dataflow. */
+            bool fret = (ret_kind == 3 || ret_kind == 4);
+            int cw = fret ? (ret_kind == 4 ? 8 : 4)
+                          : ((ret_kind == 2) ? 8 : (ret_kind == 0) ? 8 : 4);
+            var_width[tn] = cw;
+            if (fret) { var_is_float[tn] = true; call->is_float = true; }
+            else if (cw == 8) var_is_ll[tn] = true;
+            ExprP lhs = mkVar(tn, cw); if (fret) lhs->is_float = true;
+            Stmt s; s.kind = SK::Assign; s.lhs = lhs; s.rhs = call;
+            s.addr = in.addr; b.stmts.push_back(std::move(s));
+            ExprP tv = mkVar(tn, cw); if (fret) tv->is_float = true;
+            /* Bind the result to RAX ALWAYS, and to XMM0 as well when float. The
+             * return CLASS detection is imperfect: a callee mis-typed float binds
+             * only XMM0, so the caller's integer use of the result (`call f; mov
+             * [x],rax`) reads a stale rax and leaks `in_RAX`. Binding both means a
+             * read of either register class sees the value regardless — the float
+             * dataflow (XMM0) is preserved AND the integer view (RAX) is present. */
+            regfile[R_RAX] = tv;
+            if (fret) regfile[R_XMM0] = tv;
+        }
+    }
+
+    std::set<std::string> call_temps;
+    std::set<std::string> spill_temps;   /* memory-clobber snapshot temps */
+    std::set<std::string> cse_temps;     /* common-subexpression temps */
+
+    /* Intra-statement CSE / let-insertion: a chain of register ops (`x = x+C;
+     * x = (x^(x>>30))*C2; ...`) is kept symbolic and only materialized at the
+     * statement that consumes it, so each reuse of `x` re-inlines the whole prior
+     * expression — splitmix/morton/popcount collapse into one 600-char monster.
+     * Here we hoist repeated NON-trivial pure subexpressions of one statement's
+     * RHS (or a terminator) into named temps emitted just before it, smallest-
+     * first so inner values are bound before the outer ones that reference them.
+     * Value-preserving (a temp == the subexpr, no intervening write within one
+     * expression), so behaviour and the corpus are unchanged. */
+    /* Hoist pointer-shared subtrees: a single shared_ptr node referenced by >=2
+     * parent edges (a cmov index / address reused across an unrolled access) is
+     * bound to one temp, so render() prints the value ONCE instead of re-expanding
+     * the DAG (fn_0000ce70: an 81x-shared cmov index -> a 5 KB line). O(distinct
+     * nodes). Value-preserving — the shared node is literally one value. Runs
+     * before cse_expr so the flattened tree it sees is small. */
+    ExprP hoist_shared(ExprP root, std::vector<Stmt>& hoists) {
+        if (!root) return root;
+        std::map<const Expr*, ExprP> node;
+        std::map<const Expr*, int> refs;
+        std::function<void(const ExprP&)> cnt = [&](const ExprP& e) {
+            if (!e) return;
+            node[e.get()] = e;
+            if (refs[e.get()]++ > 0) return;   /* children already counted */
+            cnt(e->a); cnt(e->b); cnt(e->c);
+            for (auto& ar : e->args) cnt(ar);
+        };
+        cnt(root);
+        /* which shared nodes are worth binding: referenced >=2x and non-trivial. */
+        std::map<const Expr*, ExprP> repl;
+        for (auto& kv : refs) {
+            if (kv.second < 2) continue;
+            const ExprP& e = node[kv.first];
+            if (!e) continue;
+            EK k = e->kind;
+            if (k == EK::Const || k == EK::Var || k == EK::Reg || k == EK::Str) continue;
+            if (k == EK::Cast && e->a &&
+                (e->a->kind == EK::Const || e->a->kind == EK::Var)) continue;  /* trivial */
+            std::string tn = "t" + std::to_string(++temp_seq);
+            cse_temps.insert(tn);
+            int w = e->width ? e->width : 8;
+            var_width[tn] = w; if (w >= 8) var_is_ll[tn] = true;
+            if (e->is_float) var_is_float[tn] = true;
+            ExprP tv = mkVar(tn, w); if (e->is_float) tv->is_float = true;
+            repl[kv.first] = tv;
+        }
+        if (repl.empty()) return root;
+        /* memoized pointer-subst: replace each shared node with its temp var; the
+         * temp DEFs are rebuilt too so nested sharing collapses (inner temps are
+         * referenced by outer temp defs). */
+        std::map<const Expr*, ExprP> memo;
+        std::function<ExprP(const ExprP&, bool)> rebuild = [&](const ExprP& e, bool top) -> ExprP {
+            if (!e) return e;
+            auto rit = repl.find(e.get());
+            if (rit != repl.end() && !top) return rit->second;   /* use the temp var */
+            auto mit = memo.find(e.get());
+            if (mit != memo.end()) return mit->second;
+            ExprP c = std::make_shared<Expr>(*e);
+            c->a = rebuild(e->a, false); c->b = rebuild(e->b, false); c->c = rebuild(e->c, false);
+            for (auto& ar : c->args) ar = rebuild(ar, false);
+            memo[e.get()] = c;
+            return c;
+        };
+        /* emit temp DEFs; a def's RHS is the node with its OWN shared children
+         * replaced by their temps (top=true so the node itself isn't self-replaced). */
+        std::vector<std::pair<int,Stmt>> defs;  /* (depth-ish order via temp seq) */
+        for (auto& kv : repl) {
+            const ExprP& e = node[kv.first];
+            Stmt def; def.kind = SK::Assign; def.lhs = clone(kv.second);
+            def.rhs = rebuild(e, true);
+            defs.push_back({0, std::move(def)});
+        }
+        /* Order defs so an inner temp is defined before an outer one that uses it:
+         * a def whose RHS references temp T must come after T's def. Simple stable
+         * pass: repeatedly emit defs whose RHS temps are all already emitted. */
+        std::set<std::string> emitted;
+        std::vector<Stmt> ordered;
+        bool progress = true;
+        while (progress && ordered.size() < defs.size()) {
+            progress = false;
+            for (auto& pr : defs) {
+                Stmt& d = pr.second;
+                if (d.kind != SK::Assign || !d.lhs) continue;   /* already taken */
+                std::set<std::string> used;
+                collect_var_names(d.rhs, used);
+                bool ready = true;
+                for (auto& u : used)
+                    if (cse_temps.count(u) && repl_has_temp(repl, u) && !emitted.count(u)) { ready = false; break; }
+                if (!ready) continue;
+                emitted.insert(d.lhs->name);
+                ordered.push_back(d);
+                d.kind = SK::Comment; d.lhs = nullptr;   /* mark taken */
+                progress = true;
+            }
+        }
+        for (auto& pr : defs) if (pr.second.kind == SK::Assign && pr.second.lhs) ordered.push_back(pr.second);
+        for (auto& d : ordered) hoists.push_back(std::move(d));
+        return rebuild(root, true);
+    }
+    /* true if `nm` is one of the temp vars we just created for a shared node */
+    bool repl_has_temp(const std::map<const Expr*, ExprP>& repl, const std::string& nm) {
+        for (auto& kv : repl) if (kv.second && kv.second->name == nm) return true;
+        return false;
+    }
+    ExprP cse_expr(ExprP e, std::vector<Stmt>& hoists) {
+        if (!e) return e;
+        e = hoist_shared(e, hoists);           /* collapse pointer-shared DAG first */
+        if (node_count(e) > 2500) return e;   /* skip pathological unrolled trees */
+        for (int iter = 0; iter < 60; ++iter) {
+            std::vector<ExprP> subs;
+            collect_subs(e, subs);
+            for (auto& h : hoists) collect_subs(h.rhs, subs);
+            ExprP best = nullptr; int bestsz = 0;
+            std::vector<ExprP> seen;
+            for (auto& sub : subs) {
+                bool dup = false;
+                for (auto& s2 : seen) if (exprEqual(s2, sub)) { dup = true; break; }
+                if (dup) continue;
+                seen.push_back(sub);
+                int sz = node_count(sub);
+                if (sz < 3 || has_impure_call(sub)) continue;
+                int cnt = count_occ(e, sub);
+                for (auto& h : hoists) cnt += count_occ(h.rhs, sub);
+                if (cnt < 2) continue;
+                if (!best || sz < bestsz) { best = sub; bestsz = sz; }
+            }
+            if (!best) break;
+            std::string tn = "t" + std::to_string(++temp_seq);
+            cse_temps.insert(tn);
+            int w = best->width ? best->width : 8;
+            var_width[tn] = w; if (w >= 8) var_is_ll[tn] = true;
+            if (best->is_float) var_is_float[tn] = true;
+            ExprP tv = mkVar(tn, w); if (best->is_float) tv->is_float = true;
+            Stmt def; def.kind = SK::Assign; def.lhs = mkVar(tn, w);
+            if (best->is_float) def.lhs->is_float = true;
+            def.rhs = clone(best);
+            e = subst_subtree(e, best, tv);
+            for (auto& h : hoists) h.rhs = subst_subtree(h.rhs, best, tv);
+            hoists.push_back(std::move(def));
+            if ((int)hoists.size() > 100) break;
+        }
+        return e;
+    }
+    void cse_materialize() {
+        for (auto& b : blocks) {
+            std::vector<Stmt> out;
+            for (auto& s : b.stmts) {
+                /* SK::Call is a BARE call statement (`fun_x(bigexpr, bigexpr);`);
+                 * its args were never run through intra-statement CSE, so a
+                 * repeated address/load subexpression re-inlined at each arg blew
+                 * the line to ~1KB (fn_0000bc40). Treat it like an assigned call
+                 * (`t = f(...)`), which already collapses via this path. */
+                if ((s.kind == SK::Assign || s.kind == SK::Call) && s.rhs) {
+                    std::vector<Stmt> hoists;
+                    ExprP nr = cse_expr(s.rhs, hoists);
+                    for (auto& h : hoists) out.push_back(std::move(h));
+                    Stmt ns = s; ns.rhs = nr; out.push_back(std::move(ns));
+                } else out.push_back(s);
+            }
+            if (b.cond)       { std::vector<Stmt> h; b.cond       = cse_expr(b.cond, h);       for (auto& x : h) out.push_back(std::move(x)); }
+            if (b.ret_value)  { std::vector<Stmt> h; b.ret_value  = cse_expr(b.ret_value, h);  for (auto& x : h) out.push_back(std::move(x)); }
+            if (b.switch_var) { std::vector<Stmt> h; b.switch_var = cse_expr(b.switch_var, h); for (auto& x : h) out.push_back(std::move(x)); }
+            b.stmts = std::move(out);
+        }
+    }
+
+    /* Block-local GVN for loop-invariant PURE-ARITHMETIC subexpressions. An
+     * address like `&A[i*4]` (= (char*)a1 + sext(i)*4) is recomputed once per
+     * store in unrolled array code (mat4_mul/transform_points), exploding the
+     * line count. Hoist a pure (no Mem, no Call) subexpr that recurs across >=2
+     * statements into one temp at its first use — value-preserving as long as no
+     * leaf var is reassigned in the span. Mem-reading subexprs are excluded to
+     * sidestep store aliasing. */
+    /* Common dominator of two blocks (walk idom). */
+    int common_dom(int a, int b) {
+        if (a < 0) return b; if (b < 0) return a;
+        std::set<int> anc; int x = a, guard = 0;
+        while (guard++ < 100000) { anc.insert(x); if (idom[x] == x || idom[x] < 0) break; x = idom[x]; }
+        int y = b; guard = 0;
+        while (!anc.count(y) && guard++ < 100000) { if (idom[y] == y || idom[y] < 0) return -1; y = idom[y]; }
+        return anc.count(y) ? y : -1;
+    }
+    /* True iff none of `leaves` is reassigned on any control path from block D to a
+     * `use` block (so the expression's value at D equals its value at each use).
+     * Forward BFS from D's successors; a use block is not expanded past (the use
+     * sits inside it); reaching D again (loop back) stops that path. */
+    bool leaves_stable(int D, const std::set<int>& uses, const std::set<std::string>& leaves) {
+        (void)uses;
+        /* Over-conservative: ANY block forward-reachable from D (until D loops back)
+         * that reassigns a leaf makes the value unstable — even one after the last
+         * use (e.g. a loop latch's `i = i + 1`). Rejecting those is safe (fewer
+         * CSEs), never wrong. Covers all real D->use paths since D dominates uses. */
+        std::set<int> vis; std::vector<int> work(blocks[D].succ.begin(), blocks[D].succ.end());
+        int guard = 0;
+        while (!work.empty()) {
+            if (guard++ > 200000) return false;
+            int b = work.back(); work.pop_back();
+            if (b < 0 || b == D || vis.count(b)) continue;
+            vis.insert(b);
+            for (auto& s : blocks[b].stmts)
+                if (s.kind == SK::Assign && s.lhs && s.lhs->kind == EK::Var && leaves.count(s.lhs->name))
+                    return false;
+            for (int s : blocks[b].succ) work.push_back(s);
+        }
+        return true;
+    }
+    /* True if `e` contains a `/` or `%` — hoisting such a value to a dominator could
+     * move a guarded division ahead of its guard (a new divide-by-zero fault). */
+    bool has_div(const ExprP& e) {
+        if (!e) return false;
+        if (e->kind == EK::Binary && (e->op == "/" || e->op == "%")) return true;
+        return has_div(e->a) || has_div(e->b) || has_div(e->c);
+    }
+    /* GLOBAL (cross-block) CSE / materialization. Hex-Rays' readability comes from
+     * propagation that REFUSES to duplicate a multi-use value — so a value used >=2
+     * times survives as ONE named temp. Here: a PURE (no memory, no call) arithmetic
+     * subexpression that occurs >=2 times across >=2 blocks is hoisted to a single
+     * temp at the common dominator of its uses (when no leaf is reassigned between),
+     * collapsing the per-iteration hash/index recomputation (ht_get/ht_put/csv) and
+     * any propagation-duplicated multi-use value into one definition. */
+    void cse_global() {
+        for (int iter = 0; iter < 60; ++iter) {
+            std::vector<ExprP> cand;
+            for (auto& b : blocks) {
+                for (auto& s : b.stmts) if (s.kind==SK::Assign) { collect_subs(s.rhs, cand); collect_subs(s.lhs, cand); }
+                collect_subs(b.cond, cand); collect_subs(b.ret_value, cand); collect_subs(b.switch_var, cand);
+            }
+            ExprP best=nullptr; int bestcnt=0, bestsz=0, bestD=-1; std::set<int> bestUses;
+            std::vector<ExprP> seen;
+            for (auto& sub : cand) {
+                int sz = node_count(sub);
+                if (sz < 4 || sz > 400 || has_call(sub) || reads_mem(sub) || has_div(sub)) continue;
+                bool dup=false; for (auto& s2:seen) if (exprEqual(s2,sub)){dup=true;break;}
+                if (dup) continue; seen.push_back(sub);
+                std::set<int> ublocks; int cnt=0;
+                for (auto& b : blocks) {
+                    int c=0;
+                    for (auto& s : b.stmts) if (s.kind==SK::Assign) c += count_occ(s.rhs,sub)+count_occ(s.lhs,sub);
+                    c += count_occ(b.cond,sub)+count_occ(b.ret_value,sub)+count_occ(b.switch_var,sub);
+                    if (c>0) { ublocks.insert(b.id); cnt+=c; }
+                }
+                if (cnt < 2 || ublocks.size() < 2) continue;   /* single-block: cse_cross_statement */
+                int D = -1; for (int ub : ublocks) { D = common_dom(D, ub); if (D < 0) break; }
+                if (D < 0 || (size_t)D >= blocks.size()) continue;
+                /* STRICT dominator only: never place the def in a use block (a within-
+                 * block leaf reassignment between two occurrences would make a single
+                 * shared temp wrong — that case is cse_cross_statement's job). And
+                 * hard-assert real dominance so a common_dom slip can't cause a
+                 * use-before-def. */
+                if (ublocks.count(D)) continue;
+                bool dom_ok = true;
+                for (int ub : ublocks) if (!dominates(D, ub)) { dom_ok = false; break; }
+                if (!dom_ok) continue;
+                std::set<std::string> leaves; collect_var_names(sub, leaves);
+                if (leaves.empty()) continue;
+                if (!leaves_stable(D, ublocks, leaves)) continue;
+                if (cnt > bestcnt || (cnt==bestcnt && sz>bestsz)) { best=sub; bestcnt=cnt; bestsz=sz; bestD=D; bestUses=ublocks; }
+            }
+            if (!best) break;
+            std::string tn = "t" + std::to_string(++temp_seq);
+            cse_temps.insert(tn);
+            int w = best->width ? best->width : 8;
+            var_width[tn]=w; if (w>=8) var_is_ll[tn]=true; if (best->is_float) var_is_float[tn]=true;
+            ExprP tv = mkVar(tn, w); if (best->is_float) tv->is_float=true;
+            Stmt def; def.kind=SK::Assign; def.lhs=mkVar(tn,w); if(best->is_float) def.lhs->is_float=true; def.rhs=clone(best);
+            /* place the def: before the first use IN D if D is a use block, else at D's end */
+            Block& DB = blocks[bestD];
+            int insert_at = (int)DB.stmts.size();
+            if (bestUses.count(bestD)) {
+                for (int si=0; si<(int)DB.stmts.size(); ++si)
+                    if (DB.stmts[si].kind==SK::Assign &&
+                        (count_occ(DB.stmts[si].rhs,best)+count_occ(DB.stmts[si].lhs,best))>0) { insert_at = si; break; }
+            }
+            for (auto& b : blocks) {
+                for (auto& s : b.stmts) if (s.kind==SK::Assign) { s.rhs=subst_subtree(s.rhs,best,tv); s.lhs=subst_subtree(s.lhs,best,tv); }
+                b.cond=subst_subtree(b.cond,best,tv); b.ret_value=subst_subtree(b.ret_value,best,tv); b.switch_var=subst_subtree(b.switch_var,best,tv);
+            }
+            DB.stmts.insert(DB.stmts.begin()+insert_at, std::move(def));
+        }
+    }
+
+    /* The address `addr` is rooted at a global: after peeling +/-const and casts, the
+     * base is a bare Const (`qword_G`) or a deref of a global-rooted address (a global
+     * pointer chain). */
+    bool mem_addr_global_rooted(const ExprP& addr) {
+        ExprP base = addr;
+        while (base && ((base->kind==EK::Binary && (base->op=="+"||base->op=="-") &&
+                         base->b && base->b->kind==EK::Const) || base->kind==EK::Cast))
+            base = base->a;
+        if (!base) return false;
+        if (base->kind==EK::Const) return true;
+        if (base->kind==EK::Mem && base->a) return mem_addr_global_rooted(base->a);
+        return false;
+    }
+    /* `e` reads memory ONLY through global bases (every Mem is global-rooted) and calls
+     * nothing — so its value is stable across calls into other functions. */
+    bool is_global_base_stable(const ExprP& e) {
+        if (!e) return true;
+        if (e->kind == EK::Call) return false;
+        if (e->kind == EK::Mem) {
+            if (!e->a || !mem_addr_global_rooted(e->a)) return false;
+            return is_global_base_stable(e->a);
+        }
+        if (!is_global_base_stable(e->a) || !is_global_base_stable(e->b) ||
+            !is_global_base_stable(e->c)) return false;
+        for (auto& ar : e->args) if (!is_global_base_stable(ar)) return false;
+        return true;
+    }
+    void cse_cross_statement() {
+        for (auto& b : blocks) {
+            int ns = (int)b.stmts.size();
+            if (ns > 250) continue;                  /* keep it cheap */
+            for (int iter = 0; iter < 30; ++iter) {
+                std::vector<ExprP> cand;
+                for (auto& s : b.stmts) if (s.kind==SK::Assign) { collect_subs(s.rhs, cand); collect_subs(s.lhs, cand); }
+                collect_subs(b.cond, cand); collect_subs(b.ret_value, cand); collect_subs(b.switch_var, cand);
+                ExprP best=nullptr; int bestcnt=0, bestsz=0, bestfirst=-1;
+                std::vector<ExprP> seen;
+                for (auto& sub : cand) {
+                    int sz = node_count(sub);
+                    if (sz < 4 || has_call(sub)) continue;
+                    /* A memory-LOADING address expression (`*(long long*)((char*)a2+0x48)
+                     * + idx*8`, re-derived on N consecutive field stores) IS hoistable,
+                     * but only when it is provably invariant across its uses — guarded
+                     * below (`sub_mem`). Pure arithmetic needs no memory guard. */
+                    bool sub_mem = reads_mem(sub);
+                    bool dup=false; for (auto& s2:seen) if (exprEqual(s2,sub)){dup=true;break;}
+                    if (dup) continue; seen.push_back(sub);
+                    int cnt=0, first=-1, last=-1;
+                    for (int si=0; si<ns; ++si) if (b.stmts[si].kind==SK::Assign) {
+                        int c2 = count_occ(b.stmts[si].rhs, sub) + count_occ(b.stmts[si].lhs, sub);
+                        if (c2>0) { if (first<0) first=si; last=si; cnt+=c2; }
+                    }
+                    int tcnt = count_occ(b.cond,sub)+count_occ(b.ret_value,sub)+count_occ(b.switch_var,sub);
+                    cnt += tcnt;
+                    if (cnt < 2 || first < 0) continue;
+                    bool crossstmt = (first != last) || (tcnt>0);   /* >1 statement involved */
+                    if (!crossstmt) continue;                       /* intra handled by cse_materialize */
+                    std::set<std::string> leaves; collect_var_names(sub, leaves);
+                    bool inv = true;
+                    for (int si=first; si<=last && inv; ++si)
+                        if (b.stmts[si].kind==SK::Assign && b.stmts[si].lhs &&
+                            b.stmts[si].lhs->kind==EK::Var && leaves.count(b.stmts[si].lhs->name))
+                            inv = false;
+                    if (!inv) continue;
+                    /* MEMORY SAFETY for a load-bearing sub: its loaded value must not be
+                     * clobbered between uses. Every statement in [first,last] must be a
+                     * call-free Assign, and every memory STORE must write THROUGH sub —
+                     * sub appears in the store's ADDRESS (`lhs->a`), i.e. `*(sub + C) =`.
+                     * A store whose target IS sub's own load address (`lhs == sub`, so
+                     * sub is NOT in lhs->a) is a direct clobber — the swap-through-memory
+                     * hazard (`a[i] = a[j]` with sub = *a[i]) — and bails. A store to an
+                     * unrelated address (sub absent from lhs->a) may alias — also bails. */
+                    if (sub_mem) {
+                        bool safe = true;
+                        for (int si=first; si<=last && safe; ++si) {
+                            const Stmt& st = b.stmts[si];
+                            if (st.kind != SK::Assign) { safe=false; break; }
+                            if (has_call(st.rhs)) { safe=false; break; }
+                            if (st.lhs && st.lhs->kind == EK::Mem &&
+                                (!st.lhs->a || count_occ(st.lhs->a, sub) == 0)) { safe=false; break; }
+                        }
+                        if (!safe) continue;
+                    }
+                    if (cnt > bestcnt || (cnt==bestcnt && sz>bestsz)) { best=sub; bestcnt=cnt; bestsz=sz; bestfirst=first; }
+                }
+                if (!best) break;
+                std::string tn = "t" + std::to_string(++temp_seq);
+                cse_temps.insert(tn);
+                int w = best->width ? best->width : 8;
+                var_width[tn]=w; if (w>=8) var_is_ll[tn]=true; if (best->is_float) var_is_float[tn]=true;
+                ExprP tv = mkVar(tn, w); if (best->is_float) tv->is_float=true;
+                Stmt def; def.kind=SK::Assign; def.lhs=mkVar(tn,w); if(best->is_float) def.lhs->is_float=true; def.rhs=clone(best);
+                for (auto& s : b.stmts) if (s.kind==SK::Assign) { s.rhs=subst_subtree(s.rhs,best,tv); s.lhs=subst_subtree(s.lhs,best,tv); }
+                b.cond=subst_subtree(b.cond,best,tv); b.ret_value=subst_subtree(b.ret_value,best,tv); b.switch_var=subst_subtree(b.switch_var,best,tv);
+                b.stmts.insert(b.stmts.begin()+bestfirst, std::move(def));
+                ns = (int)b.stmts.size();
+            }
+        }
+    }
+
+    /* =================================================================== */
+    /*  Constant folding / simplification                                   */
+    /* =================================================================== */
+
+    ExprP fold(ExprP e) {
+        if (!e) return e;
+        e->a = fold(e->a); e->b = fold(e->b); e->c = fold(e->c);
+        for (auto& ar : e->args) ar = fold(ar);
+
+        if (e->kind == EK::Cast && e->a) {
+            /* fold cast of const */
+            if (e->a->kind == EK::Const) {
+                int w = e->width;
+                int64_t v = e->a->cval;
+                if (e->is_unsigned) {
+                    uint64_t m = (w==1)?(v&0xFF):(w==2)?(v&0xFFFF):(w==4)?(uint32_t)v:(uint64_t)v;
+                    return mkConst((int64_t)m, w, true);
+                } else {
+                    int64_t m = (w==1)?(int8_t)v:(w==2)?(int16_t)v:(w==4)?(int32_t)v:v;
+                    return mkConst(m, w, false);
+                }
+            }
+            /* A NARROWING cast of `(X & C)` whose mask zeroes every bit the cast
+             * keeps -> 0. This collapses the byte-return `(signed char)(t2 & -256)`
+             * (from `xor al,al; ret`, where the low byte is provably 0) to a clean
+             * `0`, and is generally true for any sub-width masked-off slice. */
+            if (!e->is_float && e->width >= 1 && e->width < 8 &&
+                e->a->kind == EK::Binary && e->a->op == "&" && e->a->b &&
+                e->a->b->kind == EK::Const) {
+                uint64_t lowmask = (e->width >= 8) ? ~0ULL
+                                  : ((1ULL << (8 * e->width)) - 1);
+                if (((uint64_t)e->a->b->cval & lowmask) == 0)
+                    return mkConst(0, e->width, e->is_unsigned);
+            }
+            /* (narrowN)((X & C) | Y) -> (narrowN)(Y) when C zeroes every kept bit:
+             * the masked-off operand contributes nothing to the narrowed result.
+             * Collapses the byte-write merge `(parent & -256) | byteop` read back
+             * as a byte (`movzx eax,cl`) — the is_even `(~x)&1` cascade. Recurses. */
+            if (!e->is_float && e->width >= 1 && e->width < 8 &&
+                e->a->kind == EK::Binary && e->a->op == "|" && e->a->a && e->a->b) {
+                uint64_t lowmask = (e->width >= 8) ? ~0ULL
+                                  : ((1ULL << (8 * e->width)) - 1);
+                auto masks_off = [&](const ExprP& s)->bool {
+                    return s && s->kind==EK::Binary && s->op=="&" && s->b &&
+                           s->b->kind==EK::Const &&
+                           ((uint64_t)s->b->cval & lowmask)==0;
+                };
+                if (masks_off(e->a->a)) { auto c=std::make_shared<Expr>(*e); c->a=e->a->b; return fold(c); }
+                if (masks_off(e->a->b)) { auto c=std::make_shared<Expr>(*e); c->a=e->a->a; return fold(c); }
+            }
+            /* drop nested no-op cast: (T)((T)x) -> (T)x */
+            if (e->a->kind == EK::Cast && e->a->op == e->op) return e->a;
+            /* collapse two adjacent casts of the SAME width (the inner one is
+             * subsumed by the outer reinterpretation): (sN)(uN)x -> (sN)x.
+             * NOT across the int<->float DOMAIN boundary: `(float)(int)x`
+             * truncates the float to an integer value then converts back — a real
+             * value change, not a redundant reinterpretation. */
+            if (e->a->kind == EK::Cast && e->a->width == e->width &&
+                e->is_float == e->a->is_float) {
+                auto c = std::make_shared<Expr>(*e);
+                c->a = e->a->a; /* skip the inner cast */
+                return fold(c);
+            }
+            /* a cast no wider than an inner cast of strictly larger width is a
+             * pure truncation of an extended value: (sN)((sM)x) with N<=M keeps
+             * only the truncation: (sN)x. (Same int<->float domain guard.) */
+            if (e->a->kind == EK::Cast && e->a->width > e->width &&
+                e->is_float == e->a->is_float) {
+                auto c = std::make_shared<Expr>(*e);
+                c->a = e->a->a;
+                return fold(c);
+            }
+            /* drop a cast over a value masked to fit the cast width:
+             * (T_w)(x & mask) where mask < 2^(8*w) and the cast is value-
+             * preserving -> x & mask. */
+            if (e->a->kind == EK::Binary && e->a->op == "&" && e->a->b &&
+                e->a->b->kind == EK::Const) {
+                uint64_t mask = (uint64_t)e->a->b->cval;
+                uint64_t cap = (e->width >= 8) ? ~0ULL
+                             : ((1ULL << (8 * e->width)) - 1);
+                if ((mask & ~cap) == 0) return e->a;
+            }
+            /* drop a same-width cast over a plain var/mem read of that width — but
+             * NOT across the int<->float domain: `(long long)*(double*)p` is a real
+             * FP->int conversion (cvttsd2si), not a redundant reinterpret. */
+            if ((e->a->kind == EK::Var || e->a->kind == EK::Mem) &&
+                e->a->width == e->width && e->is_unsigned == e->a->is_unsigned &&
+                e->is_float == e->a->is_float)
+                return e->a;
+        }
+
+        if (e->kind == EK::Unary && e->a && e->a->kind == EK::Const) {
+            if (e->op == "-") return mkConst(-e->a->cval, e->width, false);
+            if (e->op == "~") return mkConst(~e->a->cval, e->width, false);
+        }
+
+        if (e->kind == EK::Binary && e->a && e->b) {
+            ExprP a = e->a, bb = e->b;
+            bool ac = a->kind == EK::Const, bc = bb->kind == EK::Const;
+            const std::string& op = e->op;
+            /* NEVER apply integer constant-folding or algebraic identities to a
+             * float operation: the operands are IEEE-754 bit patterns, so int
+             * arithmetic on them is nonsense (0x40800000 + 0x40800000 != 8.0f's
+             * bits) and identities like x*1 don't hold (1.0f's bits are not 1).
+             * Just keep the FP type flowing up for rendering. */
+            /* Unsigned comparison against 0 is a tautology or a simpler test — an
+             * UNSIGNED value is always >= 0. A CF-based `jae/jb/cmovae/cmovb` on a
+             * single (non-subtraction) value renders `(unsigned)X >= 0` (always
+             * true) / `< 0` (always false); collapse them. Sound for ANY X. */
+            if (!e->is_float && e->is_unsigned && bc && bb->cval == 0 &&
+                !a->is_float) {
+                if (op == ">=") return mkConst(1, e->width, false);   /* always true  */
+                if (op == "<")  return mkConst(0, e->width, false);   /* always false */
+                if (op == ">")  return fold(mkBinary("!=", a, mkConst(0, e->width), e->width));
+                if (op == "<=") return fold(mkBinary("==", a, mkConst(0, e->width), e->width));
+            }
+            if (e->is_float || a->is_float || bb->is_float) {
+                e->is_float = true;
+                /* float doubling: x + x  ->  2.0 * x. Multiply-by-two is exact in
+                 * IEEE-754 (an exponent bump, no rounding), so this is bit-identical
+                 * to the addition — pure readability, turning the decompiled
+                 * `*t15 + *t15` register-doubling noise into a real coefficient. */
+                if (op == "+" && exprEqual(a, bb)) {
+                    int fw = e->width ? e->width : (a->width ? a->width : 4);
+                    bool is32 = fw < 8;
+                    ExprP two = mkConst(is32 ? 0x40000000LL : 0x4000000000000000LL,
+                                        is32 ? 4 : 8, false);
+                    two->is_float = true;
+                    ExprP m = mkBinary("*", two, a, fw);
+                    m->is_float = true;
+                    return m;
+                }
+                return e;
+            }
+            /* both const */
+            if (ac && bc) {
+                int64_t x = a->cval, y = bb->cval; int w = e->width;
+                bool u = e->is_unsigned;
+                auto wrap = [&](int64_t r)->ExprP{ return mkConst(r, w, u); };
+                if (op=="+") return wrap(x+y);
+                if (op=="-") return wrap(x-y);
+                if (op=="*") return wrap(x*y);
+                if (op=="&") return wrap(x&y);
+                if (op=="|") return wrap(x|y);
+                if (op=="^") return wrap(x^y);
+                if (op=="<<") return wrap((y>=0&&y<64)?(x<<y):0);
+                if (op==">>") {
+                    if (u) return wrap((int64_t)((uint64_t)x >> (y&63)));
+                    return wrap(x >> (y&63));
+                }
+                if (op=="/" && y!=0) return wrap(u?(int64_t)((uint64_t)x/(uint64_t)y):x/y);
+                if (op=="%" && y!=0) return wrap(u?(int64_t)((uint64_t)x%(uint64_t)y):x%y);
+            }
+            /* `base == base ± K`  ⟺  `K == 0` (and !=). The compiler wrote an
+             * empty / "== end" check as `p == p + count*stride`; EXACT, and turns a
+             * baffling self-referential compare into a plain `count*stride == 0`. */
+            if (op=="==" || op=="!=") {
+                auto extra = [&](const ExprP& base, const ExprP& sum)->ExprP {
+                    if (!sum || sum->kind!=EK::Binary || !(sum->op=="+"||sum->op=="-") || !sum->a) return nullptr;
+                    if (exprEqual(base, sum->a)) return sum->b;                       /* base ± X */
+                    if (sum->op=="+" && sum->b && exprEqual(base, sum->b)) return sum->a; /* X + base */
+                    return nullptr;
+                };
+                int ew = e->width ? e->width : 8;
+                if (ExprP x = extra(a, bb)) return fold(mkBinary(op, x, mkConst(0, ew), ew, e->is_unsigned));
+                if (ExprP x = extra(bb, a)) return fold(mkBinary(op, x, mkConst(0, ew), ew, e->is_unsigned));
+            }
+            /* constant re-association for address/index math (never on floats — the
+             * float guard above already returned): `(Y ± c1) ± c2 -> Y + (c1±c2)`,
+             * so `(char*)((char*)p + 0x10) + 8` collapses to `p + 0x18`. */
+            if ((op=="+"||op=="-") && bc && a->kind==EK::Binary && (a->op=="+"||a->op=="-") &&
+                a->b && a->b->kind==EK::Const) {
+                int ew = e->width?e->width:8;
+                int64_t c1 = (a->op=="+") ? a->b->cval : -a->b->cval;
+                int64_t c2 = (op=="+")    ? bb->cval   : -bb->cval;
+                return fold(mkBinary("+", clone(a->a), mkConst(c1+c2, ew), ew, e->is_unsigned));
+            }
+            /* index-math strength un-reduction: fold the lea/shift-add longhand of a
+             * constant multiply back into ONE multiply, so `(n + n*8) * 8 -> n * 72`
+             * and `(m + m*2) << 5 -> m * 96`. Value-exact (mod 2^w). */
+            if (op=="+" && a->kind==EK::Binary && a->op=="*" && a->b && a->b->kind==EK::Const &&
+                exprEqual(a->a, bb)) {
+                int ew=e->width?e->width:8; return fold(mkBinary("*", clone(bb), mkConst(a->b->cval+1, ew), ew, e->is_unsigned));
+            }
+            if (op=="+" && bb->kind==EK::Binary && bb->op=="*" && bb->b && bb->b->kind==EK::Const &&
+                exprEqual(bb->a, a)) {
+                int ew=e->width?e->width:8; return fold(mkBinary("*", clone(a), mkConst(bb->b->cval+1, ew), ew, e->is_unsigned));
+            }
+            if (op=="*" && bc && a->kind==EK::Binary && a->op=="*" && a->b && a->b->kind==EK::Const) {
+                int ew=e->width?e->width:8; return fold(mkBinary("*", clone(a->a), mkConst(a->b->cval*bb->cval, ew), ew, e->is_unsigned));
+            }
+            if (op=="<<" && bc && bb->cval>=0 && bb->cval<62 &&
+                a->kind==EK::Binary && a->op=="*" && a->b && a->b->kind==EK::Const) {
+                int ew=e->width?e->width:8; return fold(mkBinary("*", clone(a->a), mkConst(a->b->cval << bb->cval, ew), ew, e->is_unsigned));
+            }
+            /* signed division by 2 recovered from the compiler idiom
+             * `(x - (x >> N)) >> 1` (N = 31 for int, 63 for long long; both shifts
+             * arithmetic) == `x / 2` (round toward zero). Pure readability. */
+            if (op==">>" && !e->is_unsigned && bc && bb->cval==1 &&
+                a->kind==EK::Binary && a->op=="-" && a->b &&
+                a->b->kind==EK::Binary && a->b->op==">>" && !a->b->is_unsigned &&
+                a->b->b && a->b->b->kind==EK::Const &&
+                (a->b->b->cval==31 || a->b->b->cval==63) &&
+                exprEqual(a->a, a->b->a)) {
+                int ew = e->width ? e->width : 4;
+                return fold(mkBinary("/", clone(a->a), mkConst(2, ew), ew));
+            }
+            /* identities */
+            if (op=="+" && bc && bb->cval==0) return a;
+            if (op=="+" && ac && a->cval==0) return bb;
+            if (op=="-" && bc && bb->cval==0) return a;
+            if (op=="*" && bc && bb->cval==1) return a;
+            if (op=="*" && ac && a->cval==1) return bb;
+            if (op=="*" && bc && bb->cval==0) return mkConst(0, e->width, e->is_unsigned);
+            if (op=="*" && ac && a->cval==0) return mkConst(0, e->width, e->is_unsigned);
+            if (op=="&" && bc && bb->cval==0) return mkConst(0, e->width, e->is_unsigned);
+            if (op=="&" && ac && a->cval==0) return mkConst(0, e->width, e->is_unsigned);
+            /* combine nested masks: `(X & C1) & C2` -> `X & (C1 & C2)`; then a
+             * redundant wider mask folds away (`x & 0xff & 1` -> `x & 1`). */
+            if (op=="&" && bc && a->kind==EK::Binary && a->op=="&" && a->b &&
+                a->b->kind==EK::Const) {
+                int ew = e->width ? e->width : 4;
+                return fold(mkBinary("&", clone(a->a),
+                            mkConst(a->b->cval & bb->cval, ew), ew, e->is_unsigned));
+            }
+            /* redundant narrowing cast before a small-mask AND: `(signed char)X & K` == `X & K`
+             * when K's set bits all fit the cast width — the AND masks out the sign/zero-
+             * extended bits, so the truncation is a no-op. Removes `(signed char)`/`(short)`
+             * noise on flag/bitfield tests. */
+            if (op=="&" && bc && bb->cval >= 0 && a && a->kind==EK::Cast && a->a &&
+                a->op.find('*')==std::string::npos && !a->is_float && !a->a->is_float &&
+                ((a->width==1 && bb->cval<=0xff) || (a->width==2 && bb->cval<=0xffff))) {
+                int ew = e->width ? e->width : 4;
+                return fold(mkBinary("&", clone(a->a), clone(bb), ew, e->is_unsigned));
+            }
+            if (op=="|" && bc && bb->cval==0) return a;
+            if (op=="|" && ac && a->cval==0) return bb;
+            if (op=="^" && bc && bb->cval==0) return a;
+            if (op=="^" && ac && a->cval==0) return bb;
+            /* idempotent self idioms: the lifter renders `test r,r` as `r & r`
+             * (the flag computation), which surfaced as a redundant self-AND in
+             * fmt_into's `(n & n) >= 0`. X & X -> X, X | X -> X, X ^ X -> 0. The
+             * operands are pure register/memory value expressions. */
+            if ((op=="&" || op=="|") && exprEqual(a, bb)) return a;
+            if (op=="^" && exprEqual(a, bb)) return mkConst(0, e->width, e->is_unsigned);
+            /* a setcc/comparison value is already 0/1; the movzx that zero-extends
+             * it lifts as `bool & 0xff`, and any odd mask is then a no-op. Drop it
+             * (`(x != 0) & 0xff` -> `x != 0`); an even mask kills bit 0 -> 0. */
+            if (op=="&" && bc && is_bool_value(a)) return (bb->cval & 1) ? a : mkConst(0, e->width, e->is_unsigned);
+            if (op=="&" && ac && is_bool_value(bb)) return (a->cval & 1) ? bb : mkConst(0, e->width, e->is_unsigned);
+            /* all-ones identities: `x | -1 == -1`, `x & -1 == x` (at the op width).
+             * This folds the `ctx_rdi | -1` shape — a callee-saved-register leak
+             * OR'd with all ones is just -1, so the phantom value is irrelevant and
+             * the result is the intended `-1` (e.g. a "count = -1 / unlimited"
+             * sentinel). Only a FULL-width all-ones mask counts, so a real low-byte
+             * mask like `x & 0xff` is left intact. */
+            {
+                auto all_ones = [&](const ExprP& c)->bool {
+                    if (!c || c->kind != EK::Const) return false;
+                    if (c->cval == -1) return true;
+                    int w = e->width ? e->width : 8;
+                    if (w >= 8) return false;
+                    uint64_t mask = (1ull << (w * 8)) - 1;
+                    return (uint64_t)c->cval == mask;
+                };
+                if (op=="|" && (bc && all_ones(bb))) return mkConst(-1, e->width, e->is_unsigned);
+                if (op=="|" && (ac && all_ones(a)))  return mkConst(-1, e->width, e->is_unsigned);
+                if (op=="&" && bc && all_ones(bb)) return a;
+                if (op=="&" && ac && all_ones(a))  return bb;
+            }
+            /* scratch-register idiom: the compiler set only the low byte(s) of a
+             * register that still held a local's address (`lea rdx,[v]; mov dl,1`).
+             * Masking/or-ing a stack address with constants is never meaningful C;
+             * the intended value is just the immediate written into the low byte. */
+            {
+                auto addr_masked = [](const ExprP& x)->bool {
+                    if (!x) return false;
+                    if (x->kind==EK::AddrOf) return true;
+                    if (x->kind==EK::Binary && x->op=="&" &&
+                        ((x->a && x->a->kind==EK::AddrOf) ||
+                         (x->b && x->b->kind==EK::AddrOf))) return true;
+                    return false;
+                };
+                if (op=="|" && bc && addr_masked(a))  return bb;
+                if (op=="|" && ac && addr_masked(bb)) return a;
+            }
+            if ((op=="<<"||op==">>") && bc && bb->cval==0) return a;
+            if (op=="^" && exprEqual(a, bb)) return mkConst(0, e->width, e->is_unsigned);
+            if (op=="-" && exprEqual(a, bb)) return mkConst(0, e->width, e->is_unsigned);
+            /* idempotent: `x | x` and `x & x` are just `x` — cleans up the MSVC
+             * `or r8,r8`/`and` test idioms that read as `(a3 | a3)`. */
+            if ((op=="|" || op=="&") && exprEqual(a, bb)) return a;
+            /* fold (x + c1) + c2 -> x + (c1+c2) */
+            if (op=="+" && bc && a->kind==EK::Binary && a->op=="+" && a->b &&
+                a->b->kind==EK::Const) {
+                return mkBinary("+", a->a, mkConst(a->b->cval + bb->cval, e->width), e->width);
+            }
+        }
+        return e;
+    }
+
+    /* LATE READABILITY PEEPHOLE (Hex-Rays parity). fold() runs per-expr at LIFT
+     * time — before copy_propagate/inlining stack casts and expose `x + (-K)`
+     * forms — so those never get re-normalized. This pass re-walks the FINAL
+     * expressions (after all inlining) applying ONLY value-identical rewrites:
+     *   - redundant nested integer casts:  (T)((T)x) / (uN)(sN)x / (sN)((sM)x),N<=M
+     *   - `x + (-K)` -> `x - K`
+     *   - `(a - b) ==/!= 0` -> `a ==/!= b`   (both are the same 0/1 value)
+     *   - `(a + C1) ==/!= C2` -> `a ==/!= (C2 - C1)`   (offset-compare normalize)
+     * All context-free (safe anywhere the expr appears). Gated DS_NO_PEEPHOLE. */
+    ExprP peephole_expr(ExprP e) {
+        if (!e) return e;
+        e->a = peephole_expr(e->a); e->b = peephole_expr(e->b); e->c = peephole_expr(e->c);
+        for (auto& ar : e->args) ar = peephole_expr(ar);
+
+        /* redundant nested integer cast (same domain, non-float) */
+        if (e->kind == EK::Cast && e->a && e->a->kind == EK::Cast &&
+            !e->is_float && !e->a->is_float) {
+            if (e->a->op == e->op) return e->a;                              /* (T)((T)x) */
+            if (e->a->width == e->width ||                                   /* (uN)(sN)x */
+                e->a->width >  e->width) {                                   /* (sN)((sM)x) N<M: truncation wins */
+                auto c = std::make_shared<Expr>(*e); c->a = e->a->a; return peephole_expr(c);
+            }
+            /* A8 + movzx idiom: a WIDENING cast over a NARROWER cast is redundant — the
+             * narrow cast already promotes to `int` value-identically in any expression
+             * context (`(int)((signed char)x)` -> `(signed char)x`, `(unsigned int)((
+             * unsigned char)x)` -> `(unsigned char)x`). Drop the outer widening cast,
+             * keeping the narrower one — UNLESS the outer is unsigned and the inner is
+             * signed, where the promotion's sign-extended negative would be reinterpreted
+             * as a large unsigned (`(unsigned int)((signed char)0xFF)` = 0xFFFFFFFF, not
+             * (signed char)0xFF = -1). */
+            if (e->a->width < e->width && !(e->is_unsigned && !e->a->is_unsigned))
+                return peephole_expr(e->a);
+        }
+        /* a same-width, same-signedness integer cast over a plain var/mem read of that
+         * width is a no-op — `(int)v1` after D1 narrowed v1 to `int`. (fold has this rule
+         * but runs at lift, before narrowing; re-apply it here on the FINAL widths.) */
+        if (e->kind == EK::Cast && e->a && !e->is_float && !e->a->is_float &&
+            (e->a->kind == EK::Var || e->a->kind == EK::Mem) &&
+            e->a->width == e->width && e->is_unsigned == e->a->is_unsigned)
+            return e->a;
+        if (e->kind == EK::Binary && e->a && e->b) {
+            const std::string& op = e->op;
+            /* x + (-K) -> x - K  (integers only; guard INT64_MIN) */
+            if (op == "+" && !e->is_float && e->b->kind == EK::Const &&
+                !e->b->is_unsigned && e->b->cval < 0 && e->b->cval != INT64_MIN) {
+                auto c = std::make_shared<Expr>(*e);
+                c->op = "-"; c->b = mkConst(-e->b->cval, e->b->width, false);
+                return c;
+            }
+            /* comparison normalizations (value-identical: == / != yield the same 0/1) */
+            if (op == "==" || op == "!=") {
+                /* (a - b) ==/!= 0  ->  a ==/!= b */
+                if (e->b->kind == EK::Const && e->b->cval == 0 && !e->b->is_float &&
+                    e->a->kind == EK::Binary && e->a->op == "-" && e->a->a && e->a->b &&
+                    !e->a->is_float) {
+                    auto c = std::make_shared<Expr>(*e);
+                    c->a = e->a->a; c->b = e->a->b; return peephole_expr(c);
+                }
+                /* (a + C1) ==/!= C2  ->  a ==/!= (C2 - C1) */
+                if (e->b->kind == EK::Const && !e->b->is_float && !e->a->is_float &&
+                    e->a->kind == EK::Binary && (e->a->op == "+" || e->a->op == "-") &&
+                    e->a->a && e->a->b && e->a->b->kind == EK::Const) {
+                    int64_t c1 = e->a->op == "+" ? e->a->b->cval : -e->a->b->cval;
+                    auto c = std::make_shared<Expr>(*e);
+                    c->a = e->a->a; c->b = mkConst(e->b->cval - c1, e->b->width, e->b->is_unsigned);
+                    return peephole_expr(c);
+                }
+            }
+            /* A6/A7: a NEGATIVE constant operand of a bitwise op is a bitmask/magic
+             * (bit63 or a two's-complement mask) — render it in hex, not signed decimal
+             * (`& -9223372036854775808LL` -> `& 0x8000000000000000uLL`). Signedness is
+             * irrelevant to `& | ^`, so this is value-identical. For a 32-bit op, narrow
+             * to the low 32 bits so the float sign-clear `-2147483649` reads as its true
+             * `0x7FFFFFFF` mask rather than an over-wide 64-bit value. */
+            if (op == "&" || op == "|" || op == "^") {
+                for (ExprP* o : { &e->a, &e->b }) {
+                    ExprP& k = *o;
+                    if (k && k->kind == EK::Const && !k->is_float && !k->hex_hint && k->cval < 0) {
+                        auto c = std::make_shared<Expr>(*k); c->hex_hint = true;
+                        if (e->width == 4) { c->cval = (int64_t)(int32_t)k->cval; c->width = 4; }
+                        k = c;
+                    }
+                }
+            }
+        }
+        return e;
+    }
+    void late_peephole() {
+        if (std::getenv("DS_NO_PEEPHOLE")) return;
+        auto go = [&](ExprP& e){ e = peephole_expr(e); };
+        for (auto& b : blocks) {
+            for (auto& s : b.stmts) { go(s.lhs); go(s.rhs); }
+            go(b.cond); go(b.ret_value); go(b.ret_raw); go(b.switch_var); go(b.tail_call);
+        }
+    }
+
+    /* =================================================================== */
+    /*  4. Phi resolution (cross-block register materialization)            */
+    /* =================================================================== */
+
+    /* entry_reg[blk][reg] = expression a register holds on entry to blk, when
+     * uniquely defined; otherwise a temp variable name (materialized). */
+    std::vector<std::array<ExprP, R_COUNT>> entry_reg;
+    /* entry_reg_hi[blk][reg] = high 64-bit lane of an XMM on entry to blk, when
+     * all live predecessors agree (loop-invariant broadcast). No phi temps. */
+    std::vector<std::array<ExprP, R_COUNT>> entry_reg_hi;
+    /* entry_xmm_f[blk][reg][lane] = the 4 packed-float lanes of an XMM on entry to
+     * blk when all live predecessors agree (loop-invariant broadcast survives into
+     * the loop). entry_xmm_f_real[blk][reg] carries the float-realness. */
+    std::vector<std::array<std::array<ExprP, 4>, R_COUNT>> entry_xmm_f;
+    std::vector<std::array<bool, R_COUNT>> entry_xmm_f_real;
+    /* packed-INT analog of entry_xmm_f (the guard-block broadcast for a[i]*=k). */
+    std::vector<std::array<std::array<ExprP, 4>, R_COUNT>> entry_xmm_i;
+    std::vector<std::array<bool, R_COUNT>> entry_xmm_i_real;
+    std::vector<std::array<bool, R_COUNT>> reg_live_in;
+
+    void init_entry_regs() {
+        entry_reg.assign(blocks.size(), {});
+        entry_reg_hi.assign(blocks.size(), {});
+        entry_xmm_f.assign(blocks.size(), {});
+        entry_xmm_f_real.assign(blocks.size(), {});
+        entry_xmm_i.assign(blocks.size(), {});
+        entry_xmm_i_real.assign(blocks.size(), {});
+        block_flags_out.assign(blocks.size(), FlagSrc());
+        /* entry block: seed argument registers from params. 32-bit cdecl passes
+         * args on the stack (recovered into param_home_off by detect_cdecl_params),
+         * so there is nothing to seed in registers — and seeding ecx/edx there
+         * would wrongly leak a param name into genuine scratch use. */
+        int eb = entry_block();
+        Reg argregs[4] = { R_RCX, R_RDX, R_R8, R_R9 };
+        Reg xmmregs[4] = { R_XMM0, R_XMM1, R_XMM2, R_XMM3 };
+        if (e->arch == DS_ARCH_X64 && eb >= 0 && eb < (int)blocks.size()) {
+            for (int p = 0; p < num_params && p < 4; ++p) {
+                std::string nm = "a" + std::to_string(p + 1);
+                int w = var_width.count(nm) ? var_width[nm] : 8;
+                int cw = w >= 8 ? 8 : 4;
+                /* Seed BOTH the integer arg reg and the same-position XMM reg: a
+                 * given parameter occupies exactly one of them depending on its
+                 * type (float -> XMM, integer/pointer -> GPR). Seeding both lets
+                 * the callee read whichever holds the value while keeping one
+                 * consistent name; the unused seed is overwritten before use. */
+                entry_reg[eb][argregs[p]] = mkVar(nm, cw);
+                entry_reg[eb][xmmregs[p]] = mkVar(nm, cw);
+            }
+        }
+    }
+
+    /* Iterate: execute all blocks, then for each block with multiple preds whose
+     * predecessor reg_out differ for a live register, introduce a temp at the
+     * join and assign it in each predecessor. We do a single materialization
+     * pass driven by liveness — sufficient for /Od where loop-carried values are
+     * stack slots, not registers. */
+    std::set<std::string> phi_temps;
+
+    struct PhiNeed { int blk; Reg reg; std::string temp; };
+    std::vector<PhiNeed> phi_needs;
+    /* HIGH-lane (bits[127:64]) phis for a loop-carried 2x64 packed accumulator
+     * (`xorps acc,acc; paddq acc,x` int64-sum reduction): the lo lane rides the
+     * normal regfile phi; this carries the hi lane in lock-step so simd_src_lanes
+     * sees both and the reduction is not dropped. */
+    std::vector<PhiNeed> phi_needs_hi;
+    /* Packed-INT lane phis (lanes 1,2,3) for a loop-carried 4x32 packed accumulator
+     * (`xorps acc,acc; paddd acc,x` int32-sum reduction, isum): lane 0 rides the
+     * normal regfile phi (phi_of[key]); these three carry lanes 1..3 in lock-step so
+     * the 4-lane paddd is not dropped, then the psrldq/movd horizontal reduce sums
+     * them. `lane` is 1, 2 or 3. */
+    struct PhiNeedLane { int blk; Reg reg; int lane; std::string temp; };
+    std::vector<PhiNeedLane> phi_needs_ilane;
+
+    /* Decide which (join block, register) pairs require a materialized temp and
+     * seed entry_reg accordingly. Statements are NOT injected here (they would be
+     * wiped by the re-exec); inject_phis() appends them after the final exec. */
+    void plan_phis() {
+        compute_reg_liveness();
+        phi_needs.clear();
+        for (auto& b : blocks) {
+            if (b.pred.size() < 2) continue;
+            for (int r = R_RAX; r < R_RIP; ++r) {
+                if (r == R_RSP || r == R_RBP || r == R_RIP) continue;
+                if (!reg_live_in[b.id][(Reg)r]) continue;
+                ExprP first = nullptr; bool diff = false, any = false;
+                for (int p : b.pred) {
+                    ExprP po = blocks[p].reg_out[r];
+                    if (!po) { diff = true; continue; }
+                    any = true;
+                    if (!first) first = po;
+                    else if (!exprEqual(first, po)) diff = true;
+                }
+                if (any && diff) {
+                    std::string tn = "t" + std::to_string(++temp_seq);
+                    phi_temps.insert(tn);
+                    var_width[tn] = 8;
+                    entry_reg[b.id][r] = mkVar(tn, 8);
+                    phi_needs.push_back({b.id, (Reg)r, tn});
+                } else if (any && first) {
+                    /* all predecessors agree on the value of this live register:
+                     * propagate it directly into the join block so the value is
+                     * available there (e.g. a return value set in every arm).
+                     * No temp is needed since there is no disagreement. */
+                    entry_reg[b.id][r] = clone(first);
+                }
+            }
+        }
+    }
+
+    /* After the final exec pass, append `temp = <pred reg_out>` to each pred.
+     *
+     * The copies destined for one predecessor are SIMULTANEOUS (SSA phi semantics).
+     * Emitting them in arbitrary order corrupts a value another copy still needs:
+     * the canonical victim is a loop latch carrying induction var i (`ti = i+1`) AND
+     * an accumulator that reads i (`ta = f(a[i])`). Write ti first and ta then reads
+     * the post-increment index — the off-by-one / wrong-element bug across every /O2
+     * loop. So we (1) sequentialize per predecessor: a copy that READS another copy's
+     * temp is emitted BEFORE that temp is overwritten (cycles broken with a save);
+     * and (2) after emitting `temp = E`, rebind any occurrence of the exact
+     * expression E in this block's terminator (the loop-exit test / returned value /
+     * switch selector — all evaluated AFTER the copies) to `temp`, since E was built
+     * from the pre-copy induction value and would otherwise re-read the just-bumped
+     * variable (`i+1` after `i=i+1`). */
+    struct PhiCopy { std::string temp; ExprP match; ExprP rhs; int w; };
+    void inject_phis() {
+        std::map<int, std::vector<PhiCopy>> per_pred;
+        for (auto& nd : phi_needs) {
+            int maxw = 4;
+            for (int p : blocks[nd.blk].pred) {
+                ExprP po = blocks[p].reg_out[nd.reg];
+                if (po && po->width > maxw) maxw = po->width;
+            }
+            int tw = maxw >= 8 ? 8 : 4;
+            if (maxw < 8) var_width[nd.temp] = 4;
+            for (int p : blocks[nd.blk].pred) {
+                ExprP po = blocks[p].reg_out[nd.reg];
+                if (!po) continue;
+                /* if predecessor already produces the temp (self-assign), skip */
+                if (po->kind == EK::Var && po->name == nd.temp) continue;
+                per_pred[p].push_back({nd.temp, clone(po), truncate(po, tw), tw});
+            }
+        }
+        /* HI-lane phi copies (2x64 packed accumulator): same per-pred injection from
+         * reg_out_hi, always 8-byte. Rides the same sequentialization/rebind as the
+         * lo lane below (the accumulator is not in the loop terminator, so no snapshot
+         * fires — a plain `hi = hi + x_hi` latch copy). */
+        for (auto& nd : phi_needs_hi) {
+            var_width[nd.temp] = 8;
+            for (int p : blocks[nd.blk].pred) {
+                ExprP po = blocks[p].reg_out_hi[nd.reg];
+                if (!po) continue;
+                if (po->kind == EK::Var && po->name == nd.temp) continue;
+                per_pred[p].push_back({nd.temp, clone(po), truncate(po, 8), 8});
+            }
+        }
+        /* INT-lane phi copies (lanes 1..3 of a 4x32 packed accumulator): per-pred
+         * injection from reg_out_i[reg][lane], always 4-byte. The preheader copy
+         * seeds `tL = 0` (xorps); the latch copy is `tL = tL + load_L`. */
+        for (auto& nd : phi_needs_ilane) {
+            var_width[nd.temp] = 4;
+            for (int p : blocks[nd.blk].pred) {
+                ExprP po = blocks[p].reg_out_i[nd.reg][nd.lane];
+                if (!po) continue;
+                if (po->kind == EK::Var && po->name == nd.temp) continue;
+                per_pred[p].push_back({nd.temp, clone(po), truncate(po, 4), 4});
+            }
+        }
+        /* Self-referential copies whose `match` must be rebound to `temp` — done in
+         * a POST-PASS so it is order-independent: in NESTED loops an OUTER-loop phi
+         * copy `t16 = t6 + last` is emitted into a block that is a single-pred
+         * successor of the INNER latch (`t6 = t6 + last`); if the inner rebind runs
+         * before the outer copy exists it misses it (box_blur_h double-counted the
+         * row total). Collect all, apply after every copy is materialized. */
+        struct Rebind { int p; ExprP match; ExprP tv; };
+        std::vector<Rebind> rebinds;
+        /* SAVE-then-ADVANCE-then-COMPARE snapshots (circular-list walk): {p, temp, t_old}. */
+        std::vector<std::pair<int, std::pair<std::string, ExprP>>> snap_rebinds;
+        for (auto& kv : per_pred) {
+            int p = kv.first;
+            std::vector<PhiCopy>& cps = kv.second;
+            int n = (int)cps.size();
+            std::vector<bool> done(n, false);
+            for (int emitted = 0; emitted < n; ++emitted) {
+                int pick = -1;
+                for (int i = 0; i < n && pick < 0; ++i) {
+                    if (done[i]) continue;
+                    bool blocked = false;   /* some unemitted copy still needs cps[i].temp's old value */
+                    for (int j = 0; j < n; ++j) {
+                        if (j == i || done[j]) continue;
+                        if (cps[j].temp != cps[i].temp && reads_named_var(cps[j].rhs, cps[i].temp)) { blocked = true; break; }
+                    }
+                    if (!blocked) pick = i;
+                }
+                if (pick < 0) {
+                    /* genuine cycle (register swap): save one temp to a fresh local
+                     * and redirect the others' reads of it, breaking the cycle. */
+                    for (int i = 0; i < n; ++i) if (!done[i]) { pick = i; break; }
+                    std::string sv = "t" + std::to_string(++temp_seq);
+                    var_width[sv] = cps[pick].w;
+                    Stmt s; s.kind = SK::Assign;
+                    s.lhs = mkVar(sv, cps[pick].w);
+                    s.rhs = mkVar(cps[pick].temp, cps[pick].w);
+                    blocks[p].stmts.push_back(std::move(s));
+                    ExprP svv = mkVar(sv, cps[pick].w);
+                    for (int j = 0; j < n; ++j)
+                        if (!done[j] && j != pick)
+                            cps[j].rhs = subst_named_var(cps[j].rhs, cps[pick].temp, svv);
+                }
+                /* SAVE-then-ADVANCE-then-COMPARE (circular list walk `p = p->next`
+                 * until `head == p`): `mov rax,r8; mov r8,[r8+off]; cmp rax,r8`. The
+                 * terminator compares the PRE-advance value (bare `temp`, the saved
+                 * `rax`) against `match` (the advanced value). Emitting `temp = match`
+                 * then reading bare `temp` in the terminator reads the NEW value, and
+                 * the induction-style `match -> temp` rebind collapses BOTH operands
+                 * to `temp` (`t2 == t2`, so the walk runs exactly once). Detect a bare
+                 * `temp` reference in the terminator (i.e. OUTSIDE every `match`
+                 * subtree) and instead SNAPSHOT the old value into a fresh temp BEFORE
+                 * the copy, rebinding every `temp` in the terminator to that snapshot. */
+                bool self_ref = reads_named_var(cps[pick].match, cps[pick].temp);
+                /* The snapshot is needed exactly when a terminator compares the OLD
+                 * temp against the NEW value — i.e. it references BOTH bare `temp`
+                 * (outside `match`) AND the `match` subtree. That distinguishes the
+                 * `old != old->next` list-walk (snapshot) from a plain
+                 * `do{p=p->next;}while(p)` (terminator has bare temp but NOT match, so
+                 * it legitimately wants the advanced value — no snapshot). */
+                bool snap_needed = false;
+                {
+                    const std::string& tn = cps[pick].temp;
+                    ExprP mt = cps[pick].match;
+                    auto needs = [&](const ExprP& e) -> bool {
+                        if (!e) return false;
+                        /* After removing the ADVANCED value (`match`) subtree, if the
+                         * terminator STILL reads the bare temp it wants the PRE-advance
+                         * value -> snapshot. This covers BOTH `old != old->next` (bare
+                         * temp AND match present) AND `snapshot; advance; cmp snap, CONST`
+                         * where the match subtree is ABSENT (count_bit: `mov r8,ecx; shr
+                         * ecx; cmp r8,2` -> the exit test compares the pre-shift value to
+                         * a constant). A terminator using the ADVANCED value renders AS
+                         * the match subtree, so stripping removes the temp -> no snapshot
+                         * (`do{p=p->next;}while(p)`, `do{i++;}while(i<n)`). */
+                        ExprP stripped = subst_subtree(e, mt, mkConst(0, cps[pick].w));
+                        return reads_named_var(stripped, tn);
+                    };
+                    if (needs(blocks[p].cond) || needs(blocks[p].ret_value)) snap_needed = true;
+                    if (!snap_needed)
+                        for (auto& sb : blocks)
+                            if (sb.pred.size()==1 && sb.pred[0]==p &&
+                                (needs(sb.cond) || needs(sb.ret_value))) { snap_needed = true; break; }
+                    if (snap_needed) {
+                        std::string sv = "t" + std::to_string(++temp_seq);
+                        var_width[sv] = cps[pick].w;
+                        Stmt s0; s0.kind = SK::Assign; s0.lhs = mkVar(sv, cps[pick].w);
+                        s0.rhs = mkVar(cps[pick].temp, cps[pick].w);
+                        blocks[p].stmts.push_back(std::move(s0));   /* t_old = temp (before the copy) */
+                        snap_rebinds.push_back({p, {cps[pick].temp, mkVar(sv, cps[pick].w)}});
+                    }
+                }
+                Stmt s; s.kind = SK::Assign;
+                s.lhs = mkVar(cps[pick].temp, cps[pick].w);
+                s.rhs = cps[pick].rhs;
+                blocks[p].stmts.push_back(std::move(s));
+                /* Only rebind the terminator when the back-edge value is SELF-
+                 * referential (`temp = f(temp, ...)` — an induction step or a
+                 * loop-carried accumulator). That is exactly when re-reading the
+                 * just-overwritten variable corrupts the exit test / return value
+                 * (`i+1` after `i=i+1`). A plain copy/merge has no such hazard, so
+                 * leaving it untouched avoids misfiring on ordinary diamonds. */
+                /* Only rebind when the back-edge value is SELF-referential
+                 * (`temp = f(temp, ...)` — an induction step or loop-carried
+                 * accumulator). That is exactly when re-reading the just-overwritten
+                 * variable corrupts the exit test / return value / reduction tail. A
+                 * plain copy/merge has no such hazard. Collect now; apply post-pass. */
+                if (self_ref && !snap_needed)
+                    rebinds.push_back({p, clone(cps[pick].match),
+                                       mkVar(cps[pick].temp, cps[pick].w)});
+                done[pick] = true;
+            }
+        }
+        /* POST-PASS rebind (after every copy is emitted, so nested-loop outer copies
+         * already exist in the single-pred successors). For each `temp = match`,
+         * replace `match` with `temp` in p's terminator AND in any block whose SOLE
+         * predecessor is p (the loop-EXIT / reduction-tail block): it inherited p's
+         * PRE-copy reg_out value `match`, now live in `temp`. The phi target (loop
+         * header) has >1 pred so it is excluded. Fixes vm_peephole `return w+1`,
+         * convex_hull, and box_blur_h's reduction-tail double-count. */
+        /* The stale `match` value propagates through a CHAIN of single-pred blocks
+         * (loop-exit `cmp` -> `nop` -> phi-copies-into-the-remainder), so rebind the
+         * whole transitive single-pred successor chain, not just p's DIRECT successor.
+         * (arr_variance's unrolled sum: the remainder-loop phi copies live two blocks
+         * past the loop, so `sum += a[i..i+3]; i+=4` was emitted a SECOND time there,
+         * over-summing a whole group / reading out of bounds.) */
+        auto single_pred_chain = [&](int p) -> std::vector<int> {
+            std::vector<int> out; std::set<int> seen{p};
+            for (bool grew = true; grew; ) {
+                grew = false;
+                for (auto& s : blocks)
+                    if (!seen.count(s.id) && s.pred.size()==1 && seen.count(s.pred[0]))
+                        { out.push_back(s.id); seen.insert(s.id); grew = true; }
+            }
+            return out;
+        };
+        for (auto& rb : rebinds) {
+            int p = rb.p;
+            blocks[p].cond       = subst_subtree(blocks[p].cond,       rb.match, rb.tv);
+            blocks[p].ret_value  = subst_subtree(blocks[p].ret_value,  rb.match, rb.tv);
+            blocks[p].switch_var = subst_subtree(blocks[p].switch_var, rb.match, rb.tv);
+            for (int cid : single_pred_chain(p)) {
+                Block& s = blocks[cid];
+                s.cond       = subst_subtree(s.cond,       rb.match, rb.tv);
+                s.ret_value  = subst_subtree(s.ret_value,  rb.match, rb.tv);
+                s.switch_var = subst_subtree(s.switch_var, rb.match, rb.tv);
+                for (auto& st : s.stmts) {
+                    if (st.rhs) st.rhs = subst_subtree(st.rhs, rb.match, rb.tv);
+                    if (st.lhs && st.lhs->kind == EK::Mem && st.lhs->a)
+                        st.lhs->a = subst_subtree(st.lhs->a, rb.match, rb.tv);
+                }
+            }
+        }
+        /* SAVE-then-compare snapshots: replace EVERY `temp` in the terminator with the
+         * pre-copy snapshot `t_old` — both the bare (saved) operand AND the one inside
+         * `match` — so `t2 != *(t2+off)` becomes `t_old != *(t_old+off)`. */
+        for (auto& sr : snap_rebinds) {
+            int p = sr.first;
+            const std::string& tn = sr.second.first;
+            const ExprP& tv = sr.second.second;
+            blocks[p].cond       = subst_named_var(blocks[p].cond,       tn, tv);
+            blocks[p].ret_value  = subst_named_var(blocks[p].ret_value,  tn, tv);
+            blocks[p].switch_var = subst_named_var(blocks[p].switch_var, tn, tv);
+            for (int cid : single_pred_chain(p)) {
+                Block& s = blocks[cid];
+                s.cond       = subst_named_var(s.cond,       tn, tv);
+                s.ret_value  = subst_named_var(s.ret_value,  tn, tv);
+                s.switch_var = subst_named_var(s.switch_var, tn, tv);
+            }
+        }
+    }
+
+    /* Iterative cross-block register dataflow to a fixpoint.
+     *
+     * The old plan_phis() only touched MERGE blocks, so a value carried in a
+     * register across a straight-line chain of single-predecessor blocks — a
+     * this/context pointer in a callee-saved register, a loop induction variable,
+     * a base pointer — was never propagated and collapsed to the `0` fallback in
+     * reg_value(). That is THE dominant failure on real binaries (`[0 + 0xba8]`,
+     * `t = 1; if (1 < N)`, `call f(0)`).
+     *
+     * Here we propagate each live register's value through EVERY block: a single
+     * predecessor flows its exit value straight in; multiple predecessors that
+     * disagree get a materialized phi-temp (this is also exactly how a loop
+     * induction variable is recovered — the loop header is a merge of the forward
+     * edge and the back edge). We iterate (Gauss-Seidel, in block/address order so
+     * forward flow converges in ~1 pass) until entry_reg stops changing. */
+    void compute_entry_regs_fixpoint() {
+        compute_reg_liveness();
+        phi_temps.clear();
+        phi_needs.clear();
+        phi_needs_hi.clear();
+        phi_needs_ilane.clear();
+        std::map<long long, std::string> phi_of;    /* blk*64+reg -> lo-lane temp name */
+        std::map<long long, std::string> phi_of_hi; /* blk*64+reg -> hi-lane temp name */
+        std::map<long long, std::string> phi_of_ilane; /* (blk*64+reg)*4+lane -> int-lane temp */
+        int eb = entry_block();
+        /* PRE-SEED LOOP-HEADER PHIS. At a loop header a register that is live-in AND
+         * modified in the loop body carries a different value on the back edge than
+         * on entry, so it is loop-carried and needs a phi. Materializing it UP FRONT
+         * (before the back-edge value first appears in the fixpoint) stops an
+         * induction variable from UNROLLING into a `(0+4)+4+...` cascade: instead it
+         * becomes a clean `t = seed; ... t = t + step;`. (Reducible loops only — what
+         * find_loops detected; irreducible giants are still imperfect.) */
+        for (auto& lp : loops) {
+            int h = lp.header;
+            if (h < 0 || h >= (int)entry_reg.size()) continue;
+            for (int r = R_RAX; r < R_RIP; ++r) {
+                if (r == R_RSP || r == R_RBP || r == R_RIP) continue;
+                if (h < (int)reg_live_in.size() && !reg_live_in[h][(Reg)r]) continue;
+                long long key = (long long)h * 64 + r;
+                if (phi_of.count(key)) continue;
+                bool modified = false;
+                for (int blk : lp.body) {
+                    if (blk < 0 || blk >= (int)blocks.size()) continue;
+                    for (int ii : blocks[blk].insn_idx) {
+                        const cs_x86& x = insns[ii].x86;
+                        for (int o = 0; o < x.op_count && o < 4; ++o) {
+                            if (x.operands[o].type == X86_OP_REG &&
+                                (x.operands[o].access & CS_AC_WRITE)) {
+                                Reg wr; int ww; map_reg(x.operands[o].reg, wr, ww);
+                                if (wr == (Reg)r) { modified = true; break; }
+                            }
+                        }
+                        if (modified) break;
+                    }
+                    if (modified) break;
+                }
+                if (!modified) continue;
+                std::string tn = "t" + std::to_string(++temp_seq);
+                phi_temps.insert(tn); var_width[tn] = 8;
+                phi_of[key] = tn;
+                phi_needs.push_back({h, (Reg)r, tn});
+            }
+        }
+        /* Converges in O(loop-nesting-depth) iterations via Gauss-Seidel in
+         * address order; the early-break handles the common case. The cap is a
+         * backstop for pathological CFGs (kept low so huge functions stay fast). */
+        for (int iter = 0; iter < 12; ++iter) {
+            bool changed = false;
+            for (auto& b : blocks) {
+                if ((int)b.id != eb &&
+                    b.id < (int)entry_reg.size()) {
+                    for (int r = R_RAX; r < R_RIP; ++r) {
+                        if (r == R_RSP || r == R_RIP) continue;
+                        if (b.id < (int)reg_live_in.size() &&
+                            !reg_live_in[b.id][(Reg)r]) continue;
+                        long long key = (long long)b.id * 64 + r;
+                        ExprP newval;
+                        auto pit = phi_of.find(key);
+                        if (pit != phi_of.end()) {
+                            newval = mkVar(pit->second, 8);    /* keep existing phi */
+                        } else if (b.pred.size() == 1) {
+                            ExprP po = blocks[b.pred[0]].reg_out[r];
+                            if (po) newval = clone(po);        /* propagate straight */
+                        } else {
+                            ExprP first = nullptr; bool diff = false, any = false;
+                            for (int p : b.pred) {
+                                ExprP po = blocks[p].reg_out[r];
+                                /* skip edges with no tracked value AND edges that
+                                 * carry only a lost-context `ctx_<reg>` placeholder:
+                                 * a known concrete value on another edge is the real
+                                 * one (a callee-saved const reloaded on each path),
+                                 * so it should win the merge instead of being
+                                 * tainted into a phi or a `ctx_` leak. */
+                                if (!po || is_ctx_value(po)) continue;
+                                any = true;
+                                if (!first) first = po;
+                                else if (!exprEqual(first, po)) diff = true;
+                            }
+                            if (any && diff) {
+                                std::string tn = "t" + std::to_string(++temp_seq);
+                                phi_temps.insert(tn); var_width[tn] = 8;
+                                phi_of[key] = tn;
+                                phi_needs.push_back({(int)b.id, (Reg)r, tn});
+                                newval = mkVar(tn, 8);
+                            } else if (any) {
+                                newval = clone(first);
+                            }
+                        }
+                        ExprP& cur = entry_reg[b.id][r];
+                        bool same = ((bool)cur == (bool)newval) &&
+                                    (!cur || exprEqual(cur, newval));
+                        if (!same) { cur = newval; changed = true; }
+
+                        /* High-lane (packed-SIMD) merge for XMM regs: propagate the
+                         * lane only when all predecessors that have one agree (the
+                         * loop-invariant broadcast case); no phi materialization. A
+                         * disagreement or a write in the block leaves it unknown. */
+                        if (is_xmm((Reg)r) && b.id < (int)entry_reg_hi.size()) {
+                            ExprP hv = nullptr; bool hdiff = false, hany = false;
+                            for (int p : b.pred) {
+                                if (p < 0 || p >= (int)blocks.size()) continue;
+                                ExprP po = blocks[p].reg_out_hi[r];
+                                if (!po || expr_has_in_backstop(po)) continue;
+                                hany = true;
+                                if (!hv) hv = po;
+                                else if (!exprEqual(hv, po)) hdiff = true;
+                            }
+                            ExprP nh;
+                            auto hpit = phi_of_hi.find(key);
+                            if (hpit != phi_of_hi.end()) {
+                                nh = mkVar(hpit->second, 8);        /* keep existing hi phi */
+                            } else if (hany && hdiff && phi_of.count(key)) {
+                                /* loop-carried 2x64 packed accumulator (its LO lane is
+                                 * already phi'd) whose HI lane disagrees across preds ->
+                                 * materialize a hi-lane phi so both lanes ride the loop. */
+                                std::string tn = "t" + std::to_string(++temp_seq);
+                                phi_temps.insert(tn); var_width[tn] = 8;
+                                phi_of_hi[key] = tn;
+                                phi_needs_hi.push_back({(int)b.id, (Reg)r, tn});
+                                nh = mkVar(tn, 8);
+                            } else {
+                                nh = (hany && !hdiff) ? clone(hv) : nullptr;
+                            }
+                            ExprP& curh = entry_reg_hi[b.id][r];
+                            bool hsame = ((bool)curh == (bool)nh) &&
+                                         (!curh || exprEqual(curh, nh));
+                            if (!hsame) { curh = nh; changed = true; }
+                        }
+
+                        /* Packed-FLOAT 4-lane merge for XMM regs: same agreement
+                         * rule — a loop-invariant broadcast (`shufps xmm,xmm,0` in a
+                         * preheader) reaches the loop body only if every predecessor
+                         * carrying lanes agrees on all four. Any disagreement or a
+                         * lane-less predecessor drops it (the block recomputes). */
+                        if (is_xmm((Reg)r) && b.id < (int)entry_xmm_f.size()) {
+                            ExprP fv[4] = {nullptr,nullptr,nullptr,nullptr};
+                            bool fdiff = false, fany = false, freal = false;
+                            for (int p : b.pred) {
+                                if (p < 0 || p >= (int)blocks.size()) continue;
+                                const Block& pb = blocks[p];
+                                if (!pb.reg_out_f[r][0]) continue;   /* no lanes */
+                                bool bad = false;
+                                for (int L = 0; L < 4; ++L)
+                                    if (!pb.reg_out_f[r][L] || expr_has_in_backstop(pb.reg_out_f[r][L])) { bad = true; break; }
+                                if (bad) continue;
+                                if (!fany) {
+                                    for (int L = 0; L < 4; ++L) fv[L] = pb.reg_out_f[r][L];
+                                    freal = pb.reg_out_f_real[r];
+                                    fany = true;
+                                } else {
+                                    for (int L = 0; L < 4; ++L)
+                                        if (!exprEqual(fv[L], pb.reg_out_f[r][L])) { fdiff = true; break; }
+                                    if (pb.reg_out_f_real[r] != freal) fdiff = true;
+                                }
+                            }
+                            bool keep = fany && !fdiff;
+                            auto& cf = entry_xmm_f[b.id][r];
+                            bool fsame = ((bool)cf[0] == (bool)(keep ? fv[0] : nullptr));
+                            if (fsame && keep)
+                                for (int L = 0; L < 4; ++L)
+                                    if (((bool)cf[L] != (bool)fv[L]) || (cf[L] && !exprEqual(cf[L], fv[L]))) { fsame = false; break; }
+                            if (!fsame) {
+                                for (int L = 0; L < 4; ++L) cf[L] = keep && fv[L] ? clone(fv[L]) : nullptr;
+                                entry_xmm_f_real[b.id][r] = keep && freal;
+                                changed = true;
+                            }
+                        }
+                        /* Packed-INT 4-lane merge (same agreement rule) — the guard-block
+                         * broadcast reaches the SSE body when every predecessor agrees. */
+                        if (is_xmm((Reg)r) && b.id < (int)entry_xmm_i.size()) {
+                            ExprP iv[4] = {nullptr,nullptr,nullptr,nullptr};
+                            bool idiff = false, iany = false, ireal = false;
+                            for (int p : b.pred) {
+                                if (p < 0 || p >= (int)blocks.size()) continue;
+                                const Block& pb = blocks[p];
+                                if (!pb.reg_out_i[r][0]) continue;
+                                bool bad = false;
+                                for (int L = 0; L < 4; ++L)
+                                    if (!pb.reg_out_i[r][L] || expr_has_in_backstop(pb.reg_out_i[r][L])) { bad = true; break; }
+                                if (bad) continue;
+                                if (!iany) {
+                                    for (int L = 0; L < 4; ++L) iv[L] = pb.reg_out_i[r][L];
+                                    ireal = pb.reg_out_i_real[r]; iany = true;
+                                } else {
+                                    for (int L = 0; L < 4; ++L)
+                                        if (!exprEqual(iv[L], pb.reg_out_i[r][L])) { idiff = true; break; }
+                                    if (pb.reg_out_i_real[r] != ireal) idiff = true;
+                                }
+                            }
+                            auto& ci = entry_xmm_i[b.id][r];
+                            /* loop-carried 4x32 packed accumulator (`xorps acc,acc;
+                             * paddd acc,x` int-sum reduction, isum) whose lanes disagree
+                             * across preds and whose LANE 0 already rides the scalar
+                             * regfile phi -> phi lanes 1..3 in lock-step (lane 0 reuses
+                             * phi_of[key]) so the 4-lane paddd is not dropped. */
+                            bool ihavephi = (phi_of_ilane.count(((long long)key)*4+1) != 0);
+                            if (iany && (idiff || ihavephi) && phi_of.count(key)) {
+                                ExprP nl[4];
+                                nl[0] = mkVar(phi_of[key], 4);
+                                for (int L = 1; L < 4; ++L) {
+                                    long long lk = ((long long)key)*4 + L;
+                                    auto it = phi_of_ilane.find(lk);
+                                    std::string tn;
+                                    if (it != phi_of_ilane.end()) tn = it->second;
+                                    else {
+                                        tn = "t" + std::to_string(++temp_seq);
+                                        phi_temps.insert(tn); var_width[tn] = 4;
+                                        phi_of_ilane[lk] = tn;
+                                        phi_needs_ilane.push_back({(int)b.id, (Reg)r, L, tn});
+                                    }
+                                    nl[L] = mkVar(tn, 4);
+                                }
+                                bool psame = true;
+                                for (int L = 0; L < 4; ++L)
+                                    if (((bool)ci[L] != (bool)nl[L]) || (ci[L] && !exprEqual(ci[L], nl[L]))) { psame = false; break; }
+                                if (!psame) {
+                                    for (int L = 0; L < 4; ++L) ci[L] = nl[L];
+                                    entry_xmm_i_real[b.id][r] = true;
+                                    changed = true;
+                                }
+                            } else {
+                                bool keepi = iany && !idiff;
+                                bool isame = ((bool)ci[0] == (bool)(keepi ? iv[0] : nullptr));
+                                if (isame && keepi)
+                                    for (int L = 0; L < 4; ++L)
+                                        if (((bool)ci[L] != (bool)iv[L]) || (ci[L] && !exprEqual(ci[L], iv[L]))) { isame = false; break; }
+                                if (!isame) {
+                                    for (int L = 0; L < 4; ++L) ci[L] = keepi && iv[L] ? clone(iv[L]) : nullptr;
+                                    entry_xmm_i_real[b.id][r] = keepi && ireal;
+                                    changed = true;
+                                }
+                            }
+                        }
+                    }
+                }
+                b.stmts.clear();
+                exec_block(b);
+            }
+            if (!changed) break;
+        }
+    }
+
+    void compute_reg_liveness(bool include_call_arg_uses = true) {
+        size_t n = blocks.size();
+        reg_live_in.assign(n, {});
+        std::vector<std::array<bool, R_COUNT>> use(n), def(n), out(n);
+        for (size_t i = 0; i < n; ++i) { use[i]={}; def[i]={}; out[i]={}; }
+        for (auto& b : blocks) {
+            std::array<bool, R_COUNT> defined{};
+            auto useReg = [&](Reg r){ if (r>R_NONE && r<R_COUNT && !defined[r]) use[b.id][r]=true; };
+            for (size_t k = 0; k < b.insn_idx.size(); ++k) {
+                const Insn& in = insns[b.insn_idx[k]];
+                /* a dropped stack-cookie call neither uses nor defines anything in
+                 * the recovered C — counting its implicit rax-def would suppress
+                 * the return-value phi at the epilogue merge. */
+                if (cookie_call_addrs.count(in.addr)) continue;
+                if (chkstk_call_addrs.count(in.addr)) continue;
+                /* approximate: reads then writes per instruction operands */
+                const cs_x86& x = in.x86;
+                /* self-zeroing idiom (`xor r,r` / `sub r,r`) is a pure DEFINE to
+                 * 0 — its operand[1] "read" is not a use of the incoming value.
+                 * Counting it makes a zeroed scratch reg upward-exposed, which
+                 * both leaks an in_<REG> backstop and (via finalize_params'
+                 * entry-liveness) invents a phantom parameter on /O2 loops. */
+                bool self_zero = (in.id==X86_INS_XOR || in.id==X86_INS_SUB) &&
+                                 x.op_count==2 && x.operands[0].type==X86_OP_REG &&
+                                 x.operands[1].type==X86_OP_REG &&
+                                 x.operands[0].reg==x.operands[1].reg;
+                for (int o = 0; o < x.op_count && o < 8; ++o) {
+                    const cs_x86_op& op = x.operands[o];
+                    if (op.type == X86_OP_REG) {
+                        Reg r; int w; map_reg(op.reg, r, w);
+                        /* Capstone leaves op.access == 0 (UNCLASSIFIED) on some
+                         * read operands — notably the register operand of
+                         * `test r/m, al` / `cmp` in this build, where AL is
+                         * genuinely READ but no CS_AC_READ is set. A missed use
+                         * kept a sub-register constant (`mov al,2`) from being
+                         * carried across the block boundary, so a later
+                         * `test [mem], al` read the entry-value backstop
+                         * (`in_RAX`) instead of 2. The exec/lift path reads every
+                         * operand regardless of access flags, so liveness must
+                         * agree: an UNCLASSIFIED operand is a READ (over-
+                         * approximating a use is liveness-safe — it only keeps a
+                         * value live, never drops a real one). A true write-only
+                         * operand always carries CS_AC_WRITE (nonzero), so it is
+                         * unaffected. */
+                        bool op_reads = (op.access & CS_AC_READ) || op.access == 0;
+                        if (op_reads && !self_zero) useReg(r);
+                    } else if (op.type == X86_OP_MEM) {
+                        Reg bb=R_NONE, ix=R_NONE; int t;
+                        if (op.mem.base!=X86_REG_INVALID) map_reg(op.mem.base,bb,t);
+                        if (op.mem.index!=X86_REG_INVALID) map_reg(op.mem.index,ix,t);
+                        useReg(bb); useReg(ix);
+                    }
+                }
+                /* a cmovcc conditionally KEEPS its destination, so the dest's
+                 * incoming value stays live (the lifter models it as the `else`
+                 * arm of a ternary). capstone often reports the dest write-only,
+                 * which would wrongly kill the value before the merge -> ctx_ leak. */
+                if (cmovcc_of(in.id) != CC::NONE && x.op_count >= 1 &&
+                    x.operands[0].type == X86_OP_REG) {
+                    Reg r; int w; map_reg(x.operands[0].reg, r, w);
+                    useReg(r);
+                }
+                /* implicit-READ opcodes: capstone lists NO operand for the rdx:rax
+                 * dividend of div/idiv, the rax multiplicand of a 1-operand mul/imul,
+                 * or the eax(leaf)/ecx(subleaf) inputs of cpuid/xgetbv. Those
+                 * upward-exposed reads were invisible to liveness, so a value set in a
+                 * PREDECESSOR block (`mov eax,0x24; ...; cpuid`, a magic-division
+                 * `mul`, an `idiv` dividend) was never carried across the boundary and
+                 * leaked as `in_RAX`. Mirrors the implicit-DEF switch below. */
+                switch (in.id) {
+                    case X86_INS_DIV: case X86_INS_IDIV:
+                        useReg(R_RAX);
+                        if (x.op_count >= 1 && x.operands[0].size > 1) useReg(R_RDX);
+                        break;
+                    case X86_INS_MUL: case X86_INS_IMUL:
+                        if (x.op_count <= 1) useReg(R_RAX);
+                        break;
+                    case X86_INS_CPUID:  useReg(R_RAX); useReg(R_RCX); break;
+                    case X86_INS_XGETBV: useReg(R_RCX); break;
+                    default: break;
+                }
+                for (int o = 0; o < x.op_count && o < 8; ++o) {
+                    const cs_x86_op& op = x.operands[o];
+                    if (op.type == X86_OP_REG && (op.access & CS_AC_WRITE)) {
+                        Reg r; int w; map_reg(op.reg, r, w);
+                        if (r>R_NONE && r<R_COUNT) { defined[r]=true; def[b.id][r]=true; }
+                    }
+                }
+                /* implicit-def opcodes: cdq/cqo/cwd sign-extend rax INTO rdx, and
+                 * the 1-operand mul/div leave the result in rdx:rax. capstone lists
+                 * no rdx operand, so without recording the def the following idiv's
+                 * implicit rdx read (or `sub rax,rdx` of the signed-/2 idiom) looks
+                 * upward-exposed and finalize_params invents a phantom rdx param
+                 * (half_ll's bogus `long long a2`). Mirrors detect_reg_params. */
+                switch (in.id) {
+                    case X86_INS_CDQ: case X86_INS_CQO: case X86_INS_CWD:
+                        defined[R_RDX]=true; def[b.id][R_RDX]=true; break;
+                    case X86_INS_DIV:  case X86_INS_IDIV:
+                    case X86_INS_MUL:  case X86_INS_IMUL:
+                        if (x.op_count <= 1) { defined[R_RDX]=true; def[b.id][R_RDX]=true; }
+                        break;
+                    default: break;
+                }
+                if (in.is_call) {
+                    /* A call CONSUMES its first `pc` integer-argument registers
+                     * (rcx,rdx,r8,r9). capstone reports `call` with no register
+                     * operands, so without marking these as upward-exposed USES the
+                     * arg registers are never live-in to the call's block — and the
+                     * cross-block fixpoint (gated on liveness) then refuses to carry
+                     * an argument value defined in a PREDECESSOR block across the
+                     * boundary. The classic victim: `mov rcx,[rbx+0x28]; test rcx,rcx;
+                     * je .skip` (ends the block) then `call free` (separate block) —
+                     * rcx collapsed to the `0` fallback -> free(0)/memcmp(0,0,n).
+                     * Freshly-loaded args (`mov rcx,rbx; call`) survived only because
+                     * the def was local to the call's own block. Use the SAME arity
+                     * lift_call renders (sigtab param_count, else 4) so liveness and
+                     * the emitted arg list agree exactly. */
+                    int apc = 4;
+                    if (in.has_branch_target && sigtab &&
+                        sigtab->count(in.branch_target))
+                        apc = sigtab->at(in.branch_target).param_count;
+                    if (apc < 0) apc = 0;
+                    if (apc > 4) apc = 4;
+                    static const Reg aregs[4] = { R_RCX, R_RDX, R_R8, R_R9 };
+                    /* The synthetic arg-use is for cross-block value propagation
+                     * (free/memcmp). It must NOT feed parameter detection — an
+                     * indirect call's pc=4 default would make r8/r9 look live-in
+                     * and invent phantom params. finalize_params passes false. */
+                    if (include_call_arg_uses)
+                        for (int ai = 0; ai < apc; ++ai) useReg(aregs[ai]);
+                    defined[R_RAX]=true; def[b.id][R_RAX]=true;
+                }
+            }
+            if (b.ends_ret && used_return) {
+                Reg rr = ret_is_float ? R_XMM0 : R_RAX;
+                if (!defined[rr]) use[b.id][rr]=true;
+            }
+        }
+        bool changed = true; int guard = 0;
+        while (changed && guard++ < (int)(blocks.size()+4)) {
+            changed = false;
+            for (auto it = blocks.rbegin(); it != blocks.rend(); ++it) {
+                Block& b = *it;
+                std::array<bool,R_COUNT> no{};
+                for (int s : b.succ) for (int r=0;r<R_COUNT;++r) if (reg_live_in[s][r]) no[r]=true;
+                if (b.ends_ret && used_return) no[ret_is_float ? R_XMM0 : R_RAX]=true;
+                out[b.id]=no;
+                for (int r=0;r<R_COUNT;++r) {
+                    bool ni = use[b.id][r] || (no[r] && !def[b.id][r]);
+                    if (reg_live_in[b.id][r]!=ni){reg_live_in[b.id][r]=ni;changed=true;}
+                }
+            }
+        }
+    }
+
+    /* =================================================================== */
+    /*  Rendering expressions to C text (precedence-aware, minimal parens)  */
+    /* =================================================================== */
+
+    int prec(const ExprP& e) {
+        if (!e) return 99;
+        switch (e->kind) {
+            case EK::Const: case EK::Var: case EK::Str: case EK::Call: return 99;
+            case EK::Mem: return 16;       /* unary deref */
+            case EK::AddrOf: return 15;
+            case EK::Cast: return 14;
+            case EK::Unary: return 14;
+            case EK::Ternary: return 2;
+            case EK::Reg: return 99;
+            case EK::Binary: {
+                const std::string& op = e->op;
+                if (op=="*"||op=="/"||op=="%") return 13;
+                if (op=="+"||op=="-") return 12;
+                if (op=="<<"||op==">>") return 11;
+                if (op=="<"||op=="<="||op==">"||op==">=") return 10;
+                if (op=="=="||op=="!=") return 9;
+                if (op=="&") return 8;
+                if (op=="^") return 7;
+                if (op=="|") return 6;
+                if (op=="&&") return 5;
+                if (op=="||") return 4;
+                return 1;
+            }
+        }
+        return 1;
+    }
+
+    /* render `e` as an operand inside a parent of precedence `pp`, on `right`. */
+    std::string rsub(const ExprP& e, int pp, bool right = false) {
+        std::string s = render(e);
+        int ep = prec(e);
+        bool need = ep < pp || (ep == pp && right);
+        /* associativity: + and * are associative so equal-prec left doesn't need
+         * parens; for simplicity we only add parens when strictly lower, or when
+         * equal-prec on the right of a non-associative op. */
+        if (ep < pp) need = true;
+        else if (ep == pp && right) {
+            /* for - and / and % and << >> and comparisons, right side needs parens
+             * if same precedence */
+            need = true;
+        } else need = false;
+        if (need) return "(" + s + ")";
+        return s;
+    }
+
+    /* Shortest decimal that round-trips back to the exact float/double bits, with
+     * a guaranteed decimal point and `f` suffix for 32-bit. 0x40800000 -> "4.0f",
+     * 0x3e4ccccd -> "0.2f", 0x3fb999999999999a -> "0.1". */
+    std::string fmt_float_lit(int64_t bits, bool is32) {
+        char buf[64];
+        if (is32) {
+            uint32_t u = (uint32_t)bits; float f; std::memcpy(&f, &u, 4);
+            if (std::isnan(f) || std::isinf(f)) { std::snprintf(buf,sizeof buf,"0x%08x/*f*/",u); return buf; }
+            double v = (double)f;
+            for (int p = 6; p <= 9; ++p) {
+                std::snprintf(buf, sizeof buf, "%.*g", p, v);
+                float rt = std::strtof(buf, nullptr); uint32_t b2; std::memcpy(&b2,&rt,4);
+                if (b2 == u) break;
+            }
+        } else {
+            uint64_t u = (uint64_t)bits; double d; std::memcpy(&d, &u, 8);
+            if (std::isnan(d) || std::isinf(d)) { std::snprintf(buf,sizeof buf,"0x%llx/*d*/",(unsigned long long)u); return buf; }
+            for (int p = 15; p <= 17; ++p) {
+                std::snprintf(buf, sizeof buf, "%.*g", p, d);
+                double rt = std::strtod(buf, nullptr); uint64_t b2; std::memcpy(&b2,&rt,8);
+                if (b2 == u) break;
+            }
+        }
+        std::string s = buf;
+        if (s.find('.')==std::string::npos && s.find('e')==std::string::npos &&
+            s.find("inf")==std::string::npos && s.find("nan")==std::string::npos)
+            s += ".0";
+        if (is32) s += "f";
+        return s;
+    }
+
+    /* string-literal recovery for a constant KNOWN to be used as a pointer (call arg,
+     * pointer-typed store). Returns `"..."` if it addresses a read-only C string, else
+     * empty. NOT applied to bare constants — an arithmetic/bitwise constant that merely
+     * happens to point at read-only text must stay numeric (else `x & CONST` breaks and
+     * checksums corrupt). */
+    std::string try_string_lit(const ExprP& e) {
+        if (!e || e->kind != EK::Const || e->is_float) return "";
+        if ((uint64_t)e->cval < 0x1000) return "";
+        std::string s;
+        if (read_cstring((uint64_t)e->cval, s)) return "\"" + s + "\"";
+        return "";
+    }
+    std::string render_const(const ExprP& e) {
+        if (e->is_float) return fmt_float_lit(e->cval, e->width < 8);
+        int64_t v = e->cval;
+        /* A bitmask/magic in a bitwise op reads far better in hex (Hex-Rays style):
+         * `& 0x8000000000000000uLL`, `& 0x7FFFFFFF` — signedness is irrelevant to the
+         * bitwise result so the unsigned suffix is safe. Set by late_peephole only for
+         * `& | ^` operands, so a signed comparison literal is never affected. */
+        if (e->hex_hint && !e->is_float) {
+            if (e->width >= 8 && (v > 0x7fffffffLL || v < -0x80000000LL))
+                return hex((uint64_t)v) + "uLL";
+            return hex((uint64_t)(uint32_t)v);
+        }
+        if (e->width >= 8 && (v > 0x7fffffffLL || v < -0x80000000LL)) {
+            if (v < 0) {
+                char b[32]; std::snprintf(b,sizeof(b),"%lldLL",(long long)v); return b;
+            }
+            return hex((uint64_t)v) + "LL";
+        }
+        if (v < 0) {
+            /* A negative literal whose magnitude is >= 2^31 (INT_MIN and beyond)
+             * MUST carry an LL suffix. Written bare, `-2147483648` parses in C as
+             * `-(2147483648)` where the too-big-for-int magnitude is UNSIGNED, so
+             * a comparison like `x >= -2147483648` silently becomes unsigned and
+             * flips — the classic INT_MIN-literal bug. */
+            if (v <= -0x80000000LL) {
+                char b[32]; std::snprintf(b, sizeof(b), "%lldLL", (long long)v); return b;
+            }
+            return std::to_string((long long)v);
+        }
+        if (v < 10) return std::to_string((long long)v);
+        return hex((uint64_t)(uint32_t)v);
+    }
+
+    std::string render(const ExprP& e) {
+        if (!e) return "0";
+        switch (e->kind) {
+            case EK::Const: return render_const(e);
+            case EK::Var:   return disp(e->name);
+            case EK::Reg:   return reg_value_fallback(e->reg, e->width);
+            case EK::Str:   return e->text;
+            case EK::Mem: {
+                std::string sub;
+                if (try_struct_field(e, sub)) return sub;
+                if (try_array_subscript(e, sub)) return sub;
+                std::string t = e->is_float ? (e->width >= 8 ? "double" : "float")
+                                            : typ_str(e->width, e->is_unsigned, false);
+                /* a load/store through a bare CONSTANT data address is a global
+                 * variable — name it Hex-Rays style (`qword_174148`) instead of the
+                 * noisy `*(long long*)0x174148` repeated dozens of times. A `#define`
+                 * (emitted once) keeps the exact semantics (still derefs the address),
+                 * so this is a pure readability win, not a behavior change. */
+                const ExprP& a = e->a;
+                if (a && a->kind == EK::Const && a->cval > 0x1000 &&
+                    in_data_rva((uint64_t)a->cval)) {
+                    const char* pfx = (e->width >= 8) ? "qword" : (e->width == 4) ? "dword"
+                                     : (e->width == 2) ? "word" : "byte";
+                    char nm[40];
+                    std::snprintf(nm, sizeof nm, "%s_%llx", pfx, (unsigned long long)a->cval);
+                    char def[96];
+                    std::snprintf(def, sizeof def, "(*(%s*)0x%llx)", t.c_str(),
+                                  (unsigned long long)a->cval);
+                    named_globals[nm] = def;
+                    return nm;
+                }
+                /* a bare Var/param address needs no wrapping parens after the cast:
+                 * `*(int*)a1` reads cleaner than `*(int*)(a1)`. Anything with an
+                 * operator (base+off, a deref) keeps them for precedence clarity. */
+                bool bare = a && a->kind == EK::Var;
+                if (bare) return "*(" + t + "*)" + render_addr(a);
+                return "*(" + t + "*)(" + render_addr(a) + ")";
+            }
+            case EK::AddrOf: return "&" + rsub(e->a, 15);
+            case EK::Unary:  return e->op + rsub(e->a, 14, true);
+            case EK::Cast:   return e->op + rsub(e->a, 14, true);
+            case EK::Ternary: {
+                /* When the two arms differ in pointer-ness (`cond ? 0x16 : ptr`, a
+                 * capacity/max on a mis-typed pointer, or a genuine ptr/int select),
+                 * the `:` is C4047. Coerce the pointer arm to (long long) so both arms
+                 * are integral — value-preserving on x64, and any pointer USE re-casts
+                 * at its own site. */
+                bool bp = renders_as_pointer(e->b), cp = renders_as_pointer(e->c);
+                std::string bs = rsub(e->b, 3), cs = rsub(e->c, 2, true);
+                if (bp && !cp) bs = "(long long)(" + bs + ")";
+                else if (cp && !bp) cs = "(long long)(" + cs + ")";
+                else if (bp && cp) {   /* both pointers, possibly DIFFERENT types (C4133):
+                                        * make both integral; any pointer use re-casts. */
+                    bs = "(long long)(" + bs + ")"; cs = "(long long)(" + cs + ")";
+                }
+                return rsub(e->a, 3) + " ? " + bs + " : " + cs;
+            }
+            case EK::Binary: {
+                int pp = prec(e);
+                const std::string& op = e->op;
+                /* address-of a recognized struct field: `(char*)p + K` -> `&p->field_K` */
+                {
+                    std::string sfa;
+                    if (try_struct_field_addr(e, sfa)) return sfa;
+                }
+                /* character-constant recovery: a small int constant compared against a
+                 * char-typed value (a byte load, or an explicit `(signed char)` cast)
+                 * is a character — render '\n' / ';' / '[' instead of 0xa / 0x3b / 0x5b.
+                 * Value-identical; the reader sees intent (newline, separator, bracket)
+                 * instead of memorizing ASCII codes. Only fires when the *other* operand
+                 * is provably char-width, so shift amounts / flags stay numeric. */
+                if (op=="=="||op=="!="||op=="<"||op==">"||op=="<="||op==">=") {
+                    auto char_lit = [](int64_t v)->std::string {
+                        if (v=='\t') return "'\\t'";
+                        if (v=='\n') return "'\\n'";
+                        if (v=='\r') return "'\\r'";
+                        if (v=='\\') return "'\\\\'";
+                        if (v=='\'') return "'\\''";
+                        if (v>=0x20 && v<=0x7e) { std::string s="'"; s+=(char)v; s+="'"; return s; }
+                        return "";   /* NUL and other control codes stay numeric */
+                    };
+                    auto is_char_ctx = [&](const ExprP& x)->bool {
+                        if (!x || x->kind==EK::Const) return false;
+                        if (x->kind==EK::Cast && x->op.find("char")!=std::string::npos) return true;
+                        return x->width==1;   /* byte Mem / subscript / char Var */
+                    };
+                    auto isc = [&](const ExprP& x){ return x && x->kind==EK::Const &&
+                                   !x->is_float && x->cval>=0 && x->cval<=0x7f; };
+                    if (isc(e->a) && is_char_ctx(e->b)) {
+                        std::string cl = char_lit(e->a->cval);
+                        if (!cl.empty()) return cl + " " + op + " " + rsub(e->b, pp);
+                    }
+                    if (isc(e->b) && is_char_ctx(e->a)) {
+                        std::string cl = char_lit(e->b->cval);
+                        if (!cl.empty()) return rsub(e->a, pp) + " " + op + " " + cl;
+                    }
+                }
+                /* UNIVERSAL pointer-comparison coercion — runs FIRST so no later
+                 * special-case path (short-circuit merge, bitop, e->is_unsigned, the
+                 * C4018 fix) can swallow it. ANY comparison with a pointer operand
+                 * (ptr vs int = C4047; ptr vs a different ptr type = C4133) is made
+                 * integral by casting each pointer side to (long long). Skips FP
+                 * operands (the fp-compare block handles those) and `p == 0`. */
+                if (op=="=="||op=="!="||op=="<"||op==">"||op=="<="||op==">=") {
+                    auto isflt = [&](const ExprP& x){ return x && (x->is_float ||
+                        (x->kind==EK::Var && var_is_float.count(x->name) && var_is_float[x->name])); };
+                    auto isnull = [](const ExprP& x){ return x && x->kind==EK::Const && x->cval==0 && !x->is_float; };
+                    bool pa = renders_as_pointer(e->a), pb = renders_as_pointer(e->b);
+                    if ((pa || pb) && !isflt(e->a) && !isflt(e->b) &&
+                        !(pa && isnull(e->b)) && !(pb && isnull(e->a)) &&
+                        !isnull(e->a) && !isnull(e->b)) {
+                        /* cast BOTH operands to ONE integral type so there is neither a
+                         * ptr/int mismatch (C4047/C4133) nor a signed/unsigned one
+                         * (C4018). The signedness follows the instruction (e->is_unsigned
+                         * = the binary did `jb`/`ja`), so behavior is preserved. */
+                        std::string ct = e->is_unsigned ? "(unsigned long long)(" : "(long long)(";
+                        /* a bare constant operand needs no cast — C promotes it to the
+                         * (width-8) cast type of the other side value-identically, so
+                         * `(long long)(p) < 5` reads cleaner than `... < (long long)(5)`. */
+                        auto side = [&](const ExprP& x){
+                            return (x && x->kind == EK::Const && !x->is_float)
+                                   ? rsub(x, 3) : ct + rsub(x, 3) + ")";
+                        };
+                        return side(e->a) + " " + op + " " + side(e->b);
+                    }
+                }
+                /* Bitwise / shift / modulo require INTEGER operands: a pointer operand
+                 * (e.g. an aligned+tagged stack-array address `(s1+0x10) & -256 | 1`,
+                 * from `lea; and; or`) is illegal in C (C2296). Cast each pointer side
+                 * to an integer of the op's signedness — value-preserving, and the only
+                 * way these ops are ever well-typed on an address. */
+                if (op=="&"||op=="|"||op=="^"||op=="<<"||op==">>"||op=="%") {
+                    bool pa = renders_as_pointer(e->a), pb = renders_as_pointer(e->b);
+                    if (pa || pb) {
+                        std::string ct = e->is_unsigned ? "(unsigned long long)(" : "(long long)(";
+                        std::string ls = pa ? ct + rsub(e->a, 3) + ")" : rsub(e->a, pp);
+                        std::string rs = pb ? ct + rsub(e->b, 3) + ")" : rsub(e->b, pp);
+                        return ls + " " + op + " " + rs;
+                    }
+                }
+                /* high-multiply intrinsics (RDX of one-op `imul`/`mul`). */
+                if (op == "mulh")  return "__mulh((long long)(" + render(e->a) + "), (long long)(" + render(e->b) + "))";
+                if (op == "umulh") return "__umulh((unsigned long long)(" + render(e->a) + "), (unsigned long long)(" + render(e->b) + "))";
+                /* Byte-accurate pointer arithmetic safety: if a typed pointer
+                 * (`int*` etc., element width > 1) appears as the base of a bare
+                 * +/- (i.e. an address computed outside a subscript/deref, e.g.
+                 * from `lea`), the operand is a byte displacement, so cast the
+                 * base to char* to keep the result byte-addressed instead of
+                 * scaling by the element size. char* bases need no cast. */
+                /* renders_as_ptr: the expr PRINTS with a pointer type — a typed
+                 * pointer Var or an explicit (T*)-cast. `expr_is_pointer` looks
+                 * THROUGH a cast to its integer source, so it alone misses a
+                 * `(char*)(int)`; check the cast text too. Used to keep pointer
+                 * arithmetic and bitwise ops well-typed (no C2110 / C2296). */
+                auto rptr = [&](const ExprP& x) -> bool {
+                    if (!x) return false;
+                    if (x->kind == EK::Cast && x->op.find('*') != std::string::npos)
+                        return true;
+                    if (is_struct_ptr_field(x)) return true;   /* a retyped `struct T*` field */
+                    return expr_is_pointer(x);
+                };
+                if ((op == "+" || op == "-")) {
+                    /* is x a POINTER/ARRAY base (a pointer value or a stack array
+                     * that decays to one)? Only these take a byte-offset addend. */
+                    auto ptr_base = [&](const ExprP& x) -> bool {
+                        if (!x) return false;
+                        if (rptr(x)) return true;
+                        return x->kind == EK::Var && array_locals.count(x->name);
+                    };
+                    /* A float CONSTANT added to a POINTER/ARRAY base is a mis-tagged
+                     * integer byte offset: `s7 + 1.68156e-44f` is really `s7 + 12`
+                     * (the float literal's raw bits ARE the offset). `ptr + floatconst`
+                     * is C2111; render the integer bits (e->cval holds them). Gated to
+                     * a pointer base so a genuine `float + floatconst` is untouched. */
+                    if (e->b && e->b->kind == EK::Const && e->b->is_float && ptr_base(e->a))
+                        return rsub(e->a, pp) + " " + op + " " +
+                               std::to_string((long long)e->b->cval);
+                    if (op == "+" && e->a && e->a->kind == EK::Const && e->a->is_float && ptr_base(e->b))
+                        return rsub(e->b, pp) + " + " + std::to_string((long long)e->a->cval);
+                    auto typed_ptr = [&](const ExprP& x) -> bool {
+                        if (is_struct_ptr_field(x)) return true;   /* void* field: byte-cast for arithmetic */
+                        if (!x || x->kind != EK::Var) return false;
+                        auto it = ptr_elem_width.find(x->name);
+                        if (it != ptr_elem_width.end() && it->second > 1) return true;
+                        /* A STRUCT-typed pointer var (a recovered struct param/local base —
+                         * `struct T*`) scales a byte offset by sizeof(struct) unless char-cast.
+                         * ptr_elem_width is NOT set for these (their type comes from
+                         * param_structs), so the byte-offset arithmetic `a1 + 0x28` was
+                         * rendered raw and computed a1 + 0x28*sizeof(T) — a wrong address that
+                         * compiles clean (the disasm is a plain `lea rcx,[rbx+0x28]`). Catch
+                         * them by decl type; char and void bases add bytes directly (no cast). */
+                        std::string dt = decl_type(x->name);
+                        if (dt.size() >= 2 && dt.back() == '*') {
+                            bool ischar = dt.size() >= 5 && dt.compare(dt.size()-5, 5, "char*") == 0;
+                            bool isvoid = dt.size() >= 5 && dt.compare(dt.size()-5, 5, "void*") == 0;
+                            if (!ischar && !isvoid) return true;
+                        }
+                        return false;
+                    };
+                    /* the OFFSET of pointer arithmetic must be an INTEGER byte count,
+                     * never a pointer — `ptr + ptr` is C2110. A spurious `(char*)`
+                     * cast wrapping an integer offset (`[rdx+rcx]` where the address
+                     * renderer cast the offset instead of the base) is dropped; a
+                     * genuine pointer offset is cast to (long long). */
+                    auto off_of = [&](const ExprP& x, int p) -> std::string {
+                        if (x && x->kind == EK::Cast &&
+                            x->op.find('*') != std::string::npos && !expr_is_pointer(x->a))
+                            return rsub(x->a, p, true);
+                        if (rptr(x)) return "(long long)" + rsub(x, 14, true);
+                        return rsub(x, p, true);
+                    };
+                    /* pointer MINUS pointer = an integer byte difference: cast BOTH to
+                     * char* so the result is a ptrdiff (not a pointer), letting an outer
+                     * `/elemsize` (element-count from `(end-begin)/size`) compile. Fires only
+                     * when a retyped struct-ptr field meets ANOTHER address-like operand (a
+                     * pointer or a width-8 memory field) — NOT a small int offset — so plain
+                     * `(char*)field - index` byte addressing is unchanged. */
+                    auto addr_like = [&](const ExprP& x) -> bool {
+                        return rptr(x) || (x && x->kind == EK::Mem && x->width == 8 && !x->is_float);
+                    };
+                    if (op == "-" && (is_struct_ptr_field(e->a) || is_struct_ptr_field(e->b)) &&
+                        addr_like(e->a) && addr_like(e->b))
+                        return "(char*)" + rsub(e->a, 14) + " - (char*)" + rsub(e->b, 14);
+                    if (typed_ptr(e->a))
+                        return "(char*)" + rsub(e->a, 14) + " " + op + " " + off_of(e->b, 12);
+                    if (op == "+" && typed_ptr(e->b))
+                        return "(char*)" + rsub(e->b, 14) + " + " + off_of(e->a, 12);
+                    /* neither is a typed (elem>1) pointer, but if BOTH still render
+                     * as pointers (a char* base + a (char*)-cast integer offset),
+                     * keep the left as base and force the right to an integer. */
+                    if (rptr(e->a) && rptr(e->b))
+                        return rsub(e->a, pp) + " " + op + " " + off_of(e->b, pp);
+                    /* `int - ptr` is C2113 (a pointer may only be subtracted FROM a
+                     * pointer). The result is a byte/pointer difference — cast the
+                     * pointer subtrahend to an integer so `t56 - t55` (t55 a pointer
+                     * begin, t56 an integer end) compiles as the byte span. */
+                    if (op == "-" && rptr(e->b) && !rptr(e->a))
+                        return rsub(e->a, pp) + " - (long long)" + rsub(e->b, 14, true);
+                }
+                if (e->is_unsigned &&
+                    (op=="<"||op=="<="||op==">"||op==">="||op==">>"||op=="/"||op=="%")) {
+                    std::string c = cast_str(e->width >= 8 ? 8 : 4, true);
+                    /* A CONSTANT operand of an unsigned compare/div/mod needs no explicit
+                     * unsigned cast: C promotes it to the unsigned type of the OTHER (cast)
+                     * operand, value-identically (even a negative literal promotes the same
+                     * way `(unsigned)K` would). Dropping it removes the bulk of the
+                     * `(unsigned int)(K)` double-cast noise. NOT for `>>` (its result type
+                     * follows the left operand, so a bare signed constant value would switch
+                     * to an arithmetic shift). */
+                    bool lean = !std::getenv("DS_NO_LEANCAST") && op != ">>";
+                    /* only drop the cast on a constant that FITS the compare width — the
+                     * cast truncates (`(unsigned int)0x100000000`==0); a bare wide literal
+                     * would instead WIDEN the comparison, changing the result. */
+                    auto fits = [&](const ExprP& k) -> bool {
+                        if (e->width >= 8) return true;
+                        return k->cval >= -0x80000000LL && k->cval <= 0xFFFFFFFFLL;
+                    };
+                    bool aconst = isConst(e->a) && !e->a->is_float && fits(e->a);
+                    bool bconst = isConst(e->b) && !e->b->is_float && fits(e->b);
+                    /* Skip the `(unsigned int)`/`(unsigned long long)` wrap when the
+                     * operand ALREADY renders as an unsigned expr of the SAME width —
+                     * re-casting an unsigned value to the same unsigned type is a no-op
+                     * and just produces `(unsigned int)((unsigned int)x)` noise. */
+                    int cw = e->width >= 8 ? 8 : 4;
+                    auto uframe = [&](const ExprP& x) -> std::string {
+                        if (x && x->is_unsigned && !x->is_float && x->width == cw)
+                            return render(x);
+                        return c + "(" + render(x) + ")";
+                    };
+                    std::string l = (lean && aconst && !bconst) ? render(e->a) : uframe(e->a);
+                    /* The shift COUNT of `>>` is not part of the unsigned value;
+                     * it must not be cast to unsigned (`x >> (unsigned)(1)` is
+                     * ugly and pointless). Only the shifted value needs the cast. */
+                    if (op == ">>") {
+                        std::string r = rsub(e->b, prec(e), true);
+                        return l + " >> " + r;
+                    }
+                    std::string r = (lean && bconst && !aconst) ? render(e->b) : uframe(e->b);
+                    return l + " " + op + " " + r;
+                }
+                /* mixed-sign relational compare that is NOT flagged unsigned (`(int)x >=
+                 * (unsigned)y`): C promotes both to unsigned (C4018) which can INVERT the
+                 * signed `cmp` the binary actually did. We reach here only when the op is
+                 * signed, so cast the unsigned operand back to SIGNED to keep the
+                 * comparison signed — matches the instruction and silences C4018. */
+                if (op=="<"||op=="<="||op==">"||op==">=") {
+                    int sa = expr_signedness(e->a), sb = expr_signedness(e->b);
+                    if ((sa > 0) != (sb > 0)) {
+                        std::string sc = cast_str(e->width >= 8 ? 8 : 4, false);
+                        std::string l = (sa > 0) ? sc + "(" + render(e->a) + ")" : rsub(e->a, pp);
+                        std::string r = (sb > 0) ? sc + "(" + render(e->b) + ")" : rsub(e->b, pp, true);
+                        return l + " " + op + " " + r;
+                    }
+                }
+                /* `x / 0.0` — a literal floating divide-by-zero — is the HUGE_VAL/±inf
+                 * idiom (`errno = ERANGE; return copysign(HUGE_VAL, s)` lowers to
+                 * `divsd xmm, xorps-zeroed`). MSVC folds the constant division into a
+                 * compile-time C2124. Route the zero divisor through a `volatile`
+                 * static so the fold is defeated: at runtime IEEE `x / 0.0` is ±inf,
+                 * exactly the intended value. */
+                if (op == "/" && e->b && e->b->kind == EK::Const &&
+                    e->b->is_float && e->b->cval == 0) {
+                    used_fdiv0 = true;
+                    return rsub(e->a, pp) + " / __ds_fzero";
+                }
+                /* A POINTER as an operand of a bitwise / shift / mul / div / mod op
+                 * is a hard error (C2296/C2297: `p & 7`, `p * 4`). Alignment checks
+                 * (`(uintptr)p & 7`), pointer hashing, and an index still typed as a
+                 * pointer (`t1 * 4`) lower to exactly this — only `+ - < > == etc.`
+                 * are legal on a pointer. Cast the pointer operand(s) to an integer;
+                 * for a shift only the VALUE needs it, not the count. (Unsigned
+                 * `>>`/`/`/`%` already went through the cast path above.) */
+                if (op=="&" || op=="|" || op=="^" || op=="<<" || op==">>" ||
+                    op=="*" || op=="/" || op=="%") {
+                    /* a FLOAT value in a bitwise/shift op (`a1[0x14] & 1` where a1 is
+                     * a float* struct base whose 0x14 field is really an int flags
+                     * word) is C2296 too. The BITS are wanted, so REINTERPRET the
+                     * float lvalue as an int (`*(int*)&x` / `*(int*)(addr)`) — bit-
+                     * exact, unlike a value cast. */
+                    bool bitop = (op=="&"||op=="|"||op=="^"||op=="<<"||op==">>");
+                    /* the base pointer var of a memory address (`a1 + 0x14*4` -> a1),
+                     * preferring a float-typed pointer — so a bare float* subscript
+                     * (`a1[0x14]`, whose Mem is_float flag is not set) is recognized. */
+                    std::function<std::string(const ExprP&)> mem_base = [&](const ExprP& a) -> std::string {
+                        if (!a) return "";
+                        if (a->kind == EK::Var) return a->name;
+                        if (a->kind == EK::Cast) return mem_base(a->a);
+                        if (a->kind == EK::Binary && (a->op=="+"||a->op=="-")) {
+                            std::string l = mem_base(a->a), r = mem_base(a->b);
+                            if (!l.empty() && ptr_elem_float.count(l)) return l;
+                            if (!r.empty() && ptr_elem_float.count(r)) return r;
+                            return l.empty() ? r : l;
+                        }
+                        return "";
+                    };
+                    auto is_fv = [&](const ExprP& x) -> bool {
+                        if (!x || !bitop) return false;
+                        if (x->is_float) return true;
+                        if (x->kind==EK::Var && var_is_float.count(x->name) && var_is_float[x->name])
+                            return true;
+                        if (x->kind==EK::Mem && x->a) {
+                            std::string b = mem_base(x->a);
+                            if (!b.empty() && ptr_elem_float.count(b) && ptr_elem_float[b]) return true;
+                        }
+                        return false;
+                    };
+                    auto ibits = [&](const ExprP& x) -> std::string {
+                        /* pick the reinterpret width from the operand: an 8-byte DOUBLE
+                         * masked with a 64-bit constant (`d2u(x) & 0x8000000000000000`
+                         * sign test) must read all 8 bytes — `*(int*)` truncated it to
+                         * bit 31, testing the WRONG bit. Mirrors tobits below. */
+                        if (x->kind == EK::Mem && x->a) {
+                            const char* ty = (x->width >= 8) ? "long long" : "int";
+                            return std::string("*(") + ty + "*)(" + render_addr(x->a) + ")";
+                        }
+                        if (x->kind == EK::Var) {
+                            const char* ty = (var_width.count(x->name) && var_width[x->name] >= 8)
+                                             ? "long long" : "int";
+                            return std::string("*(") + ty + "*)&" + rsub(x, 14);  /* lvalue only */
+                        }
+                        return "(long long)" + rsub(x, 14, true);   /* non-lvalue: value cast */
+                    };
+                    /* a stack ARRAY (`char buf[N]`) in a bitwise op is its decayed
+                     * address being masked (`(uintptr)buf & -32` alignment) — C2296/
+                     * C2297. Cast to an integer like a pointer. */
+                    auto is_arr = [&](const ExprP& x) {
+                        return x && x->kind == EK::Var && array_locals.count(x->name);
+                    };
+                    bool la = rptr(e->a) || is_arr(e->a), laf = is_fv(e->a);
+                    bool notcnt = (op != "<<" && op != ">>");
+                    bool rb = notcnt && (rptr(e->b) || is_arr(e->b)), rbf = notcnt && is_fv(e->b);
+                    if (la || laf || rb || rbf) {
+                        std::string l = la  ? "(long long)" + rsub(e->a, 14, true)
+                                      : laf ? ibits(e->a) : rsub(e->a, pp);
+                        std::string r = rb  ? "(long long)" + rsub(e->b, 14, true)
+                                      : rbf ? ibits(e->b) : rsub(e->b, pp, true);
+                        return l + " " + op + " " + r;
+                    }
+                }
+                /* A comparison between a FLOAT value and a POINTER (`t8 == a1+a2`
+                 * where t8 is a mis-merged float holding a pointer) is C2440. Bridge
+                 * both to `long long`: reinterpret the float lvalue's bits, value-cast
+                 * the pointer, so they are comparable and compile. */
+                if (op=="=="||op=="!="||op=="<"||op==">"||op=="<="||op==">=") {
+                    std::function<bool(const ExprP&)> isf = [&](const ExprP& x) -> bool {
+                        if (!x) return false;
+                        if (x->is_float) return true;
+                        if (x->kind==EK::Var) return var_is_float.count(x->name) && var_is_float[x->name];
+                        /* a float leaks through +,-,*,/ arithmetic (`a1 + a2`, a2 float) */
+                        if (x->kind==EK::Binary &&
+                            (x->op=="+"||x->op=="-"||x->op=="*"||x->op=="/"))
+                            return isf(x->a) || isf(x->b);
+                        return false;
+                    };
+                    auto tobits = [&](const ExprP& x) -> std::string {
+                        if (x->kind == EK::Var) return "(long long)*(" +
+                            std::string(var_width.count(x->name)&&var_width[x->name]>=8?"long long":"int") +
+                            "*)&" + rsub(x, 14);
+                        return "(long long)" + rsub(x, 14, true);
+                    };
+                    bool af = isf(e->a), bf = isf(e->b), ap = rptr(e->a), bp = rptr(e->b);
+                    if ((af && bp) || (ap && bf)) {
+                        std::string l = af ? tobits(e->a) : (ap ? "(long long)" + rsub(e->a,14,true) : rsub(e->a,pp));
+                        std::string r = bf ? tobits(e->b) : (bp ? "(long long)" + rsub(e->b,14,true) : rsub(e->b,pp,true));
+                        return l + " " + op + " " + r;
+                    }
+                    /* pointer <=> integer compare (`t7 == *(long long*)..`, `ptr != n`,
+                     * `t33 == (cond ? p : q)`) is C4047 unless the int side is a null
+                     * literal (a valid ptr==0). Use renders_as_pointer (handles ternary
+                     * arms + nested) so no site slips through; cast the pointer side. */
+                    bool ap2 = renders_as_pointer(e->a), bp2 = renders_as_pointer(e->b);
+                    auto isnull = [](const ExprP& x){ return x && x->kind==EK::Const && x->cval==0 && !x->is_float; };
+                    /* ANY comparison involving a pointer (ptr vs int = C4047, OR ptr vs
+                     * a DIFFERENT pointer type = C4133) is made purely integral by
+                     * casting each pointer side to (long long). A pointer-vs-null
+                     * (`p == 0`) is valid C and left alone. */
+                    if ((ap2 || bp2) && !(ap2 && isnull(e->b)) && !(bp2 && isnull(e->a)) &&
+                        !(isnull(e->a) || isnull(e->b))) {
+                        std::string l = ap2 ? "(long long)(" + rsub(e->a,3) + ")" : rsub(e->a,pp);
+                        std::string r = bp2 ? "(long long)(" + rsub(e->b,3) + ")" : rsub(e->b,pp,true);
+                        return l + " " + op + " " + r;
+                    }
+                }
+                /* clarity parens: a shift/bitwise operand that is itself an
+                 * arithmetic (+,-) or shift expression reads ambiguously, so wrap
+                 * it explicitly even though C precedence makes it unnecessary. */
+                bool clar = (op=="<<"||op==">>"||op=="&"||op=="^"||op=="|");
+                auto operand = [&](const ExprP& x, bool right) -> std::string {
+                    std::string s = render(x);
+                    bool wrap = prec(x) < pp || (prec(x) == pp && right);
+                    if (clar && x && x->kind == EK::Binary) {
+                        const std::string& xo = x->op;
+                        if (xo=="+"||xo=="-"||xo=="<<"||xo==">>"||
+                            xo=="&"||xo=="^"||xo=="|") wrap = true;
+                    }
+                    return wrap ? "(" + s + ")" : s;
+                };
+                return operand(e->a, false) + " " + op + " " + operand(e->b, true);
+            }
+            case EK::Call: {
+                /* Indirect call: render the target from the live child so the text
+                 * reflects any copy-prop/inlining done after lift (the callee string
+                 * is a stale snapshot from construction time). */
+                std::string head = (e->indirect && e->a)
+                    ? "((long long(*)())(" + render(e->a) + "))"
+                    : e->callee;
+                std::string s = head + "(";
+                /* A recursive call to THIS function sees its own definition's
+                 * prototype, so the call-site arg count MUST equal num_params — a
+                 * mis-detected outgoing-arg over/under-count is a hard C2197/C2198
+                 * (unlike K&R `()` callees, which accept any arity). Clamp: drop
+                 * phantom extra args, pad a short count with 0. */
+                if (!e->indirect && !self_fname.empty() && e->callee == self_fname) {
+                    for (int i = 0; i < num_params; ++i) {
+                        if (i) s += ", ";
+                        if (i >= (int)e->args.size()) { s += "0"; continue; }
+                        std::string arg = render(e->args[i]);
+                        /* cast a recursive-call arg to THIS function's own param type
+                         * when they'd mismatch (the proto is known, so C4024/C4047 fire
+                         * otherwise): a pointer param fed a non-pointer value (or vice
+                         * versa) gets the param-type cast; a bare-matching arg is left. */
+                        std::string pt = decl_type("a" + std::to_string(i + 1));
+                        bool pt_ptr = !pt.empty() && pt.back() == '*';
+                        bool arg_ptr = renders_as_pointer(e->args[i]);
+                        bool argIsParam = e->args[i] && e->args[i]->kind == EK::Var &&
+                                          e->args[i]->name == "a" + std::to_string(i + 1);
+                        if (!pt.empty() && !argIsParam && (pt_ptr != arg_ptr || pt_ptr))
+                            arg = "(" + pt + ")(" + arg + ")";
+                        s += arg;
+                    }
+                    s += ")";
+                    return s;
+                }
+                /* A callee with a FIXED-ARITY typed proto (float params) enforces its
+                 * exact arg count. Call-site arg recovery is per-site (a float arg in
+                 * xmm1 not visibly set at THIS site yields a short count); clamp to the
+                 * proto arity — pad missing trailing args with 0, drop phantom extras —
+                 * exactly as the self-call clamp does, so the typed proto stays
+                 * compile-clean (fixes C2197/C2198 across the float-signature callees). */
+                int tp_pc = 0;
+                if (!e->indirect && callee_typed_proto_arity(e->callee, tp_pc)) {
+                    for (int i = 0; i < tp_pc; ++i) {
+                        if (i) s += ", ";
+                        if (i >= (int)e->args.size()) { s += "0"; continue; }
+                        std::string sl = try_string_lit(e->args[i]);
+                        s += sl.empty() ? render(e->args[i]) : sl;
+                    }
+                    s += ")";
+                    return s;
+                }
+                for (size_t i = 0; i < e->args.size(); ++i) {
+                    if (i) s += ", ";
+                    std::string sl = try_string_lit(e->args[i]);   /* call arg = pointer context */
+                    s += sl.empty() ? render(e->args[i]) : sl;
+                }
+                s += ")";
+                return s;
+            }
+        }
+        return "0";
+    }
+
+    /* Strip a WIDENING integer cast (e.g. (long long)idx, (int)idx) to expose the
+     * index. A sub-int cast ((unsigned char)/(short)) is NOT noise — it is a real
+     * modulo truncation: `table[(idx+1) & 0xFF]` lowers to `inc eax; movzx ecx,al`
+     * => `(unsigned char)(idx+1)`; stripping it drops the wrap and turns a wrapping
+     * index into an out-of-bounds read. Stop at any cast narrower than int. */
+    ExprP strip_index_cast(const ExprP& e) {
+        ExprP x = e;
+        while (x && x->kind == EK::Cast && x->a && x->width >= 4) x = x->a;
+        return x;
+    }
+
+    /* A callee whose emitted prototype is FIXED-ARITY (float params typed, so it is
+     * NOT the arity-tolerant K&R `()` form) — the call site MUST pass exactly its
+     * param_count args or the recompile is a hard C2197/C2198. Single source of
+     * truth shared by the proto emitter (build_body_string) and the call renderer:
+     * both gate on the identical sigtab condition, so a typed proto always has a
+     * matching clamped call site. On true, `pcount` = the required arg count. */
+    bool callee_typed_proto_arity(const std::string& c, int& pcount) const {
+        if (!sigtab) return false;
+        if (c.rfind("fun_", 0) != 0 && c.rfind("sub_", 0) != 0) return false;
+        uint64_t crva = strtoull(c.c_str() + 4, nullptr, 16);
+        auto sit = sigtab->find(crva);
+        if (sit == sigtab->end()) return false;
+        const FuncSig& s = sit->second;
+        if (!(s.float_mask && s.param_count > 0 &&
+              (s.float_mask & ~s.float_typed_mask) == 0)) return false;
+        pcount = (s.param_count < 16) ? s.param_count : 16;
+        return true;
+    }
+
+    /* Recognize `*(T*)(base + index*sizeof(T))` and render it as `base[index]`
+     * when `base` is a typed pointer (a pointer parameter, or a value the
+     * type-recovery marked as a pointer). This collapses the verbose
+     * `*(int*)((char*)(a1) + (long long)v4 * 4)` form into clean `a1[v4]`,
+     * matching Hex-Rays output. General: works for any element width and any
+     * base whose name was recorded as a pointer. */
+    bool try_array_subscript(const ExprP& mem, std::string& out) {
+        if (!mem || mem->kind != EK::Mem || !mem->a) return false;
+        const ExprP& addr = mem->a;
+        int esize = mem->width ? mem->width : 1;
+        /* base must be a pointer-typed variable whose element width matches */
+        auto is_ptr_base = [&](const ExprP& x) -> bool {
+            if (!x || x->kind != EK::Var) return false;
+            /* stack arrays are declared `char buf[N]` and indexed in BYTES via
+             * an explicit (T*) cast; never collapse those to `buf[i]` (which
+             * would index elements, not bytes). Only real pointer values. */
+            if (array_locals.count(x->name)) return false;
+            /* a conflict-raw var is declared `long long`, not a pointer — a bare
+             * `*t` / `t[i]` would be C2100/C2109. Route it through the casting
+             * `*(T*)t` path instead. */
+            if (conflict_raw_vars.count(x->name)) return false;
+            /* a struct-recovered param is `struct*`; a bare `*a2` would be a struct
+             * VALUE. Its non-field accesses must use the raw `*(T*)a2` cast form. */
+            if (param_structs.count(x->name)) return false;
+            auto it = var_pointer.find(x->name);
+            if (it == var_pointer.end() || !it->second) return false;
+            /* the access width must equal the DECLARED element width, or `base[i]`
+             * scales by the wrong size. decl_type declares a float pointer via
+             * ptr_elem_float_w (MIN-wins: a movss => `float*`), so an 8-byte packed
+             * movsd copy (`Vector2` = 2 floats; ptr_elem_width MAX-wins = 8) through a
+             * declared `float*` must NOT collapse to `a2[i]` (which would step by 4) —
+             * it falls through to the correct `*(double*)((char*)a2 + i*8)`. Mirror the
+             * printer's width choice exactly so subscripter and decl stay in lockstep. */
+            int decl_ew;
+            if (ptr_elem_float.count(x->name) && ptr_elem_float[x->name]) {
+                decl_ew = ptr_elem_float_w.count(x->name) ? ptr_elem_float_w[x->name]
+                        : (ptr_elem_width.count(x->name) ? ptr_elem_width[x->name] : 4);
+            } else {
+                auto ew = ptr_elem_width.find(x->name);
+                if (ew == ptr_elem_width.end()) return false;
+                decl_ew = ew->second;
+            }
+            if (decl_ew != esize) return false;
+            /* A NARROW (byte/word) load is about to be sign/zero-EXTENDED, and the
+             * extension sign is taken from how the deref renders. Collapsing to
+             * `*p` / `p[i]` uses the POINTER's element sign; if this load's sign
+             * differs — the same `signed char* s` read `movsx` for `while(*s)` AND
+             * `movzx` for `h ^= (unsigned char)*s` — the collapse would silently
+             * sign-extend a zero-extended load (FNV-1a hash wrong on bytes >= 0x80).
+             * Keep the explicit `*(unsigned char*)s` form so the sign is preserved. */
+            if (esize < 4) {
+                auto eu = ptr_elem_uns.find(x->name);
+                bool ptr_uns = (eu != ptr_elem_uns.end()) && eu->second;
+                if (ptr_uns != (bool)mem->is_unsigned) return false;
+            }
+            return true;
+        };
+        /* bare deref of a typed pointer => `*base` */
+        if (is_ptr_base(addr)) { out = "*" + rsub(addr, 14); return true; }
+        if (addr->kind != EK::Binary || addr->op != "+") return false;
+        /* stack-array base: one operand is a `char buf[N]` local — it is the BASE
+         * (the other operand the byte offset), even though such locals are not
+         * pointer-typed vars. Without this, an offset that got mis-typed as a
+         * pointer is chosen as the base, producing nonsense like `idx[buf]`. */
+        {
+            auto is_arr = [&](const ExprP& x) {
+                return x && x->kind == EK::Var && array_locals.count(x->name);
+            };
+            ExprP ab = addr->a, ob = addr->b;
+            if (is_arr(ob)) std::swap(ab, ob);
+            if (is_arr(ab)) {
+                /* A pointer-typed index (the offset got mis-inferred as a pointer)
+                 * must be cast to an integer, else `buf[ptr]` is an illegal
+                 * pointer+pointer subscript. */
+                auto idx_str = [&](const ExprP& x) -> std::string {
+                    if (expr_is_pointer(x)) return "(long long)" + rsub(x, 14);
+                    return rsub(x, 15);
+                };
+                ExprP idx = strip_index_cast(ob);
+                if (esize == 1) { out = render(ab) + "[" + idx_str(idx) + "]"; return true; }
+                /* honour a float store/load (movss/movsd) so a float written into a
+                 * char[] at a non-zero offset renders `*(float*)`/`*(double*)`, not
+                 * `*(int*)` — matching the offset-0 path's EK::Mem render. Otherwise
+                 * the value is silently truncated to an int on recompile. */
+                std::string ety = mem->is_float ? (esize >= 8 ? "double" : "float")
+                                                : typ_str(esize, mem->is_unsigned, false);
+                out = "*(" + ety + "*)((char*)" +
+                      render(ab) + " + " + idx_str(ob) + ")";
+                return true;
+            }
+        }
+        ExprP base = addr->a, off = addr->b;
+        /* the base may be on either side of the + */
+        bool ba = is_ptr_base(base), bo = is_ptr_base(off);
+        /* When BOTH operands look like pointers — a loop index gets mis-typed as a
+         * pointer because it is added to one — prefer a PARAMETER as the array base
+         * (the real pointer; the index is a temp). Avoids the confusing `i[out]` for
+         * `out[i]`. */
+        auto is_param_ptr = [](const ExprP& x) {
+            return x && x->kind==EK::Var && x->name.size()>=2 &&
+                   x->name[0]=='a' && x->name[1]>='1' && x->name[1]<='9';
+        };
+        if (ba && bo) {
+            if (!is_param_ptr(base) && is_param_ptr(off)) std::swap(base, off);
+        } else if (!ba) {
+            std::swap(base, off);
+        }
+        if (!is_ptr_base(base)) return false;
+        ExprP index;
+        if (esize == 1) {
+            /* char array: offset is the raw index (no scaling) */
+            index = strip_index_cast(off);
+        } else {
+            ExprP o = strip_index_cast(off);
+            /* G1: a CONSTANT byte offset that is a whole number of elements collapses
+             * to a constant subscript — `*(int*)((char*)p + 0x10)` -> `p[4]` — matching
+             * Hex-Rays. is_ptr_base already excluded struct pointers, so a still-typed
+             * `T* p` genuinely means element indexing here. */
+            if (o && o->kind == EK::Const && esize > 0 && o->cval >= 0 && o->cval % esize == 0) {
+                index = mkConst(o->cval / esize, 4);
+            } else if (!o || o->kind != EK::Binary || o->op != "*") return false;
+            else {
+                ExprP a2 = o->a, b2 = o->b;
+                if (isConst(b2) && b2->cval == esize) index = strip_index_cast(a2);
+                else if (isConst(a2) && a2->cval == esize) index = strip_index_cast(b2);
+                else return false;
+            }
+        }
+        if (!index) return false;
+        /* a pointer-typed index (an integer index mis-inferred as a pointer, or a
+         * pointer-valued EXPRESSION like `t5 - t1`) is an illegal array subscript
+         * (C2107). Cast it to an integer — the byte/element index is its numeric
+         * value. expr_is_pointer catches both a bare pointer var and pointer +/-. */
+        std::function<bool(const ExprP&)> addr_idx = [&](const ExprP& x) -> bool {
+            if (!x) return false;
+            if (expr_is_pointer(x)) return true;
+            if (x->kind == EK::Var && array_locals.count(x->name)) return true;   /* char buf[N] decays */
+            if (x->kind == EK::Binary && (x->op=="+"||x->op=="-")) return addr_idx(x->a) || addr_idx(x->b);
+            if (x->kind == EK::Cast) return addr_idx(x->a);
+            return false;
+        };
+        /* a FLOAT-typed index (`a1[t22]` where t22 is a mis-merged float holding an
+         * integer counter) is C2108 — you cannot subscript with a float. Truncate to
+         * an integer; a genuine float array index cannot exist, so this is always the
+         * intended integer. */
+        auto is_flt_idx = [&](const ExprP& x) -> bool {
+            return x && (x->is_float ||
+                (x->kind==EK::Var && var_is_float.count(x->name) && var_is_float[x->name]));
+        };
+        auto idx_str = [&](const ExprP& x) -> std::string {
+            if (addr_idx(x)) return "(long long)" + rsub(x, 14);
+            if (is_flt_idx(x)) return "(long long)" + rsub(x, 14);
+            return rsub(x, 15);
+        };
+        out = render(base) + "[" + idx_str(index) + "]";
+        return true;
+    }
+
+    std::string render_addr(const ExprP& e) {
+        if (!e) return "0";
+        /* address arithmetic uses byte pointers: cast the BASE to char* so the
+         * `+ off` stays a BYTE displacement (a typed pointer would scale it). The
+         * base is the POINTER operand; the other is the byte offset and MUST be an
+         * integer. This code used to cast e->a unconditionally — so `[rdx+rcx]`
+         * with rdx=(a2-a1) (an integer offset) and rcx=t3 (the pointer) rendered
+         * `(char*)(a2-a1) + t3` == char* + pointer (C2110). Pick the pointer as the
+         * base and keep the offset integer. */
+        if (e->kind == EK::Binary && (e->op == "+" || e->op == "-")) {
+            /* a retyped `struct T*` field counts as a pointer here (else `(char*)idx +
+             * a2->field_90` = char* + struct* = C2110); pick it as the base / cast it as
+             * an integer offset like any other pointer. */
+            auto is_ptr = [&](const ExprP& x) -> bool {
+                return expr_is_pointer(x) || is_struct_ptr_field(x);
+            };
+            ExprP base = e->a, off = e->b;
+            if (e->op == "+" && is_ptr(off) && !is_ptr(base))
+                std::swap(base, off);
+            std::string off_s;
+            if (off && off->kind == EK::Cast &&
+                off->op.find('*') != std::string::npos && !is_ptr(off->a))
+                off_s = rsub(off->a, 12, true);        /* drop a spurious (char*) on an int */
+            else if (is_ptr(off))
+                off_s = "(long long)" + rsub(off, 14, true);
+            else
+                off_s = rsub(off, 12, true);
+            return "(char*)" + rsub(base, 14, true) + " " + e->op + " " + off_s;
+        }
+        /* plain base / bare address: the enclosing `*(T*)(...)` already reinterprets
+         * the pointer, so a `(char*)` cast on the bare address is pure noise —
+         * `*(long long*)((char*)(x))` == `*(long long*)(x)`. Drop it (readability). */
+        return render(e);
+    }
+
+    /* Should never appear in final output; a safety net if a register survives. */
+    std::string reg_value_fallback(Reg r, int w) {
+        (void)r; (void)w;
+        return "0";
+    }
+
+    /* =================================================================== */
+    /*  5. Dominators / post-dominators / loops                             */
+    /* =================================================================== */
+
+    std::vector<int> idom, ipdom;
+    std::vector<int> rpo, rpo_num;
+
+    int entry_block() {
+        auto it = block_by_addr.find(f->rva);
+        return it != block_by_addr.end() ? it->second : 0;
+    }
+
+    void compute_rpo() {
+        rpo.clear();
+        rpo_num.assign(blocks.size(), -1);
+        if (blocks.empty()) return;
+        std::vector<char> vis(blocks.size(), 0);
+        std::vector<int> post;
+        std::vector<std::pair<int,size_t>> stk;
+        int start = entry_block();
+        stk.push_back({start, 0}); vis[start] = 1;
+        while (!stk.empty()) {
+            int u = stk.back().first; size_t& ix = stk.back().second;
+            if (ix < blocks[u].succ.size()) {
+                int v = blocks[u].succ[ix++];
+                if (!vis[v]) { vis[v] = 1; stk.push_back({v, 0}); }
+            } else { post.push_back(u); stk.pop_back(); }
+        }
+        for (auto it = post.rbegin(); it != post.rend(); ++it) rpo.push_back(*it);
+        for (size_t i = 0; i < rpo.size(); ++i) rpo_num[rpo[i]] = (int)i;
+    }
+
+    void compute_dominators() {
+        int n = (int)blocks.size();
+        idom.assign(n, -1);
+        if (n == 0) return;
+        int start = entry_block();
+        idom[start] = start;
+        compute_rpo();
+        auto intersect = [&](int a, int b2) {
+            while (a != b2) {
+                while (rpo_num[a] > rpo_num[b2]) a = idom[a];
+                while (rpo_num[b2] > rpo_num[a]) b2 = idom[b2];
+            }
+            return a;
+        };
+        bool changed = true; int guard = 0;
+        while (changed && guard++ < n + 4) {
+            changed = false;
+            for (int rn : rpo) {
+                if (rn == start) continue;
+                int ni = -1;
+                for (int p : blocks[rn].pred) {
+                    if (rpo_num[p] < 0 || idom[p] == -1) continue;
+                    ni = (ni == -1) ? p : intersect(p, ni);
+                }
+                if (ni != -1 && idom[rn] != ni) { idom[rn] = ni; changed = true; }
+            }
+        }
+    }
+
+    /* post-dominators: dominators on the reverse CFG with a virtual exit. */
+    /* Post-dominators via Cooper-Harvey-Kennedy on the reverse CFG with a single
+     * virtual exit node `V = n`. ipdom[i] is the immediate post-dominator block
+     * id (or n for "virtual exit", which we then treat as -1 / "function end").
+     * A unique virtual exit is essential: with multiple ret blocks, intersect
+     * would otherwise never converge and spin. */
+    std::vector<int> prpo, prpo_num;
+    void compute_postdom() {
+        int n = (int)blocks.size();
+        ipdom.assign(n, -1);
+        if (n == 0) return;
+        int V = n;                       /* virtual exit node id */
+        /* successors on the reverse graph = predecessors on the forward graph;
+         * plus V is a "predecessor" (reverse-succ) of every exit block. */
+        std::vector<int> pdom(n + 1, -1);
+        pdom[V] = V;
+
+        /* reverse post-order of the reverse CFG starting at V. */
+        std::vector<char> vis(n + 1, 0);
+        std::vector<int> post;
+        /* iterative DFS to avoid deep recursion / stack overflow */
+        std::vector<std::pair<int,size_t>> stk;
+        /* build reverse-succ lists: for V -> all exits; for block u -> its preds */
+        auto rsucc = [&](int u, std::vector<int>& out_) {
+            out_.clear();
+            if (u == V) {
+                for (auto& b : blocks) if (b.succ.empty()) out_.push_back(b.id);
+            } else {
+                for (int p : blocks[u].pred) out_.push_back(p);
+            }
+        };
+        std::vector<int> tmp;
+        stk.push_back({V, 0}); vis[V] = 1;
+        std::vector<std::vector<int>> cache(n + 1);
+        rsucc(V, cache[V]);
+        while (!stk.empty()) {
+            int u = stk.back().first; size_t& ix = stk.back().second;
+            if (cache[u].empty() && ix == 0) rsucc(u, cache[u]);
+            if (ix < cache[u].size()) {
+                int w = cache[u][ix++];
+                if (!vis[w]) { vis[w] = 1; rsucc(w, cache[w]); stk.push_back({w, 0}); }
+            } else { post.push_back(u); stk.pop_back(); }
+        }
+        prpo.clear(); prpo_num.assign(n + 1, -1);
+        for (auto it = post.rbegin(); it != post.rend(); ++it) prpo.push_back(*it);
+        for (size_t i = 0; i < prpo.size(); ++i) prpo_num[prpo[i]] = (int)i;
+
+        auto intersect = [&](int a, int b2) -> int {
+            int guard = 0;
+            while (a != b2) {
+                if (++guard > 4 * (n + 2)) return V;   /* safety */
+                while (prpo_num[a] >= 0 && prpo_num[b2] >= 0 &&
+                       prpo_num[a] > prpo_num[b2]) {
+                    if (pdom[a] < 0) return V;
+                    a = pdom[a];
+                }
+                while (prpo_num[a] >= 0 && prpo_num[b2] >= 0 &&
+                       prpo_num[b2] > prpo_num[a]) {
+                    if (pdom[b2] < 0) return V;
+                    b2 = pdom[b2];
+                }
+                if (prpo_num[a] < 0 || prpo_num[b2] < 0) return V;
+            }
+            return a;
+        };
+
+        bool changed = true; int guard = 0;
+        while (changed && guard++ < n + 8) {
+            changed = false;
+            for (int rn : prpo) {
+                if (rn == V) continue;
+                /* reverse-predecessors = forward-successors; for an exit block its
+                 * reverse-pred is V. */
+                int ni = -1;
+                if (blocks[rn].succ.empty()) ni = V;
+                for (int s : blocks[rn].succ) {
+                    if (prpo_num[s] < 0 || pdom[s] == -1) continue;
+                    ni = (ni == -1) ? s : intersect(s, ni);
+                }
+                if (ni != -1 && pdom[rn] != ni) { pdom[rn] = ni; changed = true; }
+            }
+        }
+        for (int i = 0; i < n; ++i) ipdom[i] = (pdom[i] == V) ? -1 : pdom[i];
+        (void)tmp;
+    }
+
+    bool dominates(int a, int b2) {
+        if (a < 0 || b2 < 0) return false;
+        int x = b2;
+        while (true) {
+            if (x == a) return true;
+            if (idom[x] == x) break;
+            x = idom[x];
+            if (x < 0) break;
+        }
+        return false;
+    }
+
+    struct Loop { int header = -1; std::set<int> body; std::set<int> latches; };
+    std::vector<Loop> loops;
+    std::map<int,int> loop_of_header;
+
+    /* for-loop reconstruction: a counted pretest loop (init in the preheader, a
+     * single `IV = IV +/- c` latch increment, IV in the exit condition) renders as
+     * `for(init; cond; incr)`. ForInfo carries the hoisted init/incr text; the init
+     * + increment statements are suppressed at their original sites. Pure re-render
+     * of the existing pretest-while — GOTO-neutral. Gated by DS_NO_FORLOOP. */
+    struct ForInfo { bool ok = false; std::string iv; char op = '+'; int64_t step = 0;
+                     int init_blk = -1, init_idx = -1; };  /* rendered at EMIT time (post-autoname) */
+    std::map<int,ForInfo> for_of_header;
+    std::set<std::pair<int,int>> iv_suppressed_stmts;   /* (block_id, stmt_idx) to skip */
+    std::map<int,std::string> induction_var_of_header;  /* header -> IV name (shared with naming) */
+
+    void find_loops() {
+        loops.clear(); loop_of_header.clear();
+        std::map<int, Loop> byh;
+        for (auto& b : blocks) {
+            for (int s : b.succ) {
+                if (dominates(s, b.id)) {   /* back edge b->s */
+                    Loop& lp = byh[s];
+                    lp.header = s;
+                    lp.latches.insert(b.id);
+                    lp.body.insert(s);
+                    std::vector<int> work;
+                    if (b.id != s) { lp.body.insert(b.id); work.push_back(b.id); }
+                    while (!work.empty()) {
+                        int u = work.back(); work.pop_back();
+                        for (int p : blocks[u].pred)
+                            if (!lp.body.count(p)) { lp.body.insert(p); work.push_back(p); }
+                    }
+                }
+            }
+        }
+        for (auto& kv : byh) {
+            loop_of_header[kv.first] = (int)loops.size();
+            loops.push_back(kv.second);
+        }
+    }
+
+    /* ---- PROVABLY-CORRECT CFG REDUCIBILITY (Hecht-Ullman T1-T2 interval reduction) ----
+     * A flowgraph is REDUCIBLE iff repeated application of
+     *   T1: delete a self-loop  (n -> n)
+     *   T2: merge a node into its UNIQUE predecessor
+     * collapses it to a single node (Hecht & Ullman 1972; Aho/Sethi/Ullman "Dragon"
+     * Thm 9.42). Reducibility is a pure property of the CFG built by CfgBuilder,
+     * independent of the structurer — so this is ground truth: an IRREDUCIBLE CFG
+     * provably has NO goto-free structured form without node-splitting/state-machine
+     * duplication, whereas a reducible CFG that still emits gotos is a structurer
+     * limitation. Operates only on intra-procedural succ/pred edges restricted to the
+     * blocks reachable from the entry. O(V*(V+E)) — trivial at our sizes.
+     * Returns true iff reducible. Inert unless called (DS_IRRED_REPORT). */
+    bool cfg_is_reducible() const {
+        int n = (int)blocks.size();
+        if (n <= 1) return true;
+        int ent = 0;   /* entry is block id 0 (CfgBuilder seeds leaders with f->rva first) */
+        /* reachable set from entry */
+        std::vector<char> reach(n, 0);
+        { std::vector<int> st{ent}; reach[ent] = 1;
+          while (!st.empty()) { int b = st.back(); st.pop_back();
+            for (int s : blocks[b].succ) if (s >= 0 && s < n && !reach[s]) { reach[s] = 1; st.push_back(s); } } }
+        /* working adjacency as SETS (parallel edges collapse; irrelevant to reducibility) */
+        std::vector<std::set<int>> succ(n), pred(n);
+        std::vector<char> alive(n, 0); int live = 0;
+        for (int b = 0; b < n; ++b) if (reach[b]) { alive[b] = 1; ++live;
+            for (int s : blocks[b].succ) if (s >= 0 && s < n && reach[s]) succ[b].insert(s); }
+        for (int b = 0; b < n; ++b) if (alive[b]) for (int s : succ[b]) pred[s].insert(b);
+        bool changed = true;
+        while (changed && live > 1) {
+            changed = false;
+            /* T1: strip every self-loop first (cheap, exposes T2 merges) */
+            for (int b = 0; b < n; ++b) if (alive[b] && succ[b].count(b)) { succ[b].erase(b); pred[b].erase(b); changed = true; }
+            if (changed) continue;
+            /* T2: fold a non-entry node with a single predecessor into that predecessor */
+            for (int b = 0; b < n; ++b) {
+                if (!alive[b] || b == ent || pred[b].size() != 1) continue;
+                int m = *pred[b].begin();
+                if (m == b) continue;
+                for (int s : succ[b]) {           /* m absorbs b's out-edges */
+                    succ[m].insert(s);
+                    pred[s].erase(b); pred[s].insert(m);
+                }
+                succ[m].erase(b); pred[b].clear(); succ[b].clear();
+                alive[b] = 0; --live; changed = true; break;
+            }
+        }
+        return live == 1;
+    }
+
+    std::string build_incr(const std::string& iv, char op, int64_t step) {
+        if (op == '+' && step < 0) { op = '-'; step = -step; }
+        else if (op == '-' && step < 0) { op = '+'; step = -step; }
+        if (step == 1) return iv + (op == '+' ? "++" : "--");
+        return iv + (op == '+' ? " += " : " -= ") + std::to_string(step);
+    }
+    /* render a statement as a single inline expression (no indent, no trailing `;`). */
+    std::string render_stmt_inline(const Stmt& s) {
+        std::string t; int saved = indent_lvl; indent_lvl = 0; emit_stmt(s, t); indent_lvl = saved;
+        while (!t.empty() && t.back() == '\n') t.pop_back();
+        if (!t.empty() && t.back() == ';') t.pop_back();
+        size_t p = t.find_first_not_of(" \t");
+        if (p != std::string::npos) t = t.substr(p);
+        return t;
+    }
+    /* is `s` an `IV = IV +/- const` increment? sets iv/op/step. */
+    bool match_incr(const Stmt& s, std::string& iv, char& op, int64_t& step) {
+        if (s.kind != SK::Assign || !s.lhs || s.lhs->kind != EK::Var || !s.rhs) return false;
+        ExprP r = s.rhs;
+        if (r->kind != EK::Binary || (r->op != "+" && r->op != "-")) return false;
+        const std::string nm = s.lhs->name; ExprP a = r->a, b = r->b;
+        auto isVar = [&](const ExprP& e){ return e && e->kind == EK::Var && e->name == nm; };
+        auto isC   = [&](const ExprP& e){ return e && e->kind == EK::Const && !e->is_float; };
+        if (r->op == "+" && isVar(a) && isC(b)) { iv = nm; op = '+'; step = b->cval; return true; }
+        if (r->op == "+" && isVar(b) && isC(a)) { iv = nm; op = '+'; step = a->cval; return true; }
+        if (r->op == "-" && isVar(a) && isC(b)) { iv = nm; op = '-'; step = b->cval; return true; }
+        return false;
+    }
+    void detect_for_loops() {
+        for_of_header.clear(); iv_suppressed_stmts.clear(); induction_var_of_header.clear();
+        if (std::getenv("DS_NO_FORLOOP")) return;
+        for (auto& kv : loop_of_header) {
+            int header = kv.first, lh = kv.second; Loop& lp = loops[lh]; Block& H = blocks[header];
+            int follow = loop_follow(header);
+            /* MIRROR emit_loop's pretest+header_clean predicate EXACTLY */
+            bool pretest = H.ends_jcc && H.cond && (H.taken == follow || H.fall == follow);
+            if (!pretest) continue;
+            for (auto& s : H.stmts) if (s.kind != SK::Comment) { pretest = false; break; }
+            if (!pretest) continue;
+            int L = unique_latch(lh, header, follow); if (L < 0) continue;
+            /* latch must have exactly ONE meaningful stmt = the IV increment */
+            int inc_idx = -1, meaningful = 0; std::string iv; char op = '+'; int64_t step = 0;
+            for (size_t i = 0; i < blocks[L].stmts.size(); ++i) {
+                if (blocks[L].stmts[i].kind == SK::Comment) continue;
+                meaningful++;
+                std::string civ; char cop; int64_t cs;
+                if (match_incr(blocks[L].stmts[i], civ, cop, cs)) { inc_idx = (int)i; iv = civ; op = cop; step = cs; }
+            }
+            if (meaningful != 1 || inc_idx < 0) continue;
+            /* the exit condition must test the IV */
+            bool cond_is_taken = (H.fall == follow);
+            ExprP stay = cond_is_taken ? H.cond : negate_expr(H.cond);
+            if (!reads_named_var(stay, iv)) continue;
+            /* IV must not be mutated anywhere else in the loop body */
+            bool bad = false;
+            for (int bb : lp.body) {
+                for (size_t i = 0; i < blocks[bb].stmts.size(); ++i) {
+                    if (bb == L && (int)i == inc_idx) continue;
+                    Stmt& s = blocks[bb].stmts[i];
+                    if (s.kind == SK::Assign && s.lhs && s.lhs->kind == EK::Var && s.lhs->name == iv) { bad = true; break; }
+                }
+                if (bad) break;
+            }
+            if (bad) continue;
+            ForInfo fi; fi.ok = true; fi.iv = iv; fi.op = op; fi.step = step;
+            /* init from the preheader = idom[header] (a block outside the loop). Store
+             * its location only; render at EMIT time so it goes through autoname too. */
+            int pre = (header < (int)idom.size()) ? idom[header] : -1;
+            if (pre >= 0 && pre != header && !lp.body.count(pre)) {
+                for (int i = (int)blocks[pre].stmts.size() - 1; i >= 0; --i) {
+                    Stmt& s = blocks[pre].stmts[i];
+                    if (s.kind == SK::Assign && s.lhs && s.lhs->kind == EK::Var &&
+                        s.lhs->name == iv && !has_call(s.rhs)) {
+                        fi.init_blk = pre; fi.init_idx = i;
+                        iv_suppressed_stmts.insert({pre, i});
+                        break;
+                    }
+                }
+            }
+            iv_suppressed_stmts.insert({L, inc_idx});
+            for_of_header[header] = fi;
+            induction_var_of_header[header] = iv;
+        }
+    }
+
+    /* Semantic naming: alias the single return-value local to `result` and each loop
+     * induction var to i/j/k by nest depth. Pure display alias (autoname map); the
+     * `used` set guarantees no collision with a param or a live name, and only
+     * v<N>/t<N> LOCALS are ever renamed. Runs after detect_for_loops (consumes its
+     * induction_var_of_header). Gated by DS_NO_AUTONAME. */
+    void compute_autonames() {
+        autoname.clear();
+        if (std::getenv("DS_NO_AUTONAME")) return;
+        std::set<std::string> used;
+        for (int i = 0; i < num_params; ++i) used.insert("a" + std::to_string(i + 1));
+        std::function<void(const ExprP&)> mark = [&](const ExprP& e) {
+            if (!e) return;
+            if (e->kind == EK::Var) used.insert(e->name);
+            /* a callee named exactly `i`/`result`/... would be shadowed by a local of
+             * that name (a hard error: the call becomes a non-function). Reserve it. */
+            if (e->kind == EK::Call && !e->callee.empty()) used.insert(e->callee);
+            mark(e->a); mark(e->b); mark(e->c);
+            for (auto& a : e->args) mark(a);
+        };
+        for (auto& b : blocks) {
+            for (auto& s : b.stmts) { mark(s.lhs); mark(s.rhs); }
+            mark(b.cond); mark(b.ret_value); mark(b.ret_raw); mark(b.switch_var); mark(b.tail_call);
+        }
+        auto is_param = [](const std::string& n){ return n.size() >= 2 && n[0] == 'a' && n[1] >= '1' && n[1] <= '9'; };
+        auto is_local = [](const std::string& n){
+            if (n.size() < 2 || (n[0] != 'v' && n[0] != 't')) return false;
+            for (size_t i = 1; i < n.size(); ++i) if (n[i] < '0' || n[i] > '9') return false;
+            return true;
+        };
+        auto assign = [&](const std::string& canon, const std::string& want,
+                          const std::vector<std::string>& pool) {
+            if (autoname.count(canon) || !is_local(canon)) return;
+            std::string pick;
+            if (!used.count(want)) pick = want;
+            else for (auto& p : pool) if (!used.count(p)) { pick = p; break; }
+            if (pick.empty()) return;
+            autoname[canon] = pick; used.insert(pick);
+        };
+        /* (a) result: the single LOCAL flowing to a value return (never a param) */
+        if (used_return) {
+            std::set<std::string> rets; bool bad = false;
+            for (auto& b : blocks) {
+                if (!b.has_ret_value || !b.ret_value) continue;
+                ExprP r = b.ret_value;
+                while (r && r->kind == EK::Cast) r = r->a;
+                if (r && r->kind == EK::Var) {
+                    if (is_param(r->name)) { bad = true; break; }
+                    if (is_local(r->name)) rets.insert(r->name);
+                }
+            }
+            if (!bad && rets.size() == 1) assign(*rets.begin(), "result", {});
+        }
+        /* (b) induction i/j/k by loop-nest depth (from detect_for_loops) */
+        static const std::vector<std::string> POOL = {"i","j","k","l","m","n"};
+        std::vector<std::pair<int,std::string>> ivs;
+        for (auto& kv : induction_var_of_header) {
+            int header = kv.first, depth = 0;
+            for (auto& kv2 : loop_of_header)
+                if (kv2.first != header && loops[kv2.second].body.count(header)) depth++;
+            ivs.push_back({depth, kv.second});
+        }
+        std::sort(ivs.begin(), ivs.end());
+        for (auto& p : ivs) {
+            std::string want = (p.first < (int)POOL.size()) ? POOL[p.first] : std::string("i");
+            assign(p.second, want, POOL);
+        }
+    }
+
+    /* D1: TEMP-WIDTH NARROWING via a VALUE-RANGE FIXPOINT (kill `(int)tN` cast noise).
+     * A scalar temp declared `long long` (var_width==8) forces `(int)tN` on every 32-bit
+     * use. Narrow it to a 32-bit type (keeping signedness) when its VALUE provably fits in
+     * 32 bits — then storing 32 bits and re-extending is value-identical, and truncate()
+     * stops emitting the (int) framing (the Var node width becomes 4, so `truncate(v,4)`
+     * short-circuits). fits32(e) is a monotone fixpoint over the temp defs:
+     *   Cast w<=4 -> fits;  Cast w8 -> fits(inner);  Binary/Unary w<=4 -> fits (the op is
+     *   32-bit, result wraps to 32);  &|^ w8 -> fits(a)&&fits(b);  >> w8 -> fits(a);
+     *   Mem w<=4 -> fits;  Const in [-2^31, 2^31-1];  Call int-return -> fits;  a candidate
+     *   Var -> its current fits; a non-candidate Var -> its declared width<=4.
+     * A temp is narrowable iff it has >=1 def and EVERY def's rhs fits32. Excludes
+     * pointers/floats/addr-taken/arrays/struct-ptrs/conflict-raw. HIGH-RISK (an unsound
+     * narrow = silent truncation) — the behavioral corpus (50k random+edge inputs incl.
+     * large/negative values) is the backstop; a failure is FIXED (tighten fits32), not
+     * reverted. Gated DS_NO_NARROW. */
+    void narrow_temp_widths() {
+        if (std::getenv("DS_NO_NARROW")) return;
+        std::set<std::string> addr; collect_addr_taken(addr);
+        std::set<std::string> cand;
+        std::map<std::string,int> defs;
+        for (auto& b : blocks) for (auto& s : b.stmts)
+            if (s.kind == SK::Assign && s.lhs && s.lhs->kind == EK::Var) defs[s.lhs->name]++;
+        for (auto& kv : var_width) {
+            const std::string& n = kv.first;
+            if (kv.second != 8 || defs[n] < 1) continue;
+            if ((var_pointer.count(n) && var_pointer[n]) || (var_is_float.count(n) && var_is_float[n])) continue;
+            if (addr.count(n) || array_locals.count(n) || conflict_raw_vars.count(n) || param_structs.count(n)) continue;
+            if (n.size() < 2 || (n[0] != 'v' && n[0] != 't')) continue;
+            bool dig = true; for (size_t i = 1; i < n.size(); ++i) if (n[i] < '0' || n[i] > '9') { dig = false; break; }
+            if (dig) cand.insert(n);
+        }
+        if (cand.empty()) return;
+        std::map<std::string,char> fits; for (auto& n : cand) fits[n] = 1;
+        std::function<bool(const ExprP&)> f32 = [&](const ExprP& e) -> bool {
+            if (!e) return true;
+            switch (e->kind) {
+                case EK::Const: return e->cval >= -0x80000000LL && e->cval <= 0x7FFFFFFFLL;
+                case EK::Cast:  return e->width <= 4 ? true : f32(e->a);
+                case EK::Var: {
+                    if (cand.count(e->name)) return fits[e->name];
+                    auto it = var_width.find(e->name);
+                    return (it != var_width.end() ? it->second : 8) <= 4;
+                }
+                case EK::Mem:   return e->width > 0 && e->width <= 4;
+                case EK::Unary: return e->width > 0 && e->width <= 4 ? true : f32(e->a);
+                case EK::Binary: {
+                    if (e->width > 0 && e->width <= 4) return true;
+                    const std::string& op = e->op;
+                    if (op == "&" || op == "|" || op == "^") return f32(e->a) && f32(e->b);
+                    if (op == ">>") return f32(e->a);
+                    return false;
+                }
+                case EK::Ternary: return f32(e->b) && f32(e->c);
+                case EK::Call:  return e->ret_kind == 1;   /* int-return call */
+                default: return false;
+            }
+        };
+        bool changed = true; int guard = 0;
+        while (changed && guard++ < 24) {
+            changed = false;
+            std::map<std::string,char> nf; for (auto& n : cand) nf[n] = 1;
+            for (auto& b : blocks) for (auto& s : b.stmts)
+                if (s.kind == SK::Assign && s.lhs && s.lhs->kind == EK::Var && cand.count(s.lhs->name))
+                    if (!f32(s.rhs)) nf[s.lhs->name] = 0;
+            for (auto& n : cand) if (nf[n] != fits[n]) { fits[n] = nf[n]; changed = true; }
+        }
+        std::set<std::string> narrow;
+        for (auto& n : cand) if (fits[n]) narrow.insert(n);
+        if (narrow.empty()) return;
+        std::function<void(const ExprP&)> setw = [&](const ExprP& e){
+            if (!e) return;
+            if (e->kind == EK::Var && narrow.count(e->name)) e->width = 4;
+            setw(e->a); setw(e->b); setw(e->c); for (auto& ar : e->args) setw(ar);
+        };
+        for (auto& b : blocks) {
+            for (auto& s : b.stmts) { setw(s.lhs); setw(s.rhs); }
+            setw(b.cond); setw(b.ret_value); setw(b.ret_raw); setw(b.switch_var); setw(b.tail_call);
+        }
+        for (auto& n : narrow) { var_width[n] = 4; var_is_ll.erase(n); }
+    }
+
+    /* H1: FINAL DISPLAY RENUMBER (Hex-Rays naming). Our lifter leaks raw non-contiguous
+     * internal SSA counter values (t481, v519) and splits locals across TWO prefixes
+     * (v#/t#). Hex-Rays renumbers each function's locals to a contiguous `v1, v2, …` in
+     * first-appearance order. This is a pure DISPLAY alias (added to `autoname`; the
+     * canonical Expr::name is untouched, so all analysis and every gate is unaffected).
+     * Runs AFTER compute_autonames so result/i/j/k keep their semantic names and only
+     * the anonymous temps get renumbered. Gated DS_NO_RENUM. */
+    void compute_display_renumber() {
+        if (std::getenv("DS_NO_RENUM")) return;
+        std::set<std::string> reserved;
+        for (int i = 0; i < num_params; ++i) reserved.insert("a" + std::to_string(i + 1));
+        for (auto& kv : autoname) reserved.insert(kv.second);   /* result / i / j / k */
+        std::function<void(const ExprP&)> mcall = [&](const ExprP& e){
+            if (!e) return;
+            if (e->kind == EK::Call && !e->callee.empty()) reserved.insert(e->callee);
+            mcall(e->a); mcall(e->b); mcall(e->c); for (auto& a : e->args) mcall(a);
+        };
+        for (auto& b : blocks) { for (auto& s : b.stmts) { mcall(s.lhs); mcall(s.rhs); }
+            mcall(b.cond); mcall(b.ret_value); mcall(b.ret_raw); mcall(b.switch_var); mcall(b.tail_call); }
+        auto renumberable = [&](const std::string& n)->bool {
+            if (n.size() < 2 || (n[0] != 'v' && n[0] != 't')) return false;   /* v# / t# scalars */
+            for (size_t i = 1; i < n.size(); ++i) if (n[i] < '0' || n[i] > '9') return false;
+            return !autoname.count(n) && !array_locals.count(n);
+        };
+        std::vector<std::string> order; std::set<std::string> seen;
+        std::function<void(const ExprP&)> walk = [&](const ExprP& e){
+            if (!e) return;
+            if (e->kind == EK::Var && renumberable(e->name) && !seen.count(e->name)) {
+                seen.insert(e->name); order.push_back(e->name);
+            }
+            walk(e->a); walk(e->b); walk(e->c); for (auto& a : e->args) walk(a);
+        };
+        std::vector<int> border;
+        for (auto& b : blocks) border.push_back(b.id);
+        if (!rpo_num.empty()) std::sort(border.begin(), border.end(), [&](int x, int y){
+            int rx = (size_t)x < rpo_num.size() ? rpo_num[x] : (1<<30);
+            int ry = (size_t)y < rpo_num.size() ? rpo_num[y] : (1<<30);
+            return rx < ry; });
+        for (int id : border) { Block& b = blocks[id];
+            for (auto& s : b.stmts) { walk(s.lhs); walk(s.rhs); }
+            walk(b.cond); walk(b.ret_value); walk(b.ret_raw); walk(b.switch_var); walk(b.tail_call); }
+        int ctr = 1;
+        for (auto& nm : order) {
+            std::string nn;
+            do { nn = "v" + std::to_string(ctr++); } while (reserved.count(nn));
+            autoname[nm] = nn; reserved.insert(nn);
+        }
+    }
+
+    /* forward reachability over succ edges (from -> to), excluding merged blocks. */
+    bool can_reach(int from, int to) {
+        if (from < 0 || to < 0) return false;
+        if (from == to) return true;
+        std::vector<char> seen(blocks.size(), 0);
+        std::vector<int> work{from}; seen[from] = 1;
+        while (!work.empty()) {
+            int u = work.back(); work.pop_back();
+            for (int s : blocks[u].succ) {
+                if (s < 0 || (size_t)s >= blocks.size() || seen[s] || merged_blocks.count(s)) continue;
+                if (s == to) return true;
+                seen[s] = 1; work.push_back(s);
+            }
+        }
+        return false;
+    }
+
+    /* ---- Node-splitting for compiler-ROTATED (irreducible) loops ----
+     * MSVC emits a guarded loop as a two-entry (irreducible) cycle: block K ends in an
+     * UNCONDITIONAL jump to a header H, where H reaches K (a back-edge) but does NOT
+     * dominate K, so find_loops rejects it and the structurer must `goto`. PEEL H:
+     * duplicate it for the loop's out-of-cycle (guard) entries. H is then reachable
+     * ONLY through the back-edge, the cycle becomes single-entry / reducible, and the
+     * existing structurer emits a clean `while(true){ ...; body_A }` with the first
+     * body_A peeled ahead of it. Behavior-preserving: H's statements are duplicated,
+     * no edge SEMANTICS change. Bounded by a peel budget to cap duplication/bloat. */
+    int rotpeel_budget = 40;
+    /* Tarjan SCCs (iterative — huge functions would blow a recursive stack). Returns
+     * only NON-trivial SCCs (a real cycle: >1 block, or a self-loop). */
+    std::vector<std::vector<int>> compute_sccs() {
+        int n = (int)blocks.size();
+        std::vector<int> idx(n, -1), low(n, 0), onstk(n, 0);
+        std::vector<int> stk; std::vector<std::vector<int>> sccs; int counter = 0;
+        for (int s = 0; s < n; ++s) {
+            if (idx[s] != -1 || merged_blocks.count(s)) continue;
+            std::vector<std::pair<int,size_t>> call;
+            idx[s] = low[s] = counter++; stk.push_back(s); onstk[s] = 1; call.push_back({s, 0});
+            while (!call.empty()) {
+                int u = call.back().first; size_t& i = call.back().second;
+                if (i < blocks[u].succ.size()) {
+                    int v = blocks[u].succ[i++];
+                    if (v < 0 || (size_t)v >= blocks.size() || merged_blocks.count(v)) continue;
+                    if (idx[v] == -1) { idx[v]=low[v]=counter++; stk.push_back(v); onstk[v]=1; call.push_back({v,0}); }
+                    else if (onstk[v]) low[u] = std::min(low[u], idx[v]);
+                } else {
+                    if (low[u] == idx[u]) {
+                        std::vector<int> comp;
+                        while (true) { int w=stk.back(); stk.pop_back(); onstk[w]=0; comp.push_back(w); if (w==u) break; }
+                        bool self=false; if (comp.size()==1) for (int su:blocks[comp[0]].succ) if (su==comp[0]) self=true;
+                        if (comp.size() > 1 || self) sccs.push_back(comp);
+                    }
+                    call.pop_back();
+                    if (!call.empty()) low[call.back().first] = std::min(low[call.back().first], low[u]);
+                }
+            }
+        }
+        return sccs;
+    }
+    void split_rotated_loops() {
+        for (int iter = 0; iter < 120 && rotpeel_budget > 0; ++iter) {
+            rebuild_edges();
+            auto sccs = compute_sccs();
+            int done = -1;
+            /* A MULTI-ENTRY SCC is irreducible: >1 block in the cycle is reached from
+             * OUTSIDE the cycle (the compiler's guard path enters mid-loop). Peel the
+             * smallest secondary entry: the copy Mp runs M's statements once then flows
+             * to M's own successors (which include the edge back toward the primary
+             * entry), so the external path joins the cycle at the primary entry and M is
+             * left reachable only from inside. Repeat until the SCC is single-entry =>
+             * reducible => find_loops sees a natural loop => structurer emits `while`. */
+            for (auto& scc : sccs) {
+                std::set<int> body(scc.begin(), scc.end());
+                std::vector<int> entries;
+                for (int m : scc)
+                    for (int p : blocks[m].pred)
+                        if (!body.count(p)) { entries.push_back(m); break; }
+                if (entries.size() < 2) continue;           /* single-entry: reducible already */
+                int Msel = -1, bestn = 1 << 30;
+                for (int m : entries) {
+                    Block& MB = blocks[m];
+                    if (MB.is_switch || MB.is_switch_guard) continue;
+                    int nst = 0; for (auto& s : MB.stmts) if (s.kind != SK::Comment) nst++;
+                    if (nst > 12) continue;
+                    if (nst < bestn) { bestn = nst; Msel = m; }
+                }
+                if (Msel < 0) continue;
+                std::vector<int> ext;
+                for (int p : blocks[Msel].pred) if (!body.count(p)) ext.push_back(p);
+                Block cpy = blocks[Msel];
+                cpy.id = (int)blocks.size(); cpy.succ.clear(); cpy.pred.clear();
+                int Mp = cpy.id;
+                blocks.push_back(std::move(cpy));
+                for (int g : ext) {
+                    Block& G = blocks[g];
+                    if (G.taken == Msel) G.taken = Mp;
+                    if (G.fall == Msel)  G.fall  = Mp;
+                    for (auto& s : G.case_succ) if (s == Msel) s = Mp;
+                    if (G.default_succ == Msel) G.default_succ = Mp;
+                }
+                rotpeel_budget--; done = Msel; break;
+            }
+            if (done < 0) break;
+        }
+        rebuild_edges();
+    }
+
+    /* =================================================================== */
+    /*  6+7. Structuring + emission                                         */
+    /* =================================================================== */
+
+    std::string out;
+    int indent_lvl = 1;
+    std::set<int> emitted;
+    std::set<int> need_label;
+    std::set<int> merged_blocks;   /* blocks folded into a predecessor by short-circuit merge */
+
+    bool block_stmts_empty(int id) {
+        for (auto& s : blocks[id].stmts) if (s.kind != SK::Comment) return false;
+        return true;
+    }
+    /* Recompute succ/pred from the terminators, skipping merged-away blocks. */
+    void rebuild_edges() {
+        for (auto& b : blocks) { b.succ.clear(); b.pred.clear(); }
+        for (auto& b : blocks) {
+            if (merged_blocks.count(b.id)) continue;
+            std::set<int> added;
+            auto addedge = [&](int s) {
+                if (s < 0 || (size_t)s >= blocks.size() || merged_blocks.count(s) || added.count(s)) return;
+                added.insert(s); b.succ.push_back(s); blocks[s].pred.push_back(b.id);
+            };
+            if (b.is_switch) { for (int s : b.case_succ) addedge(s); if (b.default_succ >= 0) addedge(b.default_succ); }
+            else { if (b.taken >= 0) addedge(b.taken); if (b.fall >= 0) addedge(b.fall); }
+        }
+    }
+
+    /* ---------- TAIL MERGING (cross-jumping) ----------
+     * The /O2 compiler routinely DUPLICATES a shared tail — a `grow; append;
+     * return` epilogue, a `set *a1; optionally set *a2; return` landing — into
+     * every path, so the binary's CFG holds N byte-identical terminal blocks.
+     * The readability analysis flagged this repeatedly as "the same 4-6 line
+     * tail duplicated 3-6x" (fun_0001c930 / 00013490 / 00020530). Merge every
+     * group of identical terminal blocks into ONE canonical copy: redirect each
+     * edge into a duplicate to the canonical block and retire the duplicate.
+     * The structurer then emits the tail once; the extra entrants fall through
+     * or `goto` it — the Hex-Rays shared-epilogue form.
+     *
+     * ALWAYS behavior-preserving (the cross-jumping theorem): the merged block's
+     * statements act on runtime variable *values* that each predecessor computes
+     * BEFORE the jump, so one shared copy returns/does exactly what each path set
+     * up. reg_out equality on the return registers guards the one case that is
+     * NOT a pure runtime value — a return value that is a concrete per-path
+     * expression (`return 5` vs `return 7`) never compares equal, so it is left
+     * duplicated. */
+    bool tm_stmt_eq(const Stmt& x, const Stmt& y) {
+        if (x.kind != y.kind || x.ret_void != y.ret_void) return false;
+        if ((bool)x.lhs != (bool)y.lhs || (bool)x.rhs != (bool)y.rhs) return false;
+        if (x.lhs && !exprEqual(x.lhs, y.lhs)) return false;
+        if (x.rhs && !exprEqual(x.rhs, y.rhs)) return false;
+        return true;
+    }
+    bool tm_tail_eq(int x, int y) {
+        Block& X = blocks[x]; Block& Y = blocks[y];
+        if (!X.ends_ret || !Y.ends_ret) return false;       /* terminal-return only  */
+        if (X.ends_jcc || Y.ends_jcc || X.is_switch || Y.is_switch) return false;
+        if (X.stmts.size() != Y.stmts.size()) return false;
+        if (X.stmts.size() < 2) return false;               /* a bare `return` stays duplicated */
+        for (size_t i = 0; i < X.stmts.size(); ++i)
+            if (!tm_stmt_eq(X.stmts[i], Y.stmts[i])) return false;
+        /* identical returned value on every return-carrying register */
+        for (int r : { R_RAX, R_RDX, R_XMM0, R_XMM1 }) {
+            ExprP xr = X.reg_out[r], yr = Y.reg_out[r];
+            if ((bool)xr != (bool)yr) return false;
+            if (xr && !exprEqual(xr, yr)) return false;
+        }
+        return true;
+    }
+    std::set<int> tail_merge_targets;   /* canonical blocks that absorbed a duplicate tail */
+    void merge_identical_tails() {
+        tail_merge_targets.clear();
+        if (std::getenv("DS_NO_TAILMERGE")) return;
+        if (std::getenv("DS_DBG_TM") && f) {
+            rebuild_edges();
+            fprintf(stderr, "[TM] fn %llx: %zu blocks\n", (unsigned long long)f->rva, blocks.size());
+            for (auto& b : blocks) {
+                fprintf(stderr, "  blk %d (0x%llx) ret=%d jmp=%d jcc=%d sw=%d taken=%d fall=%d stmts=%zu preds=[",
+                        b.id, (unsigned long long)b.addr, b.ends_ret, b.ends_jmp, b.ends_jcc, b.is_switch, b.taken, b.fall,
+                        b.stmts.size());
+                for (int p : b.pred) fprintf(stderr, "%d ", p);
+                fprintf(stderr, "]\n");
+            }
+        }
+        for (int pass = 0; pass < 8; ++pass) {
+            rebuild_edges();
+            bool changed = false;
+            for (int i = 0; i < (int)blocks.size(); ++i) {
+                if (merged_blocks.count(i) || !blocks[i].ends_ret) continue;
+                if (i != 0 && blocks[i].pred.empty()) continue;      /* unreachable */
+                for (int j = i + 1; j < (int)blocks.size(); ++j) {
+                    if (merged_blocks.count(j) || !blocks[j].ends_ret) continue;
+                    if (j != 0 && blocks[j].pred.empty()) continue;
+                    if (!tm_tail_eq(i, j)) continue;
+                    for (auto& P : blocks) {                          /* redirect edges j -> i */
+                        if (P.taken == j) P.taken = i;
+                        if (P.fall == j) P.fall = i;
+                        if (P.default_succ == j) P.default_succ = i;
+                        for (int& c : P.case_succ) if (c == j) c = i;
+                    }
+                    merged_blocks.insert(j);
+                    tail_merge_targets.insert(i);
+                    changed = true;
+                }
+            }
+            if (!changed) break;
+        }
+        rebuild_edges();
+        if (std::getenv("DS_DBG_TM") && f && !tail_merge_targets.empty())
+            fprintf(stderr, "[TM] fn %llx merged into %zu canonical tail(s)\n",
+                    (unsigned long long)f->rva, tail_merge_targets.size());
+    }
+
+    /* ---------- FLAG-DISPATCH for MULTI-EXIT LOOPS ----------
+     * A natural loop with TWO exit targets (the follow F + one secondary S, where
+     * S is a forward join reached from OUTSIDE the loop too — a pre-loop guard)
+     * cannot be structured goto-free by post-dominator rules: S is not a post-dom
+     * of any single branch, so the structurer emits S in one path and `goto`s it
+     * from the loop's break (fun_0001ab40's residual gotos).
+     *
+     * Fix (the Boehm-Jacopini flag construction, minimal duplication — one int):
+     * route EVERY edge into S, and the loop's primary-exit edge into F, through a
+     * single synthetic dispatch block P that branches on a fresh flag `f`:
+     *     f = 0 (entry);  every "go to S" edge sets f = 1;  P: if (f) -> S else -> F.
+     * Now S has exactly ONE predecessor (P) so it is emitted ONCE, and the loop is
+     * single-exit (-> P). The structurer then produces pure if/while, zero gotos.
+     * Behaviour-preserving: f exactly records which exit was taken. */
+    void flag_dispatch_multiexit_loops() {
+        if (std::getenv("DS_NO_FLAG_DISPATCH")) return;
+        fwd_sinks.clear();
+        /* exits: empty => 2-way plan (F,S); else N-way ([J, T1, T2, ...] dispatched via
+         * an if-ladder on the flag). */
+        struct Plan { int H, F, S; std::set<int> body; std::vector<int> exits; };
+        /* FIXPOINT: nested/sequential joins (25->38 in fn_00015c20) overlap within a
+         * single pass, so one is claimed and the other skipped. Iterate: apply a
+         * round, recompute the CFG, then re-detect the now-exposed joins. */
+        for (int pass = 0; pass < 12; ++pass) {
+        std::vector<Plan> plans;
+        std::set<int> touched;   /* blocks already claimed by a plan (avoid overlap) */
+        for (auto& kv : loop_of_header) {
+            int H = kv.first;
+            if (H < 0 || H >= (int)blocks.size()) continue;
+            Loop& lp = loops[kv.second];
+            int F = loop_follow(H);
+            if (F < 0 || F >= (int)blocks.size()) continue;
+            std::set<int> exits;
+            for (int bl : lp.body)
+                for (int s : blocks[bl].succ)
+                    if (!lp.body.count(s)) exits.insert(s);
+            if (exits.size() != 2 || !exits.count(F)) continue;
+            int S = -1; for (int e : exits) if (e != F) S = e;
+            if (S < 0 || S == H || S >= (int)blocks.size()) continue;
+            if ((int)blocks[S].pred.size() < 2) continue;        /* not a shared join */
+            if (loop_of_header.count(S) || loop_of_header.count(F)) continue;
+            if (blocks[S].pred.size() > 4 || blocks[F].pred.size() > 4) continue;
+            /* skip if any body block is already claimed (nested / overlapping) */
+            bool overlap = false;
+            for (int bl : lp.body) if (touched.count(bl)) { overlap = true; break; }
+            if (overlap || touched.count(S) || touched.count(F)) continue;
+            for (int bl : lp.body) touched.insert(bl);
+            touched.insert(S); touched.insert(F);
+            plans.push_back({H, F, S, lp.body});
+        }
+        /* FORWARD 2-EXIT REGIONS (non-loop): an OR-chain `if(c1)J; else if(c2)J; ...
+         * else T` converges at a shared join J (blk 25 in fn_00015c20, 8 preds) with
+         * a single fall-through exit T. Same machinery as the loop case — J is the
+         * shared exit (S), T the follow (F), the region R the "body". Only fires with
+         * DS_FWD_DISPATCH until proven, and under tight guards (bounded region, exactly
+         * 2 exits) to keep the blast radius small. */
+        if (!std::getenv("DS_NO_FWD_DISPATCH")) {
+            auto idom_lca = [&](int a, int b)->int {
+                std::set<int> anc; int x=a, g=0;
+                while (x>=0 && g++<100000){ anc.insert(x); if(idom[x]==x||idom[x]<0) break; x=idom[x]; }
+                int y=b; g=0;
+                while (y>=0 && g++<100000){ if(anc.count(y)) return y; if(idom[y]==y||idom[y]<0) break; y=idom[y]; }
+                return -1;
+            };
+            bool DBGF = std::getenv("DS_DBG_FWD") && f;
+            for (int J = 0; J < (int)blocks.size(); ++J) {
+                if (loop_of_header.count(J)) continue;
+                if ((int)blocks[J].pred.size() < 3) continue;
+                if (touched.count(J)) { if (DBGF) fprintf(stderr,"[FWDREJ] J=%d(0x%llx) touched\n",J,(unsigned long long)blocks[J].addr); continue; }
+                bool in_loop = false;
+                for (auto& lp2 : loops) if (lp2.body.count(J)) { in_loop = true; break; }
+                if (in_loop) { if (DBGF) fprintf(stderr,"[FWDREJ] J=%d(0x%llx) in_loop\n",J,(unsigned long long)blocks[J].addr); continue; }
+                /* preds may reach J via taken OR the region's fall-through terminal.
+                 * The 2-exit-region check below is the real guard (a plain diamond has
+                 * ONE exit and is skipped); require >=2 taken-arms so it is a genuine
+                 * convergence, not a single fall edge. */
+                bool ok = true;
+                int taken_arms = 0;
+                for (int p : blocks[J].pred) if (blocks[p].taken == J) ++taken_arms;
+                if (taken_arms < 2) { if (DBGF) fprintf(stderr,"[FWDREJ] J=%d(0x%llx) taken_arms=%d\n",J,(unsigned long long)blocks[J].addr,taken_arms); continue; }
+                int E = blocks[J].pred[0];
+                for (size_t i = 1; i < blocks[J].pred.size(); ++i) { E = idom_lca(E, blocks[J].pred[i]); if (E < 0) break; }
+                if (E < 0 || E == J || !dominates(E, J)) { if (DBGF) fprintf(stderr,"[FWDREJ] J=%d(0x%llx) E=%d bad\n",J,(unsigned long long)blocks[J].addr,E); continue; }
+                /* region R = blocks dominated by E that reach J but are not J and not
+                 * dominated by J; bounded. */
+                std::set<int> R;
+                for (int X = 0; X < (int)blocks.size(); ++X) {
+                    if (X == J) continue;
+                    if (!dominates(E, X)) continue;
+                    if (dominates(J, X)) continue;
+                    if (!block_reaches(X, J)) continue;
+                    R.insert(X);
+                    if (R.size() > 24) { ok = false; break; }
+                }
+                if (!ok || R.size() < 3) { if (DBGF) fprintf(stderr,"[FWDREJ] J=%d(0x%llx) Rsize=%zu ok=%d\n",J,(unsigned long long)blocks[J].addr,R.size(),(int)ok); continue; }
+                /* collect the distinct exits of R besides J */
+                std::vector<int> Ts; bool toomany = false;
+                for (int X : R) {
+                    for (int s : blocks[X].succ) {
+                        if (s == J || R.count(s)) continue;
+                        bool seen = false; for (int t : Ts) if (t == s) { seen = true; break; }
+                        if (!seen) Ts.push_back(s);
+                        if (Ts.size() > 3) { toomany = true; break; }
+                    }
+                    if (toomany) break;
+                }
+                if (Ts.empty()) {
+                    /* T=-1 pure convergence: forward SINK (emit once after the region). */
+                    if (!std::getenv("DS_NO_FWD_SINK")) fwd_sinks.insert(J);
+                    continue;
+                }
+                if (toomany) { if (DBGF) fprintf(stderr,"[FWDREJ] J=%d(0x%llx) toomany_exits\n",J,(unsigned long long)blocks[J].addr); continue; }
+                bool badexit = false;
+                for (int t : Ts) if (t == J || R.count(t) || loop_of_header.count(t)) badexit = true;
+                if (badexit) { if (DBGF) fprintf(stderr,"[FWDREJ] J=%d(0x%llx) badexit\n",J,(unsigned long long)blocks[J].addr); continue; }
+                bool overlap = touched.count(J);
+                for (int t : Ts) if (touched.count(t)) overlap = true;
+                for (int X : R) if (touched.count(X)) overlap = true;
+                if (overlap) continue;
+                if (Ts.size() == 1) {
+                    for (int X : R) touched.insert(X);
+                    touched.insert(J); touched.insert(Ts[0]);
+                    plans.push_back({E, Ts[0], J, R, {}});          /* 2-way (F=T, S=J) */
+                } else if (!std::getenv("DS_NO_NWAY")) {
+                    for (int X : R) touched.insert(X);
+                    touched.insert(J); for (int t : Ts) touched.insert(t);
+                    std::vector<int> ex; ex.push_back(J); for (int t : Ts) ex.push_back(t);
+                    plans.push_back({E, -1, -1, R, ex});            /* N-way (if-ladder) */
+                } else {
+                    if (DBGF) fprintf(stderr,"[FWDREJ] J=%d(0x%llx) gt2_exits(%zu) DS_NWAY off\n",J,(unsigned long long)blocks[J].addr,Ts.size()+1);
+                    continue;
+                }
+            }
+        }
+        if (plans.empty()) break;
+        if (std::getenv("DS_DBG_FLAG") && f)
+            for (auto& pl : plans) {
+                if (!pl.exits.empty()) { fprintf(stderr, "[FLAG] fn %llx N-WAY H=%d exits=%zu\n", (unsigned long long)f->rva, pl.H, pl.exits.size()); continue; }
+                fprintf(stderr, "[FLAG] fn %llx loop H=%d(0x%llx) F=%d(0x%llx) S=%d(0x%llx) Spreds=%zu\n",
+                        (unsigned long long)f->rva, pl.H, (unsigned long long)blocks[pl.H].addr,
+                        pl.F, (unsigned long long)blocks[pl.F].addr, pl.S, (unsigned long long)blocks[pl.S].addr,
+                        blocks[pl.S].pred.size());
+            }
+        for (auto& pl : plans) {
+            std::string fv = "t" + std::to_string(++temp_seq);
+            var_width[fv] = 4;
+            /* ---- N-WAY dispatch: exits [J, T1, ...] via an if-ladder on the flag ---- */
+            if (!pl.exits.empty()) {
+                int n = (int)pl.exits.size();
+                auto split_forN = [&](int T) {
+                    std::vector<int> preds = blocks[T].pred;
+                    for (int X : preds) {
+                        if (X < 0 || X >= (int)blocks.size()) continue;
+                        if (pl.body.count(X) || dominates(X, pl.H)) continue;
+                        int Tc = (int)blocks.size();
+                        Block cp = blocks[T]; cp.id = Tc; cp.pred.clear(); cp.succ.clear();
+                        blocks.push_back(cp);
+                        Block& XB = blocks[X];
+                        if (XB.taken == T) XB.taken = Tc;
+                        if (XB.fall == T) XB.fall = Tc;
+                        if (XB.default_succ == T) XB.default_succ = Tc;
+                        for (int& c : XB.case_succ) if (c == T) c = Tc;
+                    }
+                };
+                for (int e : pl.exits) split_forN(e);
+                { Stmt s0; s0.kind = SK::Assign; s0.lhs = mkVar(fv,4); s0.rhs = mkConst(0,4);
+                  blocks[0].stmts.insert(blocks[0].stmts.begin(), s0); }
+                int P0 = (int)blocks.size();
+                std::vector<int> Pids; for (int k = 0; k < n-1; ++k) Pids.push_back(P0 + k);
+                for (int k = 0; k < n-1; ++k) {
+                    Block pb; pb.id = Pids[k]; pb.addr = blocks[pl.exits[0]].addr;
+                    pb.ends_jcc = true;
+                    pb.cond = mkBinary("==", mkVar(fv,4), mkConst(k,4), 4);
+                    pb.taken = pl.exits[k];
+                    pb.fall = (k < n-2) ? Pids[k+1] : pl.exits[n-1];
+                    blocks.push_back(pb);
+                }
+                int ebase = (int)blocks.size();
+                std::vector<Block> Es;
+                auto routeN = [&](int& edge) {
+                    for (int k = 0; k < n; ++k) if (edge == pl.exits[k]) {
+                        if (k == 0) { edge = P0; }   /* f=0 default */
+                        else {
+                            int Eid = ebase + (int)Es.size();
+                            Block eb; eb.id = Eid; eb.addr = blocks[pl.exits[k]].addr;
+                            eb.ends_jmp = true; eb.taken = P0; eb.fall = -1;
+                            Stmt s1; s1.kind = SK::Assign; s1.lhs = mkVar(fv,4); s1.rhs = mkConst(k,4);
+                            eb.stmts.push_back(s1);
+                            Es.push_back(eb);
+                            edge = Eid;
+                        }
+                        return;
+                    }
+                };
+                int nb = ebase;
+                for (int i = 0; i < nb; ++i) {
+                    bool isP = false; for (int pid : Pids) if (i == pid) { isP = true; break; }
+                    if (isP) continue;
+                    Block& X = blocks[i];
+                    routeN(X.taken); routeN(X.fall); routeN(X.default_succ);
+                    for (int& c : X.case_succ) routeN(c);
+                }
+                for (auto& e : Es) blocks.push_back(e);
+                continue;
+            }
+            /* NODE-SPLIT the exit targets for their POST-LOOP preds. An exit target
+             * (F or S) reached from a block that is neither in the loop nor a guard
+             * (a block AFTER the loop, e.g. loop 162's 167<-166 where 166 lives in
+             * F=165's body) cannot be routed through the dispatch — that forms a
+             * false cycle dispatch->F->...->166->dispatch. Give each such pred its
+             * OWN copy of the target (behaviour-identical straight-line block) so the
+             * target is left reached ONLY from the loop body + guards. */
+            auto split_for = [&](int T) {
+                std::vector<int> preds = blocks[T].pred;   /* snapshot */
+                for (int X : preds) {
+                    if (X < 0 || X >= (int)blocks.size()) continue;
+                    if (pl.body.count(X)) continue;                 /* loop edge -> route */
+                    if (dominates(X, pl.H)) continue;               /* guard    -> route */
+                    int Tc = (int)blocks.size();
+                    Block cp = blocks[T];
+                    cp.id = Tc; cp.pred.clear(); cp.succ.clear();
+                    blocks.push_back(cp);
+                    Block& XB = blocks[X];
+                    if (XB.taken == T) XB.taken = Tc;
+                    if (XB.fall == T) XB.fall = Tc;
+                    if (XB.default_succ == T) XB.default_succ = Tc;
+                    for (int& c : XB.case_succ) if (c == T) c = Tc;
+                }
+            };
+            split_for(pl.S);
+            split_for(pl.F);
+            int P = (int)blocks.size();
+            Block post;
+            post.id = P; post.addr = blocks[pl.S].addr;
+            post.ends_jcc = true; post.cond = mkVar(fv, 4);
+            post.taken = pl.S; post.fall = pl.F;
+            /* f = 0 at function entry */
+            { Stmt s0; s0.kind = SK::Assign; s0.lhs = mkVar(fv, 4); s0.rhs = mkConst(0, 4);
+              blocks[0].stmts.insert(blocks[0].stmts.begin(), s0); }
+            /* every edge X->S becomes X->(f=1; ->P); split conditional edges via a
+             * tiny synthetic block so f=1 lands ONLY on the S-bound path. */
+            int nblk = (int)blocks.size() + 1;   /* P not pushed yet; account below */
+            std::vector<Block> newblocks;
+            /* route EVERY edge to S through a tiny (f=1)->P block, and EVERY edge to
+             * F straight to P (f stays 0). This makes BOTH S and F single-predecessor
+             * (their only pred is P), so each is emitted ONCE and P's two arms
+             * reconverge at the real join with zero gotos — even when F itself was a
+             * shared join (a sibling branch also reached it). */
+            auto redirect_edge = [&](int& edge) {
+                if (edge == pl.S) {
+                    int E = nblk + (int)newblocks.size();
+                    Block eb; eb.id = E; eb.addr = blocks[pl.S].addr;
+                    eb.ends_jmp = true; eb.taken = P; eb.fall = -1;
+                    Stmt s1; s1.kind = SK::Assign; s1.lhs = mkVar(fv, 4); s1.rhs = mkConst(1, 4);
+                    eb.stmts.push_back(s1);
+                    newblocks.push_back(eb);
+                    edge = E;
+                } else if (edge == pl.F) {
+                    edge = P;
+                }
+            };
+            int nb = (int)blocks.size();
+            for (int i = 0; i < nb; ++i) {
+                Block& X = blocks[i];
+                redirect_edge(X.taken);
+                redirect_edge(X.fall);
+                redirect_edge(X.default_succ);
+                for (int& c : X.case_succ) redirect_edge(c);
+            }
+            blocks.push_back(post);
+            for (auto& e : newblocks) blocks.push_back(e);
+        }
+        rebuild_edges();
+        compute_dominators();
+        compute_postdom();
+        find_loops();
+        }   /* end fixpoint pass loop */
+    }
+
+    /* Combine short-circuit condition chains into ONE predicate so the structurer
+     * sees `if (c1 && c2 && ...)` instead of a chain of guards each branching to a
+     * shared target (which it cannot fold, degrading the whole function to a state
+     * machine). A ends jcc, falls to B; B ends jcc, has NO real statements (its only
+     * job is the compare), A is its sole predecessor, and B shares a target with A.
+     * The emitted C `||`/`&&` preserves the original short-circuit evaluation; B
+     * having no statements means no guarded memory load is hoisted ahead of A. */
+    void merge_short_circuit() {
+        merged_blocks.clear();
+        for (int iter = 0; iter < 4000; ++iter) {
+            rebuild_edges();
+            bool changed = false;
+            for (auto& A : blocks) {
+                if (merged_blocks.count(A.id) || A.is_switch) continue;
+                if (!A.ends_jcc || A.taken < 0 || A.fall < 0 || !A.cond) continue;
+                int bi = A.fall;
+                if (bi < 0 || (size_t)bi >= blocks.size() || merged_blocks.count(bi) || bi == (int)A.id) continue;
+                Block& B = blocks[bi];
+                if (B.is_switch || !B.ends_jcc || B.taken < 0 || B.fall < 0 || !B.cond) continue;
+                if (B.pred.size() != 1 || B.pred[0] != (int)A.id) continue;
+                if (!block_stmts_empty(bi)) continue;
+                ExprP comb; int nt, nf;
+                if (B.taken == A.taken && B.fall != A.taken) {        /* both → T on their cond */
+                    comb = mkBinary("||", clone(A.cond), clone(B.cond), 4);
+                    nt = A.taken; nf = B.fall;
+                } else if (B.fall == A.taken && B.taken != A.taken) { /* A→T on cond, B→T on !cond */
+                    comb = mkBinary("||", clone(A.cond), negate_expr(clone(B.cond)), 4);
+                    nt = A.taken; nf = B.taken;
+                } else continue;
+                if (nt == bi || nf == bi || nt == (int)A.id || nf == (int)A.id) continue;
+                A.cond = fold(comb);
+                A.taken = nt; A.fall = nf;
+                merged_blocks.insert(bi);
+                changed = true;
+                break;
+            }
+            if (!changed) break;
+        }
+        rebuild_edges();
+    }
+
+    /* C3: a boolean-value DIAMOND `if (c) X = 1; else X = 0;` (a `jmp`-over-`mov`
+     * setcc the compiler didn't fold) -> `X = c;` (or `X = !c;`). Both arms must be a
+     * single `X = const(0/1)` block with A as sole pred, converging on one join. The
+     * assignment moves into A and A falls straight to the join. CFG transform mirroring
+     * merge_short_circuit; corpus (behavioral) + compile gate verify. Gated
+     * DS_NO_BOOLDIAMOND. */
+    void fold_boolean_diamonds() {
+        if (std::getenv("DS_NO_BOOLDIAMOND")) return;
+        rebuild_edges();
+        auto single_bool_assign = [&](int b, std::string& xn, int64_t& cv) -> bool {
+            if (b < 0 || (size_t)b >= blocks.size()) return false;
+            Block& B = blocks[b];
+            if (B.is_switch || B.ends_jcc) return false;
+            const Stmt* only = nullptr;
+            for (auto& s : B.stmts) { if (s.kind == SK::Comment) continue; if (only) return false; only = &s; }
+            if (!only || only->kind != SK::Assign || !only->lhs || only->lhs->kind != EK::Var ||
+                !only->rhs || only->rhs->kind != EK::Const) return false;
+            cv = only->rhs->cval;
+            if (cv != 0 && cv != 1) return false;
+            xn = only->lhs->name; return true;
+        };
+        auto usucc = [&](int b) -> int {   /* unconditional successor of a straight block */
+            Block& B = blocks[b];
+            if (B.ends_jcc || B.is_switch) return -1;
+            return B.ends_jmp ? B.taken : B.fall;
+        };
+        for (auto& A : blocks) {
+            if (A.is_switch || !A.ends_jcc || A.taken < 0 || A.fall < 0 || !A.cond) continue;
+            int T = A.taken, F = A.fall;
+            if (T == F || (size_t)T >= blocks.size() || (size_t)F >= blocks.size()) continue;
+            if (blocks[T].pred.size() != 1 || blocks[T].pred[0] != A.id) continue;
+            if (blocks[F].pred.size() != 1 || blocks[F].pred[0] != A.id) continue;
+            std::string xt, xf; int64_t ct, cf;
+            if (!single_bool_assign(T, xt, ct) || !single_bool_assign(F, xf, cf)) continue;
+            if (xt != xf || ct == cf) continue;                 /* same var, complementary 0/1 */
+            int jt = usucc(T), jf = usucc(F);
+            if (jt < 0 || jt != jf || jt == A.id || jt == T || jt == F) continue;
+            ExprP val = (ct == 1) ? clone(A.cond) : negate_expr(clone(A.cond));
+            Stmt s; s.kind = SK::Assign;
+            int w = var_width.count(xt) ? var_width[xt] : 4;
+            s.lhs = mkVar(xt, w); s.rhs = val;
+            A.stmts.push_back(std::move(s));
+            A.ends_jcc = false; A.cond = nullptr; A.ends_jmp = false;
+            A.taken = -1; A.fall = jt;                           /* straight fall to the join */
+            merged_blocks.insert(T); merged_blocks.insert(F);
+        }
+        rebuild_edges();
+    }
+
+    std::string ind() { return std::string(indent_lvl * 4, ' '); }
+    /* true if `s` contains only whitespace (no actual statements/labels) */
+    static bool is_blank(const std::string& s) {
+        for (char ch : s) if (!isspace((unsigned char)ch)) return false;
+        return true;
+    }
+    /* Remove one indentation level (up to 4 leading spaces) from every line of a
+     * previously-rendered block. Used to de-nest a guard's sibling arm without
+     * re-running the structurer (which would mark blocks as already-emitted and
+     * degrade to gotos). Blank lines are left untouched. */
+    static std::string dedent_one(const std::string& s) {
+        std::string out;
+        out.reserve(s.size());
+        size_t i = 0, n = s.size();
+        while (i < n) {
+            size_t eol = s.find('\n', i);
+            if (eol == std::string::npos) eol = n;
+            size_t strip = 0;
+            while (strip < 4 && i + strip < eol && s[i + strip] == ' ') ++strip;
+            out.append(s, i + strip, eol - (i + strip));
+            if (eol < n) out.push_back('\n');
+            i = eol + 1;
+        }
+        return out;
+    }
+    std::string ind(int n) { return std::string(n * 4, ' '); }
+    std::string block_label(int id) { return "L_" + hex(blocks[id].addr).substr(2); }
+
+    void emit_stmts(int id, std::string& dst) {
+        if (iv_suppressed_stmts.empty()) { for (auto& s : blocks[id].stmts) emit_stmt(s, dst); return; }
+        for (size_t i = 0; i < blocks[id].stmts.size(); ++i) {
+            if (iv_suppressed_stmts.count({id, (int)i})) continue;   /* for-loop init/incr */
+            emit_stmt(blocks[id].stmts[i], dst);
+        }
+    }
+
+    /* A pointer-typed destination (`dt` ends in `*`) assigned a value that does not
+     * already render as that exact pointer type needs an explicit cast — otherwise
+     * the output has a silent int<->ptr / mismatched-ptr conversion (C4047/C4133,
+     * which Hex-Rays writes as `p = (int *)a1[1];`). The cast is a pure reinterpret
+     * on x64 (all pointers/longs are 64-bit), so it never changes the value. */
+    /* The pointer type the RENDERER actually emits for `base` (mirrors the render of a
+     * Binary +/- base). A TYPED pointer var (ptr_elem_width>1) is byte-cast to
+     * `(char*)base + off` -> renders as char-ptr, NOT its declared element type; a
+     * char-ptr / void-ptr var (elem<=1) or a bare var renders as its declared type; a
+     * `(T*)x` cast renders as that T-ptr. Empty = unknown (force a cast). This makes
+     * the assignment-cast decision match reality: `long long* t = a1 + 0x140` renders
+     * `(char*)a1 + 0x140` (char*) and so DOES need the `(long long*)` cast. */
+    std::string rendered_ptr_type(const ExprP& b) {
+        if (!b) return "";
+        if (b->kind == EK::Cast && b->op.size() >= 3 && b->op.front() == '(' &&
+            b->op.back() == ')' && b->op.find('*') != std::string::npos)
+            return b->op.substr(1, b->op.size() - 2);          /* "(T*)" -> "T*" */
+        if (b->kind == EK::Var) {
+            if (array_locals.count(b->name)) return "char*";   /* array decays to char* */
+            auto it = ptr_elem_width.find(b->name);
+            if (it != ptr_elem_width.end() && it->second > 1) return "char*"; /* byte-cast */
+            return decl_type(b->name);
+        }
+        return "";
+    }
+    bool ptr_assign_needs_cast(const ExprP& r, const std::string& dt) {
+        if (!r) return false;
+        switch (r->kind) {
+            case EK::Const:  return !(r->cval == 0 && !r->is_float);  /* null needs none */
+            case EK::Var:    return decl_type(r->name) != dt;
+            case EK::Cast:   return r->op != "(" + dt + ")";          /* already this cast? */
+            case EK::AddrOf:  /* `&x` has x's-type* — cast when the dest differs (`int* t
+                               * = &a2` where a2 is long long is C4133). Over-cast of a
+                               * matching type is harmless. */
+                             return true;
+            case EK::Binary:
+                if (r->op == "+" || r->op == "-") {
+                    /* `ptr + ptr` is C2110, so the renderer integer-casts BOTH operands
+                     * -> the rendered result is a `long long`, never the pointer type,
+                     * so a pointer dest always needs the cast (t381 = t380 + a2). */
+                    if (r->op == "+" && renders_as_pointer(r->a) && renders_as_pointer(r->b))
+                        return true;
+                    /* else the pointer operand is the base: r->a for `-`; for `+` the
+                     * side that renders as a pointer. Cast unless its RENDERED type == dt. */
+                    const ExprP& base = (r->op == "-")
+                        ? r->a
+                        : (!rendered_ptr_type(r->a).empty() ? r->a : r->b);
+                    std::string rt = rendered_ptr_type(base);
+                    if (!rt.empty() && rt == dt) return false;
+                }
+                return true;
+            default:         return true;   /* Mem load, Call, Ternary, ... -> cast */
+        }
+    }
+
+    /* Does `e` RENDER as a pointer type? Mirrors the renderer (not expr_is_pointer,
+     * which conflates value-flow): a cast's pointer-ness is its cast op (`(long long)p`
+     * is NOT a pointer, `(T*)x` IS); a var by var_pointer; `ptr ± i` if either side is. */
+    bool renders_as_pointer(const ExprP& e) {
+        if (!e) return false;
+        switch (e->kind) {
+            case EK::Cast:   return e->op.find('*') != std::string::npos;
+            case EK::AddrOf: return true;
+            case EK::Var: {  /* authoritative: the DECLARED type (covers pointer params
+                              * whose var_pointer flag is not set), an array (char*), OR a
+                              * ptr_elem_width>1 var — the renderer byte-casts THAT to
+                              * `(char*)v` in arithmetic even when it's declared long long
+                              * (`long long t3; ... (char*)t3 + 0x10`), so it renders as a
+                              * pointer and must be treated as one. */
+                if (array_locals.count(e->name)) return true;
+                std::string dt = decl_type(e->name);
+                if (!dt.empty() && dt.back() == '*') return true;
+                auto it = ptr_elem_width.find(e->name);
+                return it != ptr_elem_width.end() && it->second > 1;
+            }
+            case EK::Mem:    return is_struct_ptr_field(e);   /* `a1->field_8` where field_8 is void* */
+            case EK::Binary: return (e->op == "+" || e->op == "-") &&
+                                    (renders_as_pointer(e->a) || renders_as_pointer(e->b));
+            case EK::Ternary: /* after arm coercion, a ternary is a pointer iff BOTH arms are */
+                             return renders_as_pointer(e->b) && renders_as_pointer(e->c);
+            default:         return false;
+        }
+    }
+    void emit_stmt(const Stmt& s, std::string& dst) {
+        switch (s.kind) {
+            case SK::Assign: {
+                std::string l = render(s.lhs);
+                std::string r = render(s.rhs);
+                if (l == r) break;     /* drop self-assign */
+                if (s.lhs && s.rhs) {
+                    auto wrapstr = [&](const std::string& x) {
+                        return (s.rhs->kind == EK::Binary || s.rhs->kind == EK::Ternary)
+                               ? "(" + x + ")" : x;
+                    };
+                    bool rhs_ptr = renders_as_pointer(s.rhs);
+                    if (s.lhs->kind == EK::Var) {
+                        std::string dt = decl_type(s.lhs->name);
+                        if (!dt.empty() && dt.back() == '*') {
+                            /* ptr dest <- other. Cast when ptr_assign_needs_cast says so,
+                             * when the RHS does not RENDER as a pointer, OR when the
+                             * RENDERED string shows the renderer integerized the operands
+                             * (`(int)x + (long long)y`): the AST predicates look THROUGH
+                             * casts (expr_is_pointer treats `(int)ptr` as a pointer) and
+                             * disagree with the actual render, so the rendered text is the
+                             * authority — a `(long long)`/`(int)` operand cast means the
+                             * result is an integer and a pointer dest needs the cast. */
+                            bool isnull = s.rhs->kind == EK::Const && s.rhs->cval == 0 && !s.rhs->is_float;
+                            bool render_intized = (s.rhs->kind == EK::Binary) &&
+                                (r.find("(long long)") != std::string::npos ||
+                                 r.find("(int)") != std::string::npos) &&
+                                r.compare(0, dt.size() + 1, "(" + dt) != 0;
+                            if (!isnull && (ptr_assign_needs_cast(s.rhs, dt) || !rhs_ptr || render_intized))
+                                r = "(" + dt + ")" + wrapstr(r);
+                        } else if (rhs_ptr) {                            /* int dest <- ptr */
+                            r = "(long long)" + wrapstr(r);
+                        } else if (s.rhs->is_float && dt != "float" && dt != "double") {
+                            /* a FLOAT value stored into an INTEGER-typed variable is a
+                             * bit store (`movss/movsd [slot],xmm`), NOT a value cast: the
+                             * var is a spill / outgoing-stack-arg cell that carries the
+                             * float BITS (a later call reads them as a float arg). Without
+                             * this, C converts `v3 = 1.5f` to `1` (truncation), corrupting
+                             * the argument. Reinterpret the destination to keep the bits.
+                             * A genuine float->int conversion carries an explicit (int)
+                             * cast (rhs not is_float), so it is untouched. */
+                            int fw = (s.rhs->width >= 8) ? 8 : 4;
+                            l = std::string("*(") + (fw == 8 ? "double" : "float") + "*)&" + l;
+                        }
+                    } else if (s.lhs->kind == EK::Mem && !struct_ptr_field_tag(s.lhs).empty()) {
+                        /* store into a retyped `struct T*` field: make the value's type
+                         * explicit (an int address -> the struct ptr, or a different ptr ->
+                         * this ptr) instead of an implicit int<->ptr conversion (C4047). */
+                        std::string tag = struct_ptr_field_tag(s.lhs);
+                        bool isnull = s.rhs->kind == EK::Const && s.rhs->cval == 0 && !s.rhs->is_float;
+                        std::string want = "(struct " + tag + "*)";
+                        if (!isnull && r.compare(0, want.size(), want) != 0)
+                            r = want + wrapstr(r);
+                    } else if (s.lhs->kind == EK::Mem && rhs_ptr && !s.lhs->is_float) {
+                        /* a pointer value stored into a scalar memory slot: make the
+                         * ptr->int reinterpret explicit (else C4047). A width-8 slot is
+                         * clean (long long); a width-4 `*(int*)` slot narrows (that
+                         * residual C4244 is a genuine truncation, in the left-alone set). */
+                        r = "(long long)" + wrapstr(r);
+                    }
+                }
+                dst += ind() + l + " = " + r + ";\n";
+                break;
+            }
+            case SK::Call:
+                dst += ind() + render(s.rhs) + ";\n";
+                break;
+            case SK::Return:
+                if (s.ret_void || !s.rhs) dst += ind() + "return;\n";
+                else dst += ind() + "return " + render_return_expr(s.rhs) + ";\n";
+                break;
+            case SK::Goto:
+                dst += ind() + "goto " + s.label + ";\n";
+                break;
+            case SK::Label:
+                dst += s.label + ":;\n";
+                break;
+            case SK::Comment:
+                dst += ind() + "/* " + s.label + " */\n";
+                break;
+        }
+    }
+
+    /* a switch selector must be INTEGRAL; a float-typed selector (mis-inferred) is
+     * C2050. Reinterpret its bits (lvalue) or value-cast so it compiles. */
+    std::string switch_sel(const ExprP& e) {
+        if (!e) return "0";
+        bool fl = e->is_float;
+        if (e->kind == EK::Var) {
+            std::string dt = decl_type(e->name);   /* catches force_float too */
+            if (dt == "float" || dt == "double") fl = true;
+        }
+        if (fl) {
+            if (e->kind == EK::Var) return "*(int*)&" + rsub(e, 14);
+            if (e->kind == EK::Mem && e->a) return "*(int*)(" + render_addr(e->a) + ")";
+            return "(int)(" + render(e) + ")";
+        }
+        /* A pointer-typed selector is not integral (C2050); a switch on it means the
+         * value is really a small integer sharing that register. Cast to `long long`. */
+        if (e->kind == EK::Var) {
+            std::string dt = decl_type(e->name);
+            if (!dt.empty() && dt.back() == '*') return "(long long)" + rsub(e, 14);
+        }
+        return render(e);
+    }
+
+    /* Render a return value with a ptr<->int coercion so the `return` is not C4047:
+     * an int-returning fn returning a pointer value gets `(long long)`; a pointer-
+     * returning fn returning a non-pointer/mismatched value gets the return ptr cast. */
+    std::string render_return_expr(const ExprP& rhs) {
+        std::string rv = render(rhs);
+        if (!rhs) return rv;
+        bool wrap = rhs->kind == EK::Binary || rhs->kind == EK::Ternary;
+        auto wr = [&](const std::string& c){ return c + (wrap ? "(" + rv + ")" : rv); };
+        /* the function returns FLOAT/DOUBLE (xmm0) but the return value is an
+         * INTEGER-typed lvalue holding the float BITS — a `v.u &= mask; return v.d`
+         * union idiom where the modified integer slot IS the returned double
+         * (d_fabs). Reinterpret the bits, don't value-convert (`(double)(long long)`
+         * would turn 0x3fc0000000000000 into 4.6e18). A genuine `(float)n` conversion
+         * carries an explicit Cast (is_float), so a bare int lvalue here is always a
+         * bit return. */
+        if (ret_is_float && !ret_is_pointer) {
+            const char* ft = (ret_width >= 8) ? "double" : "float";
+            /* the DECLARED type is the authority: a var declared `long long` (because
+             * it was bit-mutated `a1 = *(long long*)&a1 & mask`) but read back by a
+             * final `movsd xmm0,[slot]` carries an is_float NODE flag that disagrees
+             * with its integer decl — reinterpret its bits so `return a1` is
+             * `*(double*)&a1`, not the value-converting `(double)a1`. */
+            if (rhs->kind == EK::Var) {
+                std::string dt = decl_type(rhs->name);
+                if (dt != "float" && dt != "double" && !(dt.size() && dt.back() == '*'))
+                    return std::string("*(") + ft + "*)&" + rv;
+            } else if (rhs->kind == EK::Mem && rhs->a && !rhs->is_float) {
+                return std::string("*(") + ft + "*)(" + render_addr(rhs->a) + ")";
+            }
+        }
+        if (!ret_is_pointer) {
+            /* cast a pointer value (or a call whose result may be a pointer — ret_kind
+             * 2 is `long long` OR pointer, indistinguishable) to (long long) so a
+             * non-pointer-returning fn's `return ptr` / `return fun_x()` is not C4047. */
+            if (renders_as_pointer(rhs) || (rhs->kind == EK::Call && rhs->ret_kind == 2))
+                rv = wr("(long long)");
+        } else {
+            /* pointer return: cast the value to the EXACT return pointer type unless it
+             * is already a cast to that type (covers both a non-pointer value AND a
+             * DIFFERENT pointer type — `return a1` where a1 is float* but ret is int* is
+             * C4133). An explicit `(T*)` reinterpret never warns; a bare-matching return
+             * is over-cast harmlessly. Null stays null. */
+            std::string rt = render_return_type_str();
+            bool isnull = rhs->kind == EK::Const && rhs->cval == 0 && !rhs->is_float;
+            bool already = rhs->kind == EK::Cast && rhs->op == "(" + rt + ")";
+            if (!isnull && !already) rv = wr("(" + rt + ")");
+        }
+        return rv;
+    }
+    std::string render_return_type_str() {
+        if (!ret_is_pointer) return "long long";
+        std::string base = ret_ptr_elem_float ? (ret_ptr_elem_w >= 8 ? "double" : "float")
+                         : typ_str(ret_ptr_elem_w ? ret_ptr_elem_w : 1, ret_ptr_elem_uns, false);
+        return base + "*";
+    }
+    std::string ret_text(int id) {
+        Block& B = blocks[id];
+        if (B.tail_call) {
+            /* tail call: return the callee result (or just call it for void) */
+            if (!used_return) return render(B.tail_call) + ";\n    return;";
+            return "return " + render_return_expr(B.tail_call) + ";";
+        }
+        if (!used_return) return "return;";
+        if (B.has_ret_value)
+            return "return " + render_return_expr(B.ret_value) + ";";
+        return "return 0;";
+    }
+
+    /* ---------- recursive structurer ---------- */
+    /* We structure a reducible CFG by recursive descent over the dominator tree
+     * combined with the natural-loop and immediate-post-dominator info. The
+     * algorithm follows the practical scheme:
+     *   - a loop header => emit while/do-while/for over the loop body, recursing
+     *     on the body up to the back-edge.
+     *   - a 2-way branch whose arms rejoin at the immediate post-dominator =>
+     *     if/else, recursing on each arm, then continuing at the join.
+     *   - a switch dispatch => switch{} with case bodies recursing to the join.
+     *   - otherwise a straight-line block followed by its single successor.
+     * Anything that does not fit (irreducible, computed fallthrough we cannot
+     * prove) degrades to a goto to the target, with that target emitted as a
+     * labeled region elsewhere. We guard recursion depth and a visited set so we
+     * always terminate. */
+
+    std::set<int> structured;   /* blocks already emitted structurally */
+    std::set<int> threaded;     /* empty goto-landing blocks absorbed into a
+                                   break/continue — re-thread, never goto them */
+    int struct_guard = 0;
+    bool struct_bailed = false;  /* set when struct_guard trips: the structured body
+                                  * is INCOMPLETE (a region was dropped), so the whole
+                                  * function must fall back to the complete goto-CFG. */
+
+    bool reaches_only_via(int from, int stop) { (void)from; (void)stop; return true; }
+
+    /* Follow a chain of empty (statement-free) unconditional-jump blocks to the
+     * real target. /Od + our block splitting create tiny "L_x: goto L_y" landing
+     * blocks; threading through them lets break/continue/return detection see the
+     * actual loop header / follow / epilogue instead of an intermediate label. */
+    int thread_target(int b) {
+        std::set<int> seen;
+        while (b >= 0 && !seen.count(b)) {
+            seen.insert(b);
+            Block& B = blocks[b];
+            /* Stop at a real emitted block, but walk THROUGH blocks already
+             * absorbed into a break/continue (threaded) — a later reference to
+             * such a landing block must resolve to the same loop edge, not a
+             * goto to a label that was never written. */
+            if (structured.count(b) && !threaded.count(b)) break;
+            bool empty = true;
+            for (auto& s : B.stmts) if (s.kind != SK::Comment) { empty = false; break; }
+            if (empty && B.ends_jmp && !B.ends_jcc && B.taken >= 0) { b = B.taken; continue; }
+            break;
+        }
+        return b;
+    }
+
+    /* When an arm is converted to break/continue, the empty goto-only landing
+     * blocks we threaded over become unreachable in the structured form. Mark
+     * them `structured` so the leftover-block pass doesn't re-emit them (which
+     * would create a dangling goto and revert the whole function). */
+    void mark_threaded(int b) {
+        std::set<int> seen;
+        while (b >= 0 && !seen.count(b)) {
+            seen.insert(b);
+            Block& B = blocks[b];
+            if (structured.count(b) && !threaded.count(b)) break;
+            bool empty = true;
+            for (auto& s : B.stmts) if (s.kind != SK::Comment) { empty = false; break; }
+            if (empty && B.ends_jmp && !B.ends_jcc && B.taken >= 0) {
+                structured.insert(b);
+                threaded.insert(b);
+                b = B.taken;
+                continue;
+            }
+            break;
+        }
+    }
+
+    static bool expr_has_call(const ExprP& e) {
+        if (!e) return false;
+        if (e->kind == EK::Call) return true;
+        if (expr_has_call(e->a) || expr_has_call(e->b) || expr_has_call(e->c)) return true;
+        for (auto& x : e->args) if (expr_has_call(x)) return true;
+        return false;
+    }
+    /* A block whose statements are side-effect free (only Var assignments with no
+     * embedded call; no memory stores, no calls) — safe to duplicate. */
+    bool block_dup_safe(int id) {
+        for (auto& s : blocks[id].stmts) {
+            if (s.kind == SK::Comment) continue;
+            if (s.kind == SK::Assign && s.lhs && s.lhs->kind != EK::Mem && !expr_has_call(s.rhs))
+                continue;
+            return false;
+        }
+        return true;
+    }
+    /* If `b` begins a short, branch-free, side-effect-free region that ends in a
+     * return, emit it INLINE (duplicate) and return true. Return regions are
+     * duplicate-safe, so duplicating a shared `set result; return` landing avoids
+     * a dangling goto (which would revert the whole function to a goto-CFG). This
+     * is exactly what Hex-Rays does with shared return epilogues. */
+    bool try_emit_return_dup(int b, std::string& dst) {
+        std::vector<int> chain;
+        std::set<int> seen;
+        int cur = b;
+        while (cur >= 0 && !seen.count(cur) && chain.size() < 12) {
+            seen.insert(cur);
+            Block& C = blocks[cur];
+            if (C.ends_jcc || C.is_switch) return false;
+            /* A STRAIGHT-LINE return tail is reached once per path, so duplicating it
+             * — including its memory stores / calls (e.g. `out[len]=0; return len`, a
+             * shared epilogue of an inlined memcpy) — is semantically safe; only the
+             * no-branch/no-loop SHAPE matters, not side-effect freedom. Bounded by
+             * dup_budget so the duplication can't blow up. (The old block_dup_safe
+             * gate rejected any store, forcing the whole /O2 function to a state
+             * machine over one shared `out[len]=0; return`.) */
+            chain.push_back(cur);
+            /* Terminal tail = a block with NO in-function successor: an explicit
+             * `ret`, OR a noreturn-call/`int3` error block (`fun_x(); int3` — fall
+             * is -1), OR a tail-call `jmp` (taken is -1). All three render via
+             * ret_text and are reached once per path, so duplicating them at each
+             * goto site is behavior-safe and eliminates the goto. Previously ONLY
+             * `ends_ret` counted, so a shared noreturn error block (fun_00074590();
+             * int3, reached from 3 sites) forced the whole function to a state
+             * machine over two `goto`s (fn_00060380 and many like it). */
+            int nxt = C.ends_jmp ? C.taken : (C.ends_ret ? -1 : C.fall);
+            if (C.ends_ret || nxt < 0) {
+                for (int id : chain) { emit_stmts(id, dst); structured.insert(id); }
+                dst += ind() + ret_text(chain.back()) + "\n";
+                return true;
+            }
+            cur = nxt;
+        }
+        return false;
+    }
+
+    int dup_budget = 0;   /* per-function block-duplication budget (caps blowup) */
+
+    /* Bounded TAIL DUPLICATION: emit a NON-LOOP region from `b` up to `stop` (the
+     * join) entirely INLINE — handling straight-line, returns, and if/else
+     * (recursively duplicating both arms). Duplication is always semantically
+     * correct (each runtime path executes its own copy exactly once); it is how
+     * the structurer recovers a shared body / shared conditional block reached
+     * from two places (seg_intersect's `(d1>0)!=(d2>0)` chains) instead of a goto.
+     * `dup_budget` caps total duplicated blocks per function so it never blows up;
+     * a loop header / switch / budget-exhaustion makes it fail (caller falls back). */
+    bool emit_dup_region(int b, int stop, std::string& dst, int loop_header) {
+        bool DBG = std::getenv("DS_DBG_DUP") && f && f->rva == 0x24b0;
+        int local_guard = 0;
+        while (b >= 0 && b != stop) {
+            if (--dup_budget < 0 || ++local_guard > 200) { if (DBG) fprintf(stderr, "DUP fail budget/guard blk=%d budget=%d\n", b, dup_budget); return false; }
+            Block& B = blocks[b];
+            int tb = thread_target(b);
+            if (cur_loop_follow >= 0 && tb == cur_loop_follow) { dst += ind() + "break;\n"; return true; }
+            if (cur_loop_header >= 0 && tb == cur_loop_header) { dst += ind() + "continue;\n"; return true; }
+            if (loop_of_header.count(b) || B.is_switch) { if (DBG) fprintf(stderr, "DUP fail loop/switch blk=%d loophdr=%d switch=%d\n", b, (int)loop_of_header.count(b), (int)B.is_switch); return false; }
+            emit_stmts(b, dst);
+            if (B.ends_ret) { dst += ind() + ret_text(b) + "\n"; return true; }
+            if (B.ends_jcc && B.taken >= 0 && B.fall >= 0) {
+                ExprP cond = B.cond ? B.cond : mkConst(1, 4);
+                std::string tbody, fbody;
+                indent_lvl++; bool ok1 = emit_dup_region(B.taken, stop, tbody, loop_header); indent_lvl--;
+                if (!ok1) { if (DBG) fprintf(stderr, "DUP fail taken-arm blk=%d taken=%d\n", b, B.taken); return false; }
+                indent_lvl++; bool ok2 = emit_dup_region(B.fall, stop, fbody, loop_header); indent_lvl--;
+                if (!ok2) { if (DBG) fprintf(stderr, "DUP fail fall-arm blk=%d fall=%d\n", b, B.fall); return false; }
+                if (is_blank(fbody))
+                    dst += ind() + "if (" + render_cond(cond) + ") {\n" + tbody + ind() + "}\n";
+                else if (is_blank(tbody))
+                    dst += ind() + "if (" + render_cond(negate_expr(cond)) + ") {\n" + fbody + ind() + "}\n";
+                else
+                    dst += ind() + "if (" + render_cond(cond) + ") {\n" + tbody + ind() + "} else {\n" + fbody + ind() + "}\n";
+                return true;
+            }
+            int nxt = B.ends_jmp ? B.taken : B.fall;
+            if (nxt < 0) { dst += ind() + ret_text(b) + "\n"; return true; }
+            b = nxt;
+        }
+        return true;   /* reached stop */
+    }
+
+    /* Emit region starting at `b`, stopping (exclusive) when we reach `stop`
+     * (a follow/join block) or a block already emitted. */
+    void emit_region(int b, int stop, std::string& dst, int loop_header) {
+        while (b >= 0 && b != stop) {
+            if (++struct_guard > 300000) { struct_bailed = true; dst += ind() + "/* structurer bailout */\n"; return; }
+            /* A jump to the innermost loop's follow is a `break`; a jump to its
+             * header (the continue point) is a `continue`. Converting these here
+             * keeps nested / early-exit loops structured instead of leaving a
+             * dangling goto that reverts the whole function to a goto-CFG. Only
+             * the innermost loop is targeted, which matches /Od break/continue. */
+            int _tb = thread_target(b);
+            /* Compare against the THREADED loop follow/header too: a nested loop whose
+             * exit edge lands on an empty block that jumps to the outer loop's
+             * continue point (op-20 count-words: the skip-word loop's exit-on-space
+             * threads through the outer back-edge block to the outer header) leaves
+             * `cur_loop_follow` as the raw landing block while `_tb` is threaded past
+             * it. Without threading both, that single edge stayed a dangling `goto`
+             * that reverted the WHOLE function to a state machine. */
+            int _tf = (cur_loop_follow >= 0) ? thread_target(cur_loop_follow) : -1;
+            int _th = (cur_loop_header >= 0) ? thread_target(cur_loop_header) : -1;
+            if (cur_loop_follow >= 0 && (_tb == cur_loop_follow || _tb == _tf) && b != stop) { mark_threaded(b); dst += ind() + "break;\n"; return; }
+            if (cur_loop_header >= 0 && (_tb == cur_loop_header || _tb == _th) && b != stop) { mark_threaded(b); dst += ind() + "continue;\n"; return; }
+            /* forward-sink: a T=-1 pure-convergence join is emitted ONCE after its
+             * region; every internal reach FALLS THROUGH here (it post-dominates the
+             * region, so no divergent code is skipped). Toggled to -1 for the single
+             * bottom emission so the sink block itself is not self-suppressed. */
+            if (cur_fwd_sink >= 0 && b == cur_fwd_sink && b != stop) return;
+            if (structured.count(b)) {
+                /* High-fan-in reconvergence: a non-trivial tail reached from >=3
+                 * paths (a shared append / return / field-store landing) is the
+                 * "same tail duplicated 3-6x" the analysis flagged across
+                 * fun_0001c930 / 00013490 / 00020530. Emit it ONCE (labeled) + goto
+                 * rather than copying it into every arm — the Hex-Rays shared-epilogue
+                 * form. A tiny 1-stmt landing (a bare `return 0;`) still duplicates:
+                 * a goto to it would be noisier than the copy. Tunable via
+                 * DS_FANIN_GOTO. */
+                /* Only force goto for a tail that TAIL-MERGE just collapsed from N
+                 * duplicate copies: without this, the structurer's return-dup would
+                 * re-duplicate the freshly-merged block back into every arm, undoing
+                 * the merge. A general pred-count heuristic is NOT used here — it
+                 * pushes ordinary 2-pred diamonds into a state machine (worse). */
+                bool hi_fanin = tail_merge_targets.count(b) &&
+                                blocks[b].stmts.size() >= 2;
+                if (!hi_fanin) {
+                /* Prefer duplicating a shared side-effect-free return region over
+                 * a goto to an already-inlined block (which would dangle). */
+                if (try_emit_return_dup(b, dst)) return;
+                /* Or duplicate the (non-loop) region up to this region's join — a
+                 * shared body / shared conditional block reached from two paths.
+                 * At the top level (stop<0) it duplicates through to the returns. */
+                {
+                    std::string db; int saved = dup_budget;
+                    if (emit_dup_region(b, stop, db, loop_header)) {
+                        /* Cap tail duplication by SIZE. Duplicating a SMALL shared tail
+                         * (a bare return, a 1-2 line landing) reads cleaner than a goto,
+                         * but copying a LARGE multi-statement tail into every path is the
+                         * "return-block explosion" the analysis flagged across
+                         * fun_00013490 / 00014040 / 00016260 / 00020530 (the same 4-6 line
+                         * append / recurse / field-store tail duplicated 3-6x). For a
+                         * large tail, discard the copy and emit ONE labeled block + goto
+                         * instead — exactly what Hex-Rays does here. Tunable via DS_DUP_MAX. */
+                        int dl = 0; for (char c : db) if (c == '\n') ++dl;
+                        /* cap=30 measured best on the full 1443: fewest state machines
+                         * (15 vs 18 baseline / 19 at cap=12) and fewest goto-functions,
+                         * at +1% total lines. A goto-free-only guard (skip dup when db
+                         * has a goto) was tried and REGRESSED it (589 gotos / 19 SM) —
+                         * refusing those dups pushes more fns over the goto threshold
+                         * into state machines. State-machine count is the readability
+                         * metric that matters most, so we keep the broader dup. */
+                        static int cap = [](){ const char* e = getenv("DS_DUP_MAX"); return e ? atoi(e) : 30; }();
+                        if (dl <= cap) {
+                            dst += db;
+                            if (stop >= 0) { b = stop; continue; }
+                            return;   /* region duplicated to its terminators */
+                        }
+                    }
+                    dup_budget = saved;
+                }
+                }   /* end if(!hi_fanin) */
+                /* already emitted elsewhere (or a high-fan-in shared tail) — jump to it */
+                need_label.insert(b);
+                dst += ind() + "goto " + block_label(b) + ";\n";
+                return;
+            }
+
+            /* loop header? */
+            int lh = loop_of_header.count(b) ? loop_of_header[b] : -1;
+            if (lh >= 0 && b != loop_header) {
+                emit_loop(b, stop, dst);
+                /* after the loop, continue at the loop follow */
+                int follow = loop_follow(b);
+                b = follow;
+                continue;
+            }
+
+            structured.insert(b);
+            if (need_label.count(b)) dst += block_label(b) + ":;\n";
+
+            Block& B = blocks[b];
+
+            /* switch guard: `cmp idx,K; ja default` falling into a switch block.
+             * Emit the guard's own statements then descend straight into the
+             * switch (which now carries the default). */
+            if (B.is_switch_guard && B.guard_switch_blk >= 0 &&
+                blocks[B.guard_switch_blk].is_switch &&
+                blocks[B.guard_switch_blk].switch_var &&
+                !structured.count(B.guard_switch_blk)) {
+                emit_stmts(b, dst);
+                b = B.guard_switch_blk;
+                continue;
+            }
+
+            /* switch dispatch */
+            if (B.is_switch && B.switch_var) {
+                emit_stmts(b, dst);
+                emit_switch(b, stop, dst, loop_header);
+                return;
+            }
+
+            /* two-way conditional */
+            if (B.ends_jcc && B.taken >= 0 && B.fall >= 0) {
+                emit_stmts(b, dst);
+                emit_if_else(b, stop, dst, loop_header);
+                return;
+            }
+
+            /* straight line / unconditional */
+            emit_stmts(b, dst);
+            if (B.ends_ret) {
+                dst += ind() + ret_text(b) + "\n";
+                return;
+            }
+            if (B.is_switch) { /* switch with no var: fallthrough as goto */
+                return;
+            }
+            int nxt = -1;
+            if (B.ends_jmp) {
+                if (B.taken >= 0) nxt = B.taken;
+                else { dst += ind() + ret_text(b) + "\n"; return; }   /* tail/extern jmp */
+            } else {
+                nxt = B.fall;
+            }
+            if (nxt < 0) { dst += ind() + ret_text(b) + "\n"; return; }
+            /* continue (tail-call into the loop) */
+            b = nxt;
+        }
+    }
+
+    /* The follow block of a loop = a successor of the body that is outside it. */
+    int loop_follow(int header) {
+        int lh = loop_of_header[header];
+        const Loop& lp = loops[lh];
+        /* An exit block that IMMEDIATELY returns is an early-exit guard clause
+         * (mismatch/error path), NOT the loop's continuation. Treating it as the
+         * follow nests the REAL continuation inside the loop, so any other edge
+         * into that continuation becomes a goto -> state machine (fn_000856a0:
+         * memcmp's byte loop exits to a `return` on mismatch and to the qword loop
+         * on alignment; the qword loop is the true follow). */
+        auto terminal = [&](int s){
+            return s >= 0 && s < (int)blocks.size() && blocks[s].ends_ret &&
+                   !blocks[s].is_switch;
+        };
+        /* A pre-test loop exits through the header's OWN conditional edge: that
+         * out-of-loop successor is the canonical follow — UNLESS it just returns
+         * while a non-terminal continuation exit also exists (handled below). */
+        int hdr_exit = -1;
+        if (blocks[header].ends_jcc)
+            for (int s : blocks[header].succ)
+                if (!lp.body.count(s)) { hdr_exit = s; break; }
+        if (hdr_exit >= 0 && !terminal(hdr_exit)) return hdr_exit;
+        std::map<int,int> cnt;
+        for (int u : lp.body)
+            for (int s : blocks[u].succ)
+                if (!lp.body.count(s)) cnt[s]++;
+        /* prefer the most common NON-terminal exit (the real continuation) */
+        int best = -1, bc = -1;
+        for (auto& kv : cnt) {
+            if (terminal(kv.first)) continue;
+            if (kv.second > bc) { bc = kv.second; best = kv.first; }
+        }
+        if (best >= 0) return best;
+        if (hdr_exit >= 0) return hdr_exit;      /* all exits terminal: header's */
+        /* fall back to the most common exit of any kind */
+        for (auto& kv : cnt) if (kv.second > bc) { bc = kv.second; best = kv.first; }
+        return best;
+    }
+
+    std::map<int,int> eff_join_cache;
+    /* The join a conditional's arms reconverge at, IGNORING sibling paths that
+     * return early. The strict post-dominator (ipdom) is the virtual exit when ANY
+     * path returns before the real join, so a shared continuation reached from
+     * several guards is neither recognized nor emitted once — it gets duplicated
+     * into every guard (bloat + dup-budget exhaustion) or gotoed (state machine).
+     * Here: if ipdom exists, use it; else return the earliest-RPO block reachable
+     * from BOTH arms (the point where the non-returning paths meet). */
+    int effective_join(int b) {
+        if (b < 0 || (size_t)b >= blocks.size()) return -1;
+        if ((size_t)b < ipdom.size() && ipdom[b] >= 0) return ipdom[b];
+        auto it = eff_join_cache.find(b);
+        if (it != eff_join_cache.end()) return it->second;
+        const Block& B = blocks[b];
+        if (!B.ends_jcc || B.taken < 0 || B.fall < 0) { eff_join_cache[b] = -1; return -1; }
+        int n = (int)blocks.size();
+        auto reach = [&](int start, std::vector<char>& vis){
+            std::vector<int> wl{start};
+            while (!wl.empty()) {
+                int c = wl.back(); wl.pop_back();
+                if (c < 0 || c == b || c >= n || vis[c]) continue;
+                vis[c] = 1;
+                for (int s : blocks[c].succ) wl.push_back(s);
+            }
+        };
+        std::vector<char> vt(n, 0), vf(n, 0);
+        reach(B.taken, vt); reach(B.fall, vf);
+        int best = -1, bestrpo = 0x7fffffff;
+        for (int c = 0; c < n; ++c) {
+            if (c == b || !vt[c] || !vf[c]) continue;
+            int r = (c < (int)rpo_num.size()) ? rpo_num[c] : -1;
+            if (r >= 0 && r < bestrpo) { bestrpo = r; best = c; }
+        }
+        eff_join_cache[b] = best;
+        return best;
+    }
+
+    void emit_loop(int header, int outer_stop, std::string& dst) {
+        int lh = loop_of_header[header];
+        Loop lp = loops[lh];
+        int follow = loop_follow(header);
+        Block& H = blocks[header];
+
+        structured.insert(header);
+        if (need_label.count(header)) dst += block_label(header) + ":;\n";
+
+        /* for/while: header is the test. Determine if header is a pre-test loop:
+         * header ends in jcc and one edge leaves the loop (== follow). */
+        bool pretest = H.ends_jcc && (H.taken == follow || H.fall == follow);
+        if (pretest && H.cond) {
+            int body_entry = (H.fall == follow) ? H.taken : H.fall;
+            bool cond_is_taken = (H.fall == follow); /* stay-in-loop on taken */
+            /* If we leave the loop on the taken edge, the loop continues on fall;
+             * the C condition to STAY is the negation of the branch when taken
+             * leaves. cond selects taken. */
+            ExprP stay = cond_is_taken ? H.cond : negate_expr(H.cond);
+            /* emit header non-terminator statements before the while as part of
+             * the condition recomputation is hard; under /Od the header is just
+             * the compare, so its stmts are empty. Emit them once is unsafe for a
+             * loop, so require header has no side-effecting stmts. */
+            bool header_clean = true;
+            for (auto& s : blocks[header].stmts)
+                if (s.kind != SK::Comment) { header_clean = false; break; }
+            if (header_clean) {
+                auto itf = for_of_header.find(header);
+                if (itf != for_of_header.end() && itf->second.ok) {
+                    const ForInfo& fi = itf->second;
+                    std::string init_text = (fi.init_blk >= 0)
+                        ? render_stmt_inline(blocks[fi.init_blk].stmts[fi.init_idx]) : "";
+                    std::string incr_text = build_incr(disp(fi.iv), fi.op, fi.step);
+                    dst += ind() + "for (" + init_text + "; " + render_cond(stay) + "; " + incr_text + ") {\n";
+                } else
+                    dst += ind() + "while (" + render_cond(stay) + ") {\n";
+                indent_lvl++;
+                int saved_loop = cur_loop_header; cur_loop_header = header;
+                int saved_follow = cur_loop_follow; cur_loop_follow = follow;
+                int saved_latch = cur_loop_latch; cur_loop_latch = unique_latch(lh, header, follow);
+                emit_region(body_entry, cur_loop_latch >= 0 ? cur_loop_latch : header, dst, header);
+                emit_shared_latch(header, dst);
+                cur_loop_header = saved_loop; cur_loop_follow = saved_follow; cur_loop_latch = saved_latch;
+                indent_lvl--;
+                dst += ind() + "}\n";
+                return;
+            }
+        }
+
+        /* post-test single-exit loop -> do { body } while (cond); */
+        int dw_latch = -1;
+        if (is_dowhile(header, follow, lh, dw_latch)) {
+            Block& Lb = blocks[dw_latch];
+            dst += ind() + "do {\n";
+            indent_lvl++;
+            int saved_loop = cur_loop_header; cur_loop_header = header;
+            int saved_follow = cur_loop_follow; cur_loop_follow = follow;
+            int saved_latch = cur_loop_latch; cur_loop_latch = dw_latch;   /* body_stop = L */
+            /* emit header + body down to L (exclusive); suppress the sink so L renders
+             * as the while-tail rather than being emitted inside the body. */
+            emit_loop_body(header, follow, dst, /*emit_latch=*/false);
+            /* L's own statements (the loop-carried update, e.g. i++), then the test. */
+            structured.insert(dw_latch);
+            if (need_label.count(dw_latch)) dst += block_label(dw_latch) + ":;\n";
+            emit_stmts(dw_latch, dst);
+            cur_loop_header = saved_loop; cur_loop_follow = saved_follow; cur_loop_latch = saved_latch;
+            indent_lvl--;
+            /* condition to STAY (take the back-edge to header). */
+            ExprP stay = (Lb.taken == header) ? Lb.cond : negate_expr(Lb.cond);
+            dst += ind() + "} while (" + render_cond(stay) + ");\n";
+            return;
+        }
+
+        /* generic loop: while(true){ body; if(!cond) break; } via region emission */
+        used_while_true = true;
+        dst += ind() + "while (true) {\n";
+        indent_lvl++;
+        int saved_loop = cur_loop_header; cur_loop_header = header;
+        int saved_follow = cur_loop_follow; cur_loop_follow = follow;
+        int saved_latch = cur_loop_latch; cur_loop_latch = unique_latch(lh, header, follow);
+        /* emit the header block's own statements + structure starting at header's
+         * successors, but we already inserted header into structured; emit its
+         * terminator handling via emit_body_from. */
+        emit_loop_body(header, follow, dst);
+        cur_loop_header = saved_loop; cur_loop_follow = saved_follow; cur_loop_latch = saved_latch;
+        indent_lvl--;
+        dst += ind() + "}\n";
+        (void)outer_stop;
+    }
+
+    int cur_loop_header = -1;
+    int cur_loop_follow = -1;
+    int cur_loop_latch  = -1;
+    std::set<int> fwd_sinks;   /* T=-1 pure-convergence joins: emit ONCE after the region */
+    int cur_fwd_sink = -1;
+
+    /* The loop's UNIQUE latch (single block whose back-edge closes the loop),
+     * when it is a distinct block from the header/follow. Emitting the body with
+     * the latch as its stop-sink, then the latch ONCE at the bottom, makes every
+     * internal path FALL THROUGH to the shared loop-carried update instead of the
+     * first reach emitting it inline and every other reach `goto`-ing back to it
+     * (the dominant residual-goto source in dense loops — CRC/scan/min-max latches
+     * reached from several internal branches). A single latch post-dominates the
+     * whole body, so this is behavior-preserving. */
+    int unique_latch(int lh, int header, int follow) {
+        if (std::getenv("DS_NO_LATCH")) return -1;
+        Loop& lp = loops[lh];
+        if (lp.latches.size() != 1) return -1;
+        int L = *lp.latches.begin();
+        if (L == header || L == follow || L < 0) return -1;
+        return L;
+    }
+
+    /* A single-exit POST-TEST loop: the exit condition lives at the UNIQUE latch's
+     * conditional back-edge (not at the header), and the ONLY way out of the loop is
+     * that latch test. Such loops read cleanest as `do { body } while (cond);` rather
+     * than `while (true) { body; if (!cond) break; }`. Returns the latch block in Lout.
+     * Conservative: any second exit (stray break / side-jump to follow) or a pretest
+     * header falls back to the generic while(true) form (never a wrong do-while). */
+    bool is_dowhile(int header, int follow, int lh, int& Lout) {
+        if (std::getenv("DS_NO_DOWHILE")) return false;   /* default-on; DS_NO_DOWHILE to disable */
+        Loop& lp = loops[lh];
+        Block& H = blocks[header];
+        /* (1) header must NOT be a pretest (its jcc, if any, doesn't leave to follow). */
+        if (H.ends_jcc && (H.taken == follow || H.fall == follow)) return false;
+        /* (2) exactly one latch, distinct from header/follow. */
+        if (lp.latches.size() != 1) return false;
+        int L = *lp.latches.begin();
+        if (L == header || L == follow || L < 0 || (size_t)L >= blocks.size()) return false;
+        /* (3) latch terminator is the conditional back-edge {header, follow}. */
+        Block& Lb = blocks[L];
+        if (!Lb.ends_jcc || !Lb.cond || Lb.taken < 0 || Lb.fall < 0) return false;
+        bool clean = (Lb.taken == header && Lb.fall == follow) ||
+                     (Lb.taken == follow && Lb.fall == header);
+        if (!clean) return false;
+        /* (4) SINGLE-EXIT: the only body edge leaving the loop is L->follow. Any other
+         *     block that jumps out (a second break / merged side-exit) disqualifies. */
+        for (int u : lp.body)
+            for (int s : blocks[u].succ)
+                if (!lp.body.count(s) && !(u == L && s == follow)) return false;
+        /* (5) header entered only from outside + the latch (defensive; implied by (2)). */
+        for (int p : blocks[header].pred)
+            if (lp.body.count(p) && p != L) return false;
+        Lout = L;
+        return true;
+    }
+
+    void emit_loop_body(int header, int follow, std::string& dst, bool emit_latch = true) {
+        Block& H = blocks[header];
+        int body_stop = (cur_loop_latch >= 0) ? cur_loop_latch : header;
+        emit_stmts(header, dst);
+        if (H.ends_jcc && H.cond && H.taken >= 0 && H.fall >= 0) {
+            /* if branch leaves to follow, that's a break */
+            int t = H.taken, fl = H.fall;
+            if (t == follow) {
+                dst += ind() + "if (" + render_cond(H.cond) + ") break;\n";
+                emit_region(fl, body_stop, dst, header);
+            } else if (fl == follow) {
+                dst += ind() + "if (" + render_cond(negate_expr(H.cond)) + ") break;\n";
+                emit_region(t, body_stop, dst, header);
+            } else {
+                emit_if_else(header, body_stop, dst, header);
+            }
+        } else if (H.ends_ret) {
+            dst += ind() + ret_text(header) + "\n";
+        } else {
+            int nxt = H.ends_jmp ? H.taken : H.fall;
+            if (nxt == header) { /* self loop */ }
+            else if (nxt >= 0) emit_region(nxt, body_stop, dst, header);
+        }
+        if (emit_latch) emit_shared_latch(header, dst);
+    }
+
+    /* Emit the loop's shared latch ONCE at the bottom of the body — but ONLY when
+     * the body emission left it unemitted (every internal path fell through to
+     * body_stop == the latch). Behaviour-safe: the latch is a real post-dominator
+     * of the body reached by fall-through, never skipping intervening code. */
+    void emit_shared_latch(int header, std::string& dst) {
+        if (cur_loop_latch < 0 || structured.count(cur_loop_latch)) return;
+        int L = cur_loop_latch;
+        int saved = cur_loop_latch; cur_loop_latch = -1;
+        emit_region(L, header, dst, header);
+        cur_loop_latch = saved;
+    }
+
+    ExprP negate_expr(const ExprP& c) {
+        if (!c) return mkConst(0, 4);
+        /* double-negation: !(!x) -> x. The only producer of a logical-not node
+         * is this function, so a unary "!" here is always a boolean condition;
+         * negating it again recovers the original predicate instead of stacking
+         * a redundant `!(!cond)`. Behavior-preserving and generalizes to any
+         * binary where a negated condition is re-negated by structuring. */
+        if (c->kind == EK::Unary && c->op == "!" && c->a) return c->a;
+        if (c->kind == EK::Binary) {
+            const std::string& op = c->op;
+            /* De Morgan: !(a && b) -> !a || !b, !(a || b) -> !a && !b. Pushes the
+             * negation inward instead of stacking `!(...)`, so a structurer-negated
+             * range check `!(x<lo || x>hi)` renders as the clean `x>=lo && x<=hi`.
+             * Gated with the idiom pass for a clean A/B (getenv cached). */
+            static const bool demorgan = std::getenv("DS_NO_IDIOM") == nullptr;
+            if (demorgan && op == "&&")
+                return mkBinary("||", negate_expr(c->a), negate_expr(c->b), c->width, false);
+            if (demorgan && op == "||")
+                return mkBinary("&&", negate_expr(c->a), negate_expr(c->b), c->width, false);
+            /* An ORDERED-relation inversion is NaN-UNSAFE for floating point:
+             * `!(a > b)` is NOT `a <= b` when either operand is NaN (all ordered
+             * comparisons are FALSE for unordered operands, so `!(a>b)` is TRUE but
+             * `a<=b` is FALSE). Keep the `!` wrapper for float `< <= > >=`. The
+             * equality inversion `!(a==b) -> a!=b` IS NaN-consistent (a==b is false
+             * for NaN, a!=b is true), so it stays for all types. */
+            bool fcmp = (c->is_float) || (c->a && c->a->is_float) || (c->b && c->b->is_float);
+            std::string n;
+            if (op=="==") n="!="; else if (op=="!=") n="==";
+            else if (!fcmp) {
+                if (op=="<") n=">="; else if (op==">=") n="<";
+                else if (op==">") n="<="; else if (op=="<=") n=">";
+            }
+            if (!n.empty()) {
+                auto e = std::make_shared<Expr>(*c); e->op = n; return e;
+            }
+        }
+        return mkUnary("!", clone(c), c ? c->width : 4);
+    }
+
+    /* Simplify an expression rendered in BOOLEAN context (an if/while/for condition
+     * or an &&/||/! operand): Hex-Rays drops the redundant `!= 0` / `== 0` our flag
+     * lifting leaves. `X != 0` -> `X`; `X == 0` -> `!X` (negate_expr gives a clean
+     * relational inversion, `(a<b)==0` -> `a>=b`). Recurses through &&/||/!. Builds
+     * NEW nodes for changed parts and shares unchanged subtrees WITHOUT mutating the
+     * original, so calling it on b.cond never perturbs value/CFG semantics — it only
+     * reshapes how the condition renders. Gated DS_NO_BOOLCOND. */
+    ExprP bool_simplify(const ExprP& e) {
+        if (!e) return e;
+        if (e->kind == EK::Binary) {
+            const std::string& op = e->op;
+            if ((op == "!=" || op == "==") && e->b && e->b->kind == EK::Const &&
+                e->b->cval == 0 && !e->b->is_float && e->a && !e->a->is_float) {
+                ExprP inner = bool_simplify(e->a);
+                return op == "!=" ? inner : negate_expr(inner);
+            }
+            if (op == "&&" || op == "||") {
+                auto c = std::make_shared<Expr>(*e);
+                c->a = bool_simplify(e->a); c->b = bool_simplify(e->b);
+                return c;
+            }
+        }
+        if (e->kind == EK::Unary && e->op == "!" && e->a)
+            return negate_expr(bool_simplify(e->a));
+        return e;
+    }
+    std::string render_cond(const ExprP& e) {
+        if (std::getenv("DS_NO_BOOLCOND")) return render(e);
+        return render(bool_simplify(e));
+    }
+
+    /* Does the (acyclic, forward) region rooted at `b` always terminate the
+     * function -- i.e. every path out of it reaches a `ret`/tail-jmp -- without
+     * ever falling through to `stop` or re-entering already-structured code?
+     * Conservative: any block that branches outside the region, loops, or hits
+     * a not-yet-known edge makes us answer false. Used to turn a return-guard
+     * (`if (cond) goto RET;`) into a structured single-armed `if`. */
+    bool region_terminates(int b, int stop) {
+        std::set<int> seen;
+        std::vector<int> work{b};
+        int guard = 0;
+        while (!work.empty()) {
+            if (++guard > 100000) return false;
+            int cur = work.back(); work.pop_back();
+            if (cur < 0) return false;
+            if (cur == stop) return false;            /* falls through to fall-arm */
+            if (structured.count(cur)) return false;  /* would alias emitted code */
+            if (!seen.insert(cur).second) continue;   /* back-edges revisit -> skip */
+            Block& C = blocks[cur];
+            if (C.ends_ret) continue;                 /* path ends in return: ok */
+            if (C.is_switch) return false;            /* keep switches out of guards */
+            if (C.ends_jmp) {
+                if (C.taken < 0) continue;            /* tail/extern jmp == return */
+                work.push_back(C.taken);
+            } else if (C.ends_jcc && C.taken >= 0 && C.fall >= 0) {
+                work.push_back(C.taken);
+                work.push_back(C.fall);
+            } else if (C.fall >= 0) {
+                work.push_back(C.fall);
+            } else {
+                continue;                              /* no successor == return */
+            }
+        }
+        return true;
+    }
+
+    /* Can control flow reach `target` from `start` along CFG successor edges?
+     * (Used to detect a re-convergence join reached from BOTH arms of a branch.) */
+    bool block_reaches(int start, int target) {
+        if (start < 0 || target < 0) return false;
+        if (start == target) return true;
+        std::set<int> seen;
+        std::vector<int> work{start};
+        int guard = 0;
+        while (!work.empty()) {
+            if (++guard > 100000) return false;
+            int cur = work.back(); work.pop_back();
+            if (cur < 0 || !seen.insert(cur).second) continue;
+            for (int s : blocks[cur].succ) {
+                if (s == target) return true;
+                work.push_back(s);
+            }
+        }
+        return false;
+    }
+
+    /* A "pure return epilogue" is a block whose entire job is to return: it ends
+     * in a `ret`, carries no side-effecting statements of its own, and is neither
+     * a switch dispatch nor a loop header. The classic shared function exit
+     * (`L_xxx: return v;`) that many guard arms converge to. We can safely inline
+     * its return into a guard arm, turning a `goto EPILOGUE` into an early
+     * `return`. */
+    bool is_return_epilogue(int blk) {
+        if (blk < 0 || (size_t)blk >= blocks.size()) return false;
+        Block& B = blocks[blk];
+        if (!B.ends_ret) return false;
+        if (B.is_switch || B.is_switch_guard) return false;
+        if (loop_of_header.count(blk)) return false;
+        if (!B.stmts.empty()) return false;
+        return true;
+    }
+
+    /* Like region_terminates, but also accepts paths that converge to `stop`
+     * when `stop` is a pure return epilogue: such a path "returns" via the shared
+     * exit. Lets us recognise the very common "set the result, jmp to the single
+     * ret" guard-clause pattern (classify_char / letter_grade style chains) and
+     * inline the epilogue return instead of degrading to goto/label spaghetti. */
+    bool region_returns_via_epilogue(int b, int stop) {
+        if (!is_return_epilogue(stop)) return false;
+        std::set<int> seen;
+        std::vector<int> work{b};
+        int guard = 0;
+        while (!work.empty()) {
+            if (++guard > 100000) return false;
+            int cur = work.back(); work.pop_back();
+            if (cur < 0) return false;
+            if (cur == stop) continue;                /* reaches shared ret: ok */
+            if (structured.count(cur)) return false;  /* would alias emitted code */
+            if (!seen.insert(cur).second) continue;   /* back-edges revisit -> skip */
+            Block& C = blocks[cur];
+            if (C.ends_ret) continue;                 /* path ends in return: ok */
+            if (C.is_switch) return false;            /* keep switches out of guards */
+            if (C.ends_jmp) {
+                if (C.taken < 0) continue;            /* tail/extern jmp == return */
+                work.push_back(C.taken);
+            } else if (C.ends_jcc && C.taken >= 0 && C.fall >= 0) {
+                work.push_back(C.taken);
+                work.push_back(C.fall);
+            } else if (C.fall >= 0) {
+                work.push_back(C.fall);
+            } else {
+                continue;                              /* no successor == return */
+            }
+        }
+        return true;
+    }
+
+    void emit_if_else(int b, int stop, std::string& dst, int loop_header) {
+        Block& B = blocks[b];
+        int t = B.taken, fl = B.fall;
+        ExprP cond = B.cond ? B.cond : mkConst(1, 4);
+        if (std::getenv("DS_DBG_IF") && f && f->rva == (getenv("DS_DBG_RVA") ? strtoull(getenv("DS_DBG_RVA"),0,16) : 0x1ab40)) {
+            int jj = (ipdom.size() > (size_t)b) ? ipdom[b] : -1;
+            fprintf(stderr, "[IF] b=%d(0x%llx) t=%d fl=%d ipdom=%d stop=%d cur_lh=%d cur_fl=%d cur_latch=%d s(t)=%d s(fl)=%d s(join)=%d\n",
+                    b, (unsigned long long)B.addr, t, fl, jj, stop, cur_loop_header, cur_loop_follow, cur_loop_latch,
+                    (int)structured.count(t), (int)structured.count(fl), jj>=0?(int)structured.count(jj):-1);
+        }
+        /* FORWARD-SINK join: b's ipdom is a T=-1 pure-convergence sink. Emit both arms
+         * with the sink active (every reach to it falls through), then the sink ONCE. */
+        {
+            int jj = (ipdom.size() > (size_t)b) ? ipdom[b] : -1;
+            if (jj >= 0 && jj != b && jj != stop && fwd_sinks.count(jj) && cur_fwd_sink != jj &&
+                !structured.count(jj)) {   /* handles t==jj / fl==jj too: that arm emits empty */
+                int saved = cur_fwd_sink; cur_fwd_sink = jj;
+                std::string tbody, fbody;
+                indent_lvl++; emit_region(t,  jj, tbody, loop_header); indent_lvl--;
+                indent_lvl++; emit_region(fl, jj, fbody, loop_header); indent_lvl--;
+                cur_fwd_sink = saved;
+                if (is_blank(fbody))
+                    dst += ind() + "if (" + render_cond(cond) + ") {\n" + tbody + ind() + "}\n";
+                else if (is_blank(tbody))
+                    dst += ind() + "if (" + render_cond(negate_expr(cond)) + ") {\n" + fbody + ind() + "}\n";
+                else
+                    dst += ind() + "if (" + render_cond(cond) + ") {\n" + tbody + ind() + "} else {\n" + fbody + ind() + "}\n";
+                emit_region(jj, stop, dst, loop_header);   /* the sink, once */
+                return;
+            }
+        }
+
+        /* GUARD CLAUSE: an arm that is a side-effect-free chain ending in `return`
+         * becomes an inline `if (cond) { return X; }`, with the OTHER arm continuing
+         * at the same level. Return chains are duplicate-safe, so this is always
+         * legal and eliminates the dominant goto source — a shared `return`
+         * epilogue reached from many guards / loop exits (arena_alloc's `return -1`,
+         * every early-return ladder). Try the taken arm first, then the fall arm. */
+        if (t != fl) {
+            int tt = thread_target(t), ff = thread_target(fl);
+            if (tt != ff) {
+                std::string body;
+                indent_lvl++;
+                bool tok = (tt != stop) && try_emit_return_dup(tt, body);
+                indent_lvl--;
+                if (tok) {
+                    dst += ind() + "if (" + render_cond(cond) + ") {\n" + body + ind() + "}\n";
+                    emit_region(fl, stop, dst, loop_header);
+                    return;
+                }
+                body.clear();
+                indent_lvl++;
+                bool fok = (ff != stop) && try_emit_return_dup(ff, body);
+                indent_lvl--;
+                if (fok) {
+                    dst += ind() + "if (" + render_cond(negate_expr(cond)) + ") {\n" + body + ind() + "}\n";
+                    emit_region(t, stop, dst, loop_header);
+                    return;
+                }
+            }
+        }
+
+        /* break/continue inside loops (thread through empty goto landing blocks
+         * so an `if (c) goto L; L: goto HEADER/FOLLOW` is recovered as
+         * continue/break instead of a dangling goto). */
+        if (loop_header >= 0) {
+            int follow = cur_loop_follow;
+            int tt = thread_target(t), ff = thread_target(fl);
+            /* C2: one edge continues (-> header), the OTHER breaks (-> follow). Emit a
+             * single `if (!C) break;` / `if (C) break;` — the continue is the implicit
+             * fall-through to the loop tail — instead of `if(C) continue; break;`. Uses
+             * the loop's own header/follow block ids, so it can never mis-target an inner
+             * switch's break. Both edges are terminal, so nothing else is emitted here. */
+            bool c2 = !std::getenv("DS_NO_CONTBREAK");
+            if (c2 && tt == cur_loop_header && ff == follow && follow != stop) {
+                dst += ind() + "if (" + render_cond(negate_expr(cond)) + ") break;\n";
+                mark_threaded(t); mark_threaded(fl); return;
+            }
+            if (c2 && ff == cur_loop_header && tt == follow && follow != stop) {
+                dst += ind() + "if (" + render_cond(cond) + ") break;\n";
+                mark_threaded(t); mark_threaded(fl); return;
+            }
+            if (tt == cur_loop_header) {
+                dst += ind() + "if (" + render_cond(cond) + ") continue;\n";
+                mark_threaded(t);
+                emit_region(fl, stop, dst, loop_header); return;
+            }
+            if (ff == cur_loop_header) {
+                dst += ind() + "if (" + render_cond(negate_expr(cond)) + ") continue;\n";
+                mark_threaded(fl);
+                emit_region(t, stop, dst, loop_header); return;
+            }
+            if (tt == follow && follow != stop) {
+                dst += ind() + "if (" + render_cond(cond) + ") break;\n";
+                mark_threaded(t);
+                emit_region(fl, stop, dst, loop_header); return;
+            }
+            if (ff == follow && follow != stop) {
+                dst += ind() + "if (" + render_cond(negate_expr(cond)) + ") break;\n";
+                mark_threaded(fl);
+                emit_region(t, stop, dst, loop_header); return;
+            }
+        }
+
+        /* find the join = immediate post-dominator of b */
+        int join = (ipdom.size() > (size_t)b) ? ipdom[b] : -1;
+        if (join == b) join = -1;
+
+        /* RE-CONVERGENCE FOLLOW (loop-with-remainder ladder): one arm is a join
+         * that the OTHER arm also reaches (e.g. a small-n path enters the scalar
+         * remainder tail directly, while the vectorized path falls into that same
+         * tail after its loop). The ipdom cases below emit the tail INSIDE the
+         * taken arm and leave the other arm's edge back to it as a `goto` — which
+         * then trips the whole function into a switch(__state) machine. Instead,
+         * emit the OTHER arm as a single-armed `if` whose edge to the join becomes
+         * a fall-through (stop = join) and whose non-join exits become inline
+         * returns, then place the join sequentially. We trial-emit with rollback
+         * and commit only when the body is goto-free — so this can never worsen
+         * structure and is always behavior-preserving. Skip when the arm already
+         * IS the ipdom join (the clean single-arm cases below handle that). */
+        for (int trial = 0; trial < 2; ++trial) {
+            int follow = trial ? fl : t;    /* candidate sequential join      */
+            int other  = trial ? t  : fl;   /* arm rendered as the if-body    */
+            if (follow < 0 || other < 0 || follow == stop || follow == join) continue;
+            if (follow == b || other == b || follow == other) continue;
+            /* The `other` arm must NOT be the immediate post-dominator: if it is,
+             * it is the real sequential join and belongs AFTER the if, not inside
+             * it. Emitting the ipdom-join as the if-body inverts a loop latch —
+             * `block_reaches(other, follow)` is satisfied only through the loop
+             * back-edge (latch -> header -> other-block), so this trial would wrap
+             * the latch in `if(cond){ continue; break; }` and leave the real body
+             * to `goto` back to it. Let the taken_is_join / fall_is_join cases
+             * below emit `if(!cond){ body } <latch>` with zero gotos. */
+            if (other == join) continue;
+            /* If a proper shared post-dominator join exists that BOTH arms reach
+             * and it is NEITHER arm, the ipdom `!taken_is_join && !fall_is_join`
+             * case below emits both arms up to it and the join ONCE — goto-free.
+             * Do not let this trial preempt that by treating one arm as the follow
+             * on the strength of a BACK-EDGE reachability (the CRC/hash loop latch:
+             * both the table-lookup arm and the reset arm reach the latch, neither
+             * IS it, and `block_reaches(other,follow)` only holds via latch->header). */
+            if (join >= 0 && join != follow && join != other &&
+                block_reaches(other, join) && block_reaches(follow, join)) continue;
+            if (structured.count(follow) || structured.count(other)) continue;
+            if (!block_reaches(other, follow)) continue;   /* not a re-convergence */
+            auto s_struct = structured; auto s_label = need_label;
+            auto s_thread = threaded;   int s_dup = dup_budget;
+            std::string body;
+            indent_lvl++;
+            emit_region(other, follow, body, loop_header);
+            indent_lvl--;
+            if (body.find("goto ") == std::string::npos && !is_blank(body)) {
+                ExprP guard_cond = (follow == t) ? negate_expr(cond) : cond;
+                dst += ind() + "if (" + render_cond(guard_cond) + ") {\n";
+                dst += body;
+                dst += ind() + "}\n";
+                emit_region(follow, stop, dst, loop_header);
+                return;
+            }
+            structured = s_struct; need_label = s_label;
+            threaded = s_thread;   dup_budget = s_dup;
+        }
+
+        /* Prefer the structured if/else only when the join is reachable and not
+         * inside either arm prematurely. We emit:
+         *   if (cond) { <taken..join> } else { <fall..join> }
+         * choosing the arm with the cond as-is. If one arm IS the join, emit a
+         * single-armed if. */
+        bool taken_is_join = (t == join);
+        bool fall_is_join  = (fl == join);
+
+        if (fall_is_join && !taken_is_join) {
+            std::string body;
+            indent_lvl++; emit_region(t, join, body, loop_header); indent_lvl--;
+            /* an if with an empty body and no else is a no-op: drop it entirely
+             * rather than emit `if (cond) {}` (general dead-code cleanup). */
+            if (!is_blank(body)) {
+                dst += ind() + "if (" + render_cond(cond) + ") {\n";
+                dst += body;
+                dst += ind() + "}\n";
+            }
+            emit_region(join, stop, dst, loop_header);
+            return;
+        }
+        if (taken_is_join && !fall_is_join) {
+            std::string body;
+            indent_lvl++; emit_region(fl, join, body, loop_header); indent_lvl--;
+            if (!is_blank(body)) {
+                dst += ind() + "if (" + render_cond(negate_expr(cond)) + ") {\n";
+                dst += body;
+                dst += ind() + "}\n";
+            }
+            emit_region(join, stop, dst, loop_header);
+            return;
+        }
+        if (join >= 0 && !taken_is_join && !fall_is_join) {
+            /* Decide structure BEFORE rendering, so each arm is emitted exactly
+             * once at the correct indentation. If one arm always returns before
+             * reaching the join (a guard clause), de-nest the other arm to the
+             * outer level and drop the redundant `else` (Hex-Rays form):
+             *   if (cond) { <then; return> }
+             *   <fall...>
+             * Behavior-preserving: when the then-arm always terminates, control
+             * after the if can only have come from the fall arm. */
+            bool taken_guard = !structured.count(t) && region_terminates(t, join);
+            bool fall_guard  = !structured.count(fl) && region_terminates(fl, join);
+
+            /* When the join is itself the shared return epilogue, an arm that
+             * converges to it is a guard clause whose `return` we inline (the arm
+             * sets the result then jumps to the single ret). This lets the join
+             * (the ret) be de-nested out of the if and continued at the outer
+             * level, collapsing value-and-return comparison chains into a
+             * Hex-Rays-style `if (cond) return X;` ladder rather than nested
+             * if/else. We only do this when exactly one arm is such a guard so the
+             * other arm clearly continues; the epilogue return is emitted inside
+             * the guard body and the post-if region picks up at the join's
+             * successor as usual. */
+            bool join_is_epi = is_return_epilogue(join);
+            bool taken_epi_guard = join_is_epi && !structured.count(t) &&
+                                   region_returns_via_epilogue(t, join);
+            bool fall_epi_guard  = join_is_epi && !structured.count(fl) &&
+                                   region_returns_via_epilogue(fl, join);
+
+            std::string taken_body, fall_body;
+            indent_lvl++; emit_region(t, join, taken_body, loop_header); indent_lvl--;
+            indent_lvl++; emit_region(fl, join, fall_body, loop_header); indent_lvl--;
+            bool taken_empty = is_blank(taken_body);
+            bool fall_empty  = is_blank(fall_body);
+
+            /* Both arms converge to the shared ret: each is a guard. Inline the
+             * epilogue return into both and emit a plain if/else; the join's ret
+             * is fully consumed here so we do NOT re-emit it afterward. */
+            if (taken_epi_guard && fall_epi_guard && !taken_empty && !fall_empty) {
+                taken_body += ind(indent_lvl + 1) + ret_text(join) + "\n";
+                fall_body  += ind(indent_lvl + 1) + ret_text(join) + "\n";
+                dst += ind() + "if (" + render_cond(cond) + ") {\n";
+                dst += taken_body;
+                dst += ind() + "} else {\n";
+                dst += fall_body;
+                dst += ind() + "}\n";
+                structured.insert(join);   /* ret consumed by both arms */
+                return;
+            }
+
+            /* epilogue-guard: inline the shared ret into the converging arm and
+             * de-nest the sibling (handled before the generic guard cases). */
+            if (taken_epi_guard && !taken_empty && !fall_epi_guard) {
+                taken_body += ind(indent_lvl + 1) + ret_text(join) + "\n";
+                dst += ind() + "if (" + render_cond(cond) + ") {\n";
+                dst += taken_body;
+                dst += ind() + "}\n";
+                dst += dedent_one(fall_body);
+                emit_region(join, stop, dst, loop_header);
+                return;
+            }
+            if (fall_epi_guard && !fall_empty && !taken_epi_guard) {
+                fall_body += ind(indent_lvl + 1) + ret_text(join) + "\n";
+                dst += ind() + "if (" + render_cond(negate_expr(cond)) + ") {\n";
+                dst += fall_body;
+                dst += ind() + "}\n";
+                dst += dedent_one(taken_body);
+                emit_region(join, stop, dst, loop_header);
+                return;
+            }
+
+            if (fall_empty && !taken_empty) {
+                /* empty else: emit a single-armed if, drop the `else {}` noise */
+                dst += ind() + "if (" + render_cond(cond) + ") {\n";
+                dst += taken_body;
+                dst += ind() + "}\n";
+            } else if (taken_empty && !fall_empty) {
+                /* empty then: invert and emit only the else arm */
+                dst += ind() + "if (" + render_cond(negate_expr(cond)) + ") {\n";
+                dst += fall_body;
+                dst += ind() + "}\n";
+            } else if (taken_guard && !taken_empty) {
+                /* then-arm is a terminating guard: de-nest the fall arm by one
+                 * level (it was rendered at indent_lvl+1). */
+                dst += ind() + "if (" + render_cond(cond) + ") {\n";
+                dst += taken_body;
+                dst += ind() + "}\n";
+                dst += dedent_one(fall_body);
+            } else if (fall_guard && !fall_empty) {
+                /* symmetric: fall-arm is a terminating guard, invert and de-nest. */
+                dst += ind() + "if (" + render_cond(negate_expr(cond)) + ") {\n";
+                dst += fall_body;
+                dst += ind() + "}\n";
+                dst += dedent_one(taken_body);
+            } else {
+                dst += ind() + "if (" + render_cond(cond) + ") {\n";
+                dst += taken_body;
+                dst += ind() + "} else {\n";
+                dst += fall_body;
+                dst += ind() + "}\n";
+            }
+            emit_region(join, stop, dst, loop_header);
+            return;
+        }
+
+        /* No shared post-dominator join, but if one arm is a self-contained
+         * region that always returns (a guard clause), we can still structure it
+         * as a single-armed `if` and continue with the other arm afterward. This
+         * removes the `goto RET` noise from comparison chains that branch
+         * straight to the function's return block (the common Hex-Rays form
+         *   if (cond) return X;  ...rest...). Try the taken arm first, then the
+         * fall arm (inverting the condition). */
+        if (!structured.count(t) && region_terminates(t, stop)) {
+            std::string taken_body;
+            indent_lvl++; emit_region(t, stop, taken_body, loop_header); indent_lvl--;
+            if (!is_blank(taken_body)) {
+                dst += ind() + "if (" + render_cond(cond) + ") {\n";
+                dst += taken_body;
+                dst += ind() + "}\n";
+                emit_region(fl, stop, dst, loop_header);
+                return;
+            }
+        }
+        if (!structured.count(fl) && region_terminates(fl, stop)) {
+            std::string fall_body;
+            indent_lvl++; emit_region(fl, stop, fall_body, loop_header); indent_lvl--;
+            if (!is_blank(fall_body)) {
+                dst += ind() + "if (" + render_cond(negate_expr(cond)) + ") {\n";
+                dst += fall_body;
+                dst += ind() + "}\n";
+                emit_region(t, stop, dst, loop_header);
+                return;
+            }
+        }
+
+        /* Guard arm that converges to the shared return epilogue (`stop`): the
+         * arm sets the result and jumps to the single `ret`. Inline that return
+         * so it becomes a true early-return guard clause and continue with the
+         * other arm at the outer level. Behavior-preserving: the arm originally
+         * jumped to the epilogue (which returns); we render the epilogue's return
+         * in place instead of via goto. This is what collapses comparison chains
+         * like classify_char into Hex-Rays-style `if (cond) return X;` ladders. */
+        if (!structured.count(t) && region_returns_via_epilogue(t, stop)) {
+            std::string taken_body;
+            indent_lvl++;
+            emit_region(t, stop, taken_body, loop_header);
+            taken_body += ind() + ret_text(stop) + "\n";
+            indent_lvl--;
+            dst += ind() + "if (" + render_cond(cond) + ") {\n";
+            dst += taken_body;
+            dst += ind() + "}\n";
+            emit_region(fl, stop, dst, loop_header);
+            return;
+        }
+        if (!structured.count(fl) && region_returns_via_epilogue(fl, stop)) {
+            std::string fall_body;
+            indent_lvl++;
+            emit_region(fl, stop, fall_body, loop_header);
+            fall_body += ind() + ret_text(stop) + "\n";
+            indent_lvl--;
+            dst += ind() + "if (" + render_cond(negate_expr(cond)) + ") {\n";
+            dst += fall_body;
+            dst += ind() + "}\n";
+            emit_region(t, stop, dst, loop_header);
+            return;
+        }
+
+        /* TRIAL plain if/else with rollback. No clean post-dominator join was
+         * found, but if BOTH arms are self-contained (each terminates or diverges
+         * without re-entering the other), emitting them as a literal if/else is
+         * goto-free and behavior-exact. region_terminates() can't gate this when an
+         * arm is a LOOP (it won't prove a loop exits), so a `cmp;ja L; loopA; L:
+         * loopB` (two independent loops each ending in ret — fn_0006ac90) fell to
+         * the guarded-goto below and tripped the whole function into a state
+         * machine. Emit both arms into scratch bodies and commit only if NEITHER
+         * produced a goto; otherwise roll back the structuring state untouched. */
+        if (t != fl && !structured.count(t) && !structured.count(fl)) {
+            auto s_struct = structured; auto s_label = need_label;
+            auto s_thread = threaded;   int s_dup = dup_budget;
+            std::string tb, fb;
+            indent_lvl++; emit_region(t, stop, tb, loop_header); indent_lvl--;
+            indent_lvl++; emit_region(fl, stop, fb, loop_header); indent_lvl--;
+            if (tb.find("goto ") == std::string::npos &&
+                fb.find("goto ") == std::string::npos &&
+                !is_blank(tb) && !is_blank(fb)) {
+                if (body_ends_in_transfer(tb)) {
+                    /* taken arm always transfers control away -> de-nest the fall
+                     * arm to the outer level (Hex-Rays guard-clause form). */
+                    dst += ind() + "if (" + render_cond(cond) + ") {\n" + tb + ind() + "}\n";
+                    dst += dedent_one(fb);
+                } else {
+                    dst += ind() + "if (" + render_cond(cond) + ") {\n" + tb +
+                           ind() + "} else {\n" + fb + ind() + "}\n";
+                }
+                return;
+            }
+            structured = s_struct; need_label = s_label;
+            threaded = s_thread;   dup_budget = s_dup;
+        }
+
+        /* The taken arm was already emitted elsewhere (a shared guard/exit body
+         * reached from several `if`s). Try DUPLICATING its region into this guard —
+         * emit_dup_region handles branching bodies, bounded by dup_budget — before
+         * falling back to a goto. This is the multi-block analog of the return-tail
+         * duplication and clears the shared-exit guards that otherwise trip a state
+         * machine (fn_0004f510: 6 guards jumping to one shared validation block). */
+        if (structured.count(t) && t != stop) {
+            int saved = dup_budget;
+            std::string db;
+            indent_lvl++;
+            bool ok = emit_dup_region(t, stop, db, loop_header);
+            indent_lvl--;
+            if (ok && db.find("goto ") == std::string::npos && !is_blank(db)) {
+                dst += ind() + "if (" + render_cond(cond) + ") {\n" + db + ind() + "}\n";
+                emit_region(fl, stop, dst, loop_header);
+                return;
+            }
+            dup_budget = saved;
+        }
+
+        /* EFFECTIVE-JOIN TRIAL (rollback). No strict post-dominator exists (a
+         * sibling path returns early), but the two arms reconverge at J — the point
+         * where the NON-returning paths meet. Emit both arms up to J, then J ONCE
+         * after, so a shared continuation reached from several guards is placed
+         * once with the paths falling into it (the guard-clause path duplicates it;
+         * a diamond then doubles and blows up). Trial-emit with rollback: commit
+         * only if BOTH arms come out goto-free, so this can never worsen structure. */
+        {
+            int J = effective_join(b);
+            /* SINGLE-ARMED if whose join IS one of the immediate arms (empty then or
+             * else): one edge goes straight to the reconvergence point J, the other
+             * does work then falls into it. The strict ipdom missed it — e.g. a
+             * LOOP-HEADER branch whose ipdom is the loop EXIT, not the in-loop join
+             * (fn_0002b5d0: `if (*t1+8 != 0) call(); <join>` came out as a labeled
+             * goto). Recover it from effective_join with the same rollback safety:
+             * emit ONLY the non-join arm as the if-body, then J sequentially. */
+            if (J >= 0 && (J == t || J == fl) && J != b && J != stop &&
+                !structured.count(J)) {
+                int body_arm = (J == t) ? fl : t;
+                ExprP g = (J == t) ? negate_expr(cond) : cond;
+                if (body_arm >= 0 && body_arm != stop && !structured.count(body_arm)) {
+                    auto s_struct = structured; auto s_label = need_label;
+                    auto s_thread = threaded; int s_dup = dup_budget;
+                    std::string body;
+                    indent_lvl++; emit_region(body_arm, J, body, loop_header); indent_lvl--;
+                    if (body.find("goto ") == std::string::npos) {
+                        if (!is_blank(body))
+                            dst += ind() + "if (" + render_cond(g) + ") {\n" + body + ind() + "}\n";
+                        emit_region(J, stop, dst, loop_header);
+                        return;
+                    }
+                    structured = s_struct; need_label = s_label;
+                    threaded = s_thread; dup_budget = s_dup;
+                }
+            }
+            if (J >= 0 && J != b && J != stop && J != t && J != fl &&
+                !structured.count(J) && !structured.count(t) && !structured.count(fl)) {
+                auto s_struct = structured; auto s_label = need_label;
+                auto s_thread = threaded; int s_dup = dup_budget;
+                std::string tb, fb;
+                indent_lvl++; emit_region(t, J, tb, loop_header); indent_lvl--;
+                indent_lvl++; emit_region(fl, J, fb, loop_header); indent_lvl--;
+                if (tb.find("goto ") == std::string::npos &&
+                    fb.find("goto ") == std::string::npos) {
+                    if (is_blank(fb) && !is_blank(tb))
+                        dst += ind() + "if (" + render_cond(cond) + ") {\n" + tb + ind() + "}\n";
+                    else if (is_blank(tb) && !is_blank(fb))
+                        dst += ind() + "if (" + render_cond(negate_expr(cond)) + ") {\n" + fb + ind() + "}\n";
+                    else if (!is_blank(tb) && !is_blank(fb))
+                        dst += ind() + "if (" + render_cond(cond) + ") {\n" + tb +
+                               ind() + "} else {\n" + fb + ind() + "}\n";
+                    emit_region(J, stop, dst, loop_header);
+                    return;
+                }
+                structured = s_struct; need_label = s_label;
+                threaded = s_thread; dup_budget = s_dup;
+            }
+        }
+
+        /* no usable join: fall back to a guarded goto (still correct) */
+        need_label.insert(t);
+        dst += ind() + "if (" + render_cond(cond) + ") goto " + block_label(t) + ";\n";
+        emit_region(fl, stop, dst, loop_header);
+        if (!structured.count(t)) {
+            std::string tmp;
+            emit_region(t, stop, tmp, loop_header);
+            dst += tmp;
+        }
+    }
+
+    /* True if `body`'s last non-blank line is an unconditional control transfer
+     * (return/continue/break/goto) — appending a switch-case `break;` after one
+     * would be dead code (`continue; break;`). */
+    bool body_ends_in_transfer(const std::string& body) {
+        size_t end = body.find_last_not_of(" \t\r\n");
+        if (end == std::string::npos) return false;
+        size_t ls = body.rfind('\n', end);
+        ls = (ls == std::string::npos) ? 0 : ls + 1;
+        std::string line = body.substr(ls, end - ls + 1);
+        size_t f = line.find_first_not_of(" \t");
+        if (f != std::string::npos) line = line.substr(f);
+        return line.rfind("return", 0) == 0 || line.rfind("continue;", 0) == 0 ||
+               line.rfind("break;", 0) == 0 || line.rfind("goto ", 0) == 0;
+    }
+    void emit_switch(int b, int stop, std::string& dst, int loop_header) {
+        Block& B = blocks[b];
+        int join = (ipdom.size() > (size_t)b) ? ipdom[b] : -1;
+        dst += ind() + "switch (" + switch_sel(B.switch_var) + ") {\n";
+        /* group identical case targets */
+        std::map<int, std::vector<int>> by_target;   /* succ block -> case idxs */
+        for (size_t i = 0; i < B.case_succ.size(); ++i)
+            if (B.case_succ[i] >= 0) by_target[B.case_succ[i]].push_back((int)i);
+        indent_lvl++;
+        for (auto& kv : by_target) {
+            for (int ci : kv.second)
+                dst += ind() + "case " + std::to_string(ci) + ":\n";
+            indent_lvl++;
+            int tgt = kv.first;
+            std::string cbody;
+            if (!structured.count(tgt)) {
+                emit_region(tgt, join, cbody, loop_header);
+            } else if (try_emit_return_dup(tgt, cbody)) {
+                /* another case already emitted this target (a shared return/epilogue
+                 * tail — the switch's default arm and a case both `return a3`).
+                 * Duplicate the return tail into this case instead of a goto, which
+                 * would otherwise trip the whole function to a state machine
+                 * (fn_0007cb60 and most jump-table dispatchers with a shared tail). */
+            } else {
+                need_label.insert(tgt);
+                cbody += ind() + "goto " + block_label(tgt) + ";\n";
+            }
+            dst += cbody;
+            /* terminate the case — but only if the body didn't already transfer
+             * control (a `continue;`/`return;`/`break;`/`goto` makes a trailing
+             * `break;` dead code: `continue; break;`). */
+            if (!body_ends_in_transfer(cbody)) dst += ind() + "break;\n";
+            indent_lvl--;
+        }
+        if (B.default_succ >= 0 && !by_target.count(B.default_succ)) {
+            dst += ind() + "default:\n";
+            indent_lvl++;
+            std::string dbody;
+            emit_region(B.default_succ, join, dbody, loop_header);
+            dst += dbody;
+            if (!body_ends_in_transfer(dbody)) dst += ind() + "break;\n";
+            indent_lvl--;
+        }
+        indent_lvl--;
+        dst += ind() + "}\n";
+        if (join >= 0) emit_region(join, stop, dst, loop_header);
+    }
+
+    /* Net brace balance of a line, IGNORING braces inside string/char literals and
+     * `//` comments (printf format strings carry `{`/`}`). Used by collapse_else_if. */
+    static int net_braces_ol(const std::string& s) {
+        int depth = 0; bool instr = false, inch = false;
+        for (size_t i = 0; i < s.size(); ++i) {
+            char c = s[i];
+            if (instr || inch) {
+                if (c == '\\') { ++i; continue; }
+                if ((instr && c == '"') || (inch && c == '\'')) { instr = inch = false; }
+                continue;
+            }
+            if (c == '/' && i + 1 < s.size() && s[i + 1] == '/') break;
+            if (c == '"') instr = true;
+            else if (c == '\'') inch = true;
+            else if (c == '{') ++depth;
+            else if (c == '}') --depth;
+        }
+        return depth;
+    }
+    /* Collapse `} else {` whose ELSE-BLOCK IS a single if-statement into `} else if`.
+     * `} else {\n  if (C) {...}\n}`  ->  `} else if (C) {...}`. Pure text reshaping of
+     * already-correct C (Hex-Rays emits else-if; we never do). Iterates so an
+     * else-{if}-staircase folds into a full else-if chain. A bug can only yield
+     * non-compiling C (caught by the 1445-fn compile gate) or identical control flow
+     * (a merge is semantics-preserving by construction). Gated DS_NO_ELSEIF. */
+    std::string collapse_else_if(const std::string& body) {
+        if (std::getenv("DS_NO_ELSEIF")) return body;
+        std::vector<std::string> L;
+        { size_t p = 0; while (p <= body.size()) { size_t nl = body.find('\n', p);
+            if (nl == std::string::npos) { if (p < body.size()) L.push_back(body.substr(p)); break; }
+            L.push_back(body.substr(p, nl - p)); p = nl + 1; } }
+        auto ind_of = [](const std::string& s){ size_t i = 0; while (i < s.size() && s[i] == ' ') ++i; return (int)i; };
+        bool changed = true; int guard = 0;
+        while (changed && guard++ < 100000) {
+            changed = false;
+            for (size_t i = 0; i + 1 < L.size(); ++i) {
+                int I = ind_of(L[i]);
+                if (L[i] != std::string(I, ' ') + "} else {") continue;
+                size_t j = i + 1;
+                while (j < L.size() && L[j].find_first_not_of(" \t") == std::string::npos) ++j;
+                if (j >= L.size() || ind_of(L[j]) != I + 4) continue;
+                std::string inner = L[j].substr(I + 4);
+                if (inner.rfind("if (", 0) != 0 || inner.empty() || inner.back() != '{') continue;
+                /* find close of the else block. `} else {` nets to 0 (the leading `}`
+                 * closes the prior block, the trailing `{` opens the else), so seed
+                 * depth=1 for that open brace and scan from the NEXT line. */
+                int depth = 1; size_t close = std::string::npos;
+                for (size_t k = i + 1; k < L.size(); ++k) { depth += net_braces_ol(L[k]); if (depth == 0) { close = k; break; } }
+                if (close == std::string::npos || L[close] != std::string(I, ' ') + "}") continue;
+                /* the inner if (+ its own else chain) must span the WHOLE else block */
+                int d2 = 0; size_t innerclose = std::string::npos;
+                for (size_t k = j; k < close; ++k) { d2 += net_braces_ol(L[k]); if (d2 == 0) { innerclose = k; break; } }
+                if (innerclose != close - 1) continue;   /* >1 statement in the else block */
+                /* transform */
+                L[i] = std::string(I, ' ') + "} else " + inner;      /* `} else if (C) {` */
+                for (size_t k = j + 1; k < close; ++k)               /* dedent inner body/chain by 4 */
+                    if (L[k].size() >= 4 && L[k].compare(0, 4, "    ") == 0) L[k] = L[k].substr(4);
+                L.erase(L.begin() + close);
+                L.erase(L.begin() + j);
+                changed = true; break;
+            }
+        }
+        std::string out; for (auto& s : L) { out += s; out += "\n"; } return out;
+    }
+
+    /* Match the `)` for the `(` at s[open], skipping string/char literals. */
+    static int match_paren_ol(const std::string& s, size_t open) {
+        int d = 0; bool instr = false, inch = false;
+        for (size_t i = open; i < s.size(); ++i) {
+            char c = s[i];
+            if (instr || inch) { if (c=='\\'){++i;continue;} if ((instr&&c=='"')||(inch&&c=='\'')) instr=inch=false; continue; }
+            if (c=='"') instr=true; else if (c=='\'') inch=true;
+            else if (c=='(') ++d; else if (c==')') { if (--d==0) return (int)i; }
+        }
+        return -1;
+    }
+    /* B5: collapse a sole-child guard nest `if (A) { if (B) { ... } }` (outer if has NO
+     * else, inner if is the outer's ONLY statement and has NO else) into
+     * `if (A && B) { ... }`. Semantics-identical (both require A AND B; neither has an
+     * else path). Pure text reshaping — a bug yields non-compiling C, caught by the
+     * gate. Iterates so `if(A){if(B){if(C){}}}` folds fully. Gated DS_NO_ANDGUARD. */
+    std::string collapse_and_guards(const std::string& body) {
+        if (std::getenv("DS_NO_ANDGUARD")) return body;
+        std::vector<std::string> L;
+        { size_t p = 0; while (p <= body.size()) { size_t nl = body.find('\n', p);
+            if (nl == std::string::npos) { if (p < body.size()) L.push_back(body.substr(p)); break; }
+            L.push_back(body.substr(p, nl - p)); p = nl + 1; } }
+        auto ind_of = [](const std::string& s){ size_t i=0; while(i<s.size()&&s[i]==' ')++i; return (int)i; };
+        auto if_cond = [&](const std::string& s, int I, std::string& cond) -> bool {
+            /* s == `<I>if (COND) {` -> extract COND */
+            std::string t = s.substr(I);
+            if (t.rfind("if (", 0) != 0 || t.empty() || t.back() != '{') return false;
+            size_t op = I + 3;                       /* the '(' after `if ` */
+            if (op >= s.size() || s[op] != '(') return false;
+            int cp = match_paren_ol(s, op);
+            if (cp < 0) return false;
+            /* everything after the matched `)` must be just ` {` */
+            std::string after = s.substr(cp + 1);
+            if (after != " {") return false;
+            cond = s.substr(op + 1, cp - op - 1);
+            return !cond.empty();
+        };
+        bool changed = true; int guard = 0;
+        while (changed && guard++ < 100000) {
+            changed = false;
+            for (size_t i = 0; i + 1 < L.size(); ++i) {
+                int I = ind_of(L[i]);
+                std::string A;
+                if (!if_cond(L[i], I, A)) continue;
+                /* find the outer if's close via brace depth */
+                int depth = 0; size_t close = std::string::npos;
+                for (size_t k = i; k < L.size(); ++k) { depth += net_braces_ol(L[k]); if (depth == 0) { close = k; break; } }
+                if (close == std::string::npos || L[close] != std::string(I,' ') + "}") continue;  /* outer has else -> `} else {` */
+                size_t j = i + 1;
+                while (j < close && L[j].find_first_not_of(" \t") == std::string::npos) ++j;
+                if (j >= close || ind_of(L[j]) != I + 4) continue;
+                std::string B;
+                if (!if_cond(L[j], I + 4, B)) continue;
+                /* inner if must span the whole outer body and have NO else: its close is
+                 * exactly close-1 and no `else` at indent I+4 appears inside. */
+                if (L[close-1] != std::string(I+4,' ') + "}") continue;
+                bool inner_else = false;
+                for (size_t k = j+1; k < close-1; ++k) {
+                    int ik = ind_of(L[k]);
+                    if (ik <= I+4 && (L[k].substr(ik).rfind("} else",0)==0 || L[k].substr(ik).rfind("else",0)==0)) { inner_else = true; break; }
+                }
+                if (inner_else) continue;
+                /* verify inner-if brace depth returns to 0 exactly at close-1 */
+                int d2 = 0; size_t ic = std::string::npos;
+                for (size_t k = j; k < close; ++k) { d2 += net_braces_ol(L[k]); if (d2 == 0) { ic = k; break; } }
+                if (ic != close - 1) continue;
+                auto wrap = [](const std::string& s){ return s.find("||") != std::string::npos ? "(" + s + ")" : s; };
+                L[i] = std::string(I,' ') + "if (" + wrap(A) + " && " + wrap(B) + ") {";
+                for (size_t k = j+1; k + 1 < close; ++k)             /* dedent inner body by 4 */
+                    if (L[k].size() >= 4 && L[k].compare(0,4,"    ") == 0) L[k] = L[k].substr(4);
+                L.erase(L.begin() + (close - 1));                    /* inner close */
+                L.erase(L.begin() + j);                              /* inner header */
+                changed = true; break;
+            }
+        }
+        std::string out; for (auto& s : L) { out += s; out += "\n"; } return out;
+    }
+
+    /* fallback: pure goto-CFG emission (always correct). */
+    /* Verify every `goto L;` in `body` has a matching `L:` definition. Returns
+     * false if a dangling goto exists (so the caller can fall back). */
+    /* Scan emitted C `body` for the set of labels referenced by `goto L;` and
+     * the set defined by `L:` lines. Shared by labels_consistent() and
+     * dangling_label_blocks() so both agree on exactly what counts as a label.
+     *
+     * A definition is only recognised when `L_` begins an identifier token, i.e.
+     * the preceding char is not part of an identifier. Without that boundary
+     * check a substring `L_` embedded in a longer name (e.g. a future variable
+     * `vL_3:` or a cast) could be mis-counted as a label definition and mask a
+     * genuinely dangling goto, letting non-compiling C slip past the consistency
+     * gate. block_label() only ever emits `L_<hex>`, so the token always starts
+     * with `L_`. */
+    void scan_labels(const std::string& body,
+                     std::set<std::string>& defined,
+                     std::set<std::string>& referenced) {
+        size_t pos = 0;
+        while ((pos = body.find("goto ", pos)) != std::string::npos) {
+            size_t s = pos + 5;
+            size_t e2 = body.find(';', s);
+            if (e2 == std::string::npos) break;
+            std::string lab = body.substr(s, e2 - s);
+            /* trim spaces */
+            while (!lab.empty() && (lab.back()==' '||lab.back()=='\t')) lab.pop_back();
+            referenced.insert(lab);
+            pos = e2;
+        }
+        pos = 0;
+        while ((pos = body.find("L_", pos)) != std::string::npos) {
+            /* require a token boundary before `L_` so embedded substrings are
+             * not mistaken for a label definition */
+            bool boundary = (pos == 0);
+            if (!boundary) {
+                char prev = body[pos - 1];
+                boundary = !(isalnum((unsigned char)prev) || prev == '_');
+            }
+            size_t e2 = pos;
+            while (e2 < body.size() &&
+                   (isalnum((unsigned char)body[e2]) || body[e2]=='_')) e2++;
+            /* a label definition looks like `L_xxxx:` at some indentation */
+            if (boundary && e2 < body.size() && body[e2] == ':')
+                defined.insert(body.substr(pos, e2 - pos));
+            pos = e2 > pos ? e2 : pos + 1;
+        }
+    }
+
+    bool labels_consistent(const std::string& body) {
+        std::set<std::string> defined, referenced;
+        scan_labels(body, defined, referenced);
+        for (auto& r : referenced)
+            if (r.rfind("L_",0)==0 && !defined.count(r)) return false;
+        return true;
+    }
+
+    /* Remove `L_xxxx:;` lines that no `goto` targets — dead labels. They arise
+     * from empty fall-through blocks (e.g. a collapsed SSE NaN-guard leaves the
+     * jp block empty but still labeled) and from join blocks that ended up reached
+     * only by fall-through. Removing an unreferenced label is always valid C, so
+     * this is a safe, general cosmetic cleanup applied to the final body. */
+    std::string prune_dead_labels(const std::string& body) {
+        std::set<std::string> defined, referenced;
+        scan_labels(body, defined, referenced);
+        std::set<std::string> dead;
+        for (auto& d : defined) if (!referenced.count(d)) dead.insert(d);
+        if (dead.empty()) return body;
+        std::string out; out.reserve(body.size());
+        size_t i = 0;
+        while (i < body.size()) {
+            size_t eol = body.find('\n', i);
+            size_t len = (eol == std::string::npos) ? body.size() - i : eol - i + 1;
+            std::string line = body.substr(i, len);
+            i += len;
+            /* trim to the line's core token to test for a bare `L_xxxx:;` */
+            size_t a = line.find_first_not_of(" \t");
+            size_t z = line.find_last_not_of(" \t\r\n");
+            std::string core = (a == std::string::npos) ? "" : line.substr(a, z - a + 1);
+            if (core.size() > 2 && core.rfind("L_", 0) == 0 &&
+                core.compare(core.size() - 2, 2, ":;") == 0 &&
+                dead.count(core.substr(0, core.size() - 2))) {
+                continue;   /* drop the dead-label line */
+            }
+            out += line;
+        }
+        return out;
+    }
+
+    /* Scope-aware unreachable-code elimination on the emitted C `body`.
+     *
+     * The recursive structurer can leave a statement immediately after an
+     * unconditional control transfer (`return`/`goto`/`break`/`continue`) within
+     * the same brace scope — most importantly a trailing `goto L_x;` after a
+     * `return` where L_x was duplicated inline (so no `L_x:` label exists). That
+     * single dead goto makes labels_consistent() fail and reverts the WHOLE
+     * function to a loop-switch state machine, even though the structured form is
+     * otherwise complete and correct. Removing statements that provably cannot be
+     * reached (they follow an unconditional transfer, before the scope closes or a
+     * jump target intervenes) is always semantics-preserving.
+     *
+     * Conservative and depth-safe: we only DROP lines that contain no braces (the
+     * dead `goto;`/assignment case). Any line that opens/closes a scope, a `}`, a
+     * label (`L_x:`/`case`/`default:` — reachable via jump), stops the dead run so
+     * brace-depth tracking never desyncs. */
+    static bool is_uncond_transfer_line(const std::string& t) {
+        if (t == "break;" || t == "continue;") return true;
+        if (t.rfind("goto ", 0) == 0) return true;
+        /* require a word boundary after `return` so an identifier like
+         * `returnValue = ...` is never mistaken for a return statement */
+        if (t.rfind("return", 0) == 0)
+            return t.size() == 6 || t[6] == ' ' || t[6] == ';';
+        return false;
+    }
+    std::string strip_unreachable_after_terminator(const std::string& body) {
+        /* A label only anchors reachable code if some `goto` actually targets it;
+         * an UNreferenced `L_xxxx:;` after a terminator is itself dead (a spurious
+         * landing block), so it must NOT end the dead run — otherwise the dead
+         * `goto` it precedes survives (the exact defect that reverts the recursive
+         * tree-walk to a state machine). `case`/`default:` are always reachable
+         * (switch dispatch). */
+        std::set<std::string> defined, referenced;
+        scan_labels(body, defined, referenced);
+        auto is_reachable_target = [&](const std::string& t) -> bool {
+            if (t.rfind("case ", 0) == 0 || t == "default:") return true;
+            if (t.rfind("L_", 0) == 0) {
+                size_t c = t.find(':');
+                if (c != std::string::npos) return referenced.count(t.substr(0, c)) > 0;
+            }
+            return false;
+        };
+        std::string out; out.reserve(body.size());
+        bool dead = false;
+        size_t i = 0, n = body.size();
+        while (i < n) {
+            size_t eol = body.find('\n', i);
+            size_t len = (eol == std::string::npos) ? n - i : eol - i + 1;
+            std::string line = body.substr(i, len);
+            i += len;
+            size_t a = line.find_first_not_of(" \t");
+            size_t z = line.find_last_not_of(" \t\r\n");
+            std::string core = (a == std::string::npos) ? "" : line.substr(a, z - a + 1);
+            bool has_brace = core.find('{') != std::string::npos ||
+                             core.find('}') != std::string::npos;
+            if (dead) {
+                if (core.empty()) { out += line; continue; }   /* keep blank, stay dead */
+                /* End the dead run only at a scope boundary or a genuinely
+                 * reachable jump target; drop everything else in between. */
+                if (has_brace || is_reachable_target(core))
+                    dead = false;
+                else
+                    continue;   /* provably unreachable — drop it */
+            }
+            out += line;
+            if (!has_brace && is_uncond_transfer_line(core))
+                dead = true;
+        }
+        return out;
+    }
+
+    /* Collect the set of block ids whose label is referenced by a `goto`/`if(..)
+     * goto` in `body` but never defined (`L_xxxx:`). These are the dangling
+     * targets that make labels_consistent() fail. Mapping a label string back to
+     * a block id lets the repair pass emit a labeled landing region for exactly
+     * those blocks instead of discarding the whole structured function. */
+    std::vector<int> dangling_label_blocks(const std::string& body) {
+        std::set<std::string> defined, referenced;
+        scan_labels(body, defined, referenced);
+        /* index blocks by their label string once */
+        std::map<std::string,int> by_label;
+        for (auto& b : blocks) by_label[block_label(b.id)] = b.id;
+        std::vector<int> out_ids;
+        for (auto& r : referenced) {
+            if (r.rfind("L_",0) != 0 || defined.count(r)) continue;
+            auto it = by_label.find(r);
+            if (it != by_label.end()) out_ids.push_back(it->second);
+        }
+        return out_ids;
+    }
+
+    void emit_goto_cfg(std::string& dst) {
+        std::vector<int> order(blocks.size());
+        for (size_t i = 0; i < blocks.size(); ++i) order[i] = (int)i;
+        std::sort(order.begin(), order.end(),
+                  [&](int a, int c){ return blocks[a].addr < blocks[c].addr; });
+        for (size_t oi = 0; oi < order.size(); ++oi) {
+            int id = order[oi];
+            Block& b = blocks[id];
+            dst += block_label(id) + ":;\n";
+            emit_stmts(id, dst);
+            int nxt = (oi + 1 < order.size()) ? order[oi + 1] : -1;
+            if (b.ends_ret) {
+                dst += ind() + ret_text(id) + "\n";
+            } else if (b.is_switch) {
+                dst += ind() + "switch (" + switch_sel(b.switch_var ? b.switch_var : mkConst(0,4)) + ") {\n";
+                indent_lvl++;
+                for (size_t i = 0; i < b.case_succ.size(); ++i) {
+                    if (b.case_succ[i] < 0) continue;
+                    dst += ind() + "case " + std::to_string(i) + ": goto " +
+                           block_label(b.case_succ[i]) + ";\n";
+                }
+                indent_lvl--;
+                dst += ind() + "}\n";
+                if (b.default_succ >= 0)
+                    dst += ind() + "goto " + block_label(b.default_succ) + ";\n";
+            } else if (b.ends_jcc) {
+                if (b.taken >= 0)
+                    dst += ind() + "if (" + render_cond(b.cond ? b.cond : mkConst(1,4)) +
+                           ") goto " + block_label(b.taken) + ";\n";
+                if (b.fall >= 0 && b.fall != nxt)
+                    dst += ind() + "goto " + block_label(b.fall) + ";\n";
+            } else if (b.ends_jmp) {
+                if (b.taken >= 0) {
+                    if (b.taken != nxt) dst += ind() + "goto " + block_label(b.taken) + ";\n";
+                } else dst += ind() + ret_text(id) + "\n";
+            } else {
+                if (b.fall >= 0 && b.fall != nxt)
+                    dst += ind() + "goto " + block_label(b.fall) + ";\n";
+                else if (b.fall < 0)
+                    dst += ind() + ret_text(id) + "\n";
+            }
+        }
+    }
+
+    /* GUARANTEED goto-free emission of ANY CFG (reducible or irreducible) via a
+     * loop-switch dispatch: `int __state = entry; while(1) switch(__state){...}`.
+     * Each block is a `case <id>:`; `goto X` becomes `__state = X; break;` (the
+     * outer-switch break re-enters the while), and a `ret`/tail-call exits the
+     * loop. Used as the LAST RESORT when the recursive structurer would otherwise
+     * leave a `goto`/label — so the output never contains one. */
+    void emit_state_machine(std::string& dst) {
+        int entry = entry_block();
+        dst += ind() + "int __state = " + std::to_string(entry) + ";\n";
+        used_while_true = true;
+        dst += ind() + "while (true) {\n";
+        indent_lvl++;
+        dst += ind() + "switch (__state) {\n";
+        indent_lvl++;
+        std::vector<int> order(blocks.size());
+        for (size_t i = 0; i < blocks.size(); ++i) order[i] = (int)i;
+        std::sort(order.begin(), order.end(),
+                  [&](int a, int c){ return blocks[a].addr < blocks[c].addr; });
+        for (int id : order) {
+            Block& b = blocks[id];
+            if (merged_blocks.count(id)) continue;   /* folded into a predecessor */
+            dst += ind() + "case " + std::to_string(id) + ":\n";
+            indent_lvl++;
+            emit_stmts(id, dst);
+            if (b.ends_ret) {
+                dst += ind() + ret_text(id) + "\n";
+            } else if (b.is_switch && b.switch_var) {
+                dst += ind() + "switch (" + switch_sel(b.switch_var) + ") {\n";
+                indent_lvl++;
+                for (size_t i = 0; i < b.case_succ.size(); ++i) {
+                    if (b.case_succ[i] < 0) continue;
+                    dst += ind() + "case " + std::to_string(i) + ": __state = " +
+                           std::to_string(b.case_succ[i]) + "; break;\n";
+                }
+                if (b.default_succ >= 0)
+                    dst += ind() + "default: __state = " +
+                           std::to_string(b.default_succ) + "; break;\n";
+                indent_lvl--;
+                dst += ind() + "}\n";
+                dst += ind() + "break;\n";
+            } else if (b.ends_jcc && b.taken >= 0 && b.fall >= 0) {
+                dst += ind() + "__state = " + render(b.cond ? b.cond : mkConst(1, 4)) +
+                       " ? " + std::to_string(b.taken) + " : " +
+                       std::to_string(b.fall) + ";\n";
+                dst += ind() + "break;\n";
+            } else if (b.ends_jmp) {
+                if (b.taken >= 0) {
+                    dst += ind() + "__state = " + std::to_string(b.taken) + ";\n";
+                    dst += ind() + "break;\n";
+                } else dst += ind() + ret_text(id) + "\n";   /* tail / extern jmp */
+            } else if (b.fall >= 0) {
+                dst += ind() + "__state = " + std::to_string(b.fall) + ";\n";
+                dst += ind() + "break;\n";
+            } else {
+                dst += ind() + ret_text(id) + "\n";
+            }
+            indent_lvl--;
+        }
+        indent_lvl--;
+        dst += ind() + "}\n";   /* switch */
+        indent_lvl--;
+        dst += ind() + "}\n";   /* while(1) */
+    }
+
+    /* =================================================================== */
+    /*  Type inference for declarations                                     */
+    /* =================================================================== */
+
+    /* Count reads of a named variable across an expression (LHS Mem address
+     * counts as a read; a bare Var/Mem-store LHS does not). */
+    int count_var_reads(const ExprP& e, const std::string& nm) {
+        if (!e) return 0;
+        int c = 0;
+        if (e->kind == EK::Var && e->name == nm) c++;
+        c += count_var_reads(e->a, nm) + count_var_reads(e->b, nm) +
+             count_var_reads(e->c, nm);
+        for (auto& ar : e->args) c += count_var_reads(ar, nm);
+        return c;
+    }
+    int count_lhs_addr_reads(const ExprP& lhs, const std::string& nm) {
+        if (!lhs) return 0;
+        if (lhs->kind == EK::Mem) return count_var_reads(lhs->a, nm);
+        return 0;   /* a plain Var/Mem destination is a write, not a read */
+    }
+
+    /* Remove assignments to a local/temp whose variable is never read anywhere
+     * (and whose RHS has no call/side-effect). This deletes the param-home
+     * copies `vN = aN;` MSVC /Od emits, and dead phi temps. Iterates to a fixed
+     * point since deleting one store may make another store's reads disappear. */
+    void dead_store_elim() {
+        bool changed = true; int guard = 0;
+        while (changed && guard++ < 16) {
+            changed = false;
+            /* tally reads of every var name */
+            std::map<std::string,int> reads;
+            for (auto& b : blocks) {
+                for (auto& s : b.stmts) {
+                    for (auto& kv : var_width) {
+                        const std::string& nm = kv.first;
+                        int r = count_var_reads(s.rhs, nm) +
+                                count_lhs_addr_reads(s.lhs, nm);
+                        if (r) reads[nm] += r;
+                    }
+                }
+                for (auto& kv : var_width) {
+                    const std::string& nm = kv.first;
+                    int r = count_var_reads(b.cond, nm) +
+                            count_var_reads(b.ret_value, nm) +
+                            count_var_reads(b.ret_raw, nm) +
+                            count_var_reads(b.switch_var, nm) +
+                            count_var_reads(b.tail_call, nm);
+                    if (r) reads[nm] += r;
+                }
+            }
+            for (auto& b : blocks) {
+                std::vector<Stmt> keep;
+                keep.reserve(b.stmts.size());
+                for (auto& s : b.stmts) {
+                    bool drop = false;
+                    if (s.kind == SK::Assign && s.lhs && s.lhs->kind == EK::Var &&
+                        !has_call(s.rhs)) {
+                        const std::string& nm = s.lhs->name;
+                        if (reads.find(nm) == reads.end()) { drop = true; }
+                    }
+                    if (drop) changed = true;
+                    else keep.push_back(s);
+                }
+                b.stmts.swap(keep);
+            }
+        }
+    }
+
+    /* Local (within-block) dead-store elimination: `v = X; ... ; v = Y;` where
+     * v is not read between the two writes drops the first (`v = X`). This kills
+     * the spurious `v2 = a1; v2 = 0;` double-init MSVC /Od emits when seeding an
+     * accumulator from its stack-home slot before zeroing it. Conservative: the
+     * dead RHS must be side-effect free, and we stop scanning at the first
+     * statement that could read v (directly, through memory, or via a call). */
+    void local_dead_store_elim() {
+        for (auto& b : blocks) {
+            std::vector<bool> drop(b.stmts.size(), false);
+            for (size_t i = 0; i < b.stmts.size(); ++i) {
+                const Stmt& s = b.stmts[i];
+                if (s.kind != SK::Assign || !s.lhs || s.lhs->kind != EK::Var)
+                    continue;
+                if (has_call(s.rhs)) continue;        /* RHS may have side effects */
+                const std::string nm = s.lhs->name;
+                /* the first assignment is dead if a later statement in this block
+                 * re-writes v without any intervening read of v. */
+                for (size_t j = i + 1; j < b.stmts.size(); ++j) {
+                    const Stmt& t = b.stmts[j];
+                    /* a read of v anywhere kills the search (store is live) */
+                    int reads = count_var_reads(t.rhs, nm) +
+                                count_lhs_addr_reads(t.lhs, nm);
+                    if (reads) break;
+                    /* a plain overwrite of v before any read => first store dead */
+                    if (t.kind == SK::Assign && t.lhs && t.lhs->kind == EK::Var &&
+                        t.lhs->name == nm) {
+                        drop[i] = true;
+                        break;
+                    }
+                    /* a call or a store through memory might observe v only if v
+                     * is address-taken; our locals are not, so we can continue. */
+                }
+            }
+            std::vector<Stmt> keep;
+            for (size_t i = 0; i < b.stmts.size(); ++i)
+                if (!drop[i]) keep.push_back(b.stmts[i]);
+            b.stmts.swap(keep);
+        }
+    }
+
+    /* Global (cross-block) dead-store elimination via named-variable liveness.
+     *
+     * `local_dead_store_elim` only sees within one block and `dead_store_elim`
+     * only drops vars never read *anywhere*; neither removes the very common
+     * argument-home copy `v2 = a1;` that MSVC /Od emits at function entry when
+     * v2 is overwritten on every path before its (later) use. Such a store is
+     * dead because v2 is not live immediately after it.
+     *
+     * We compute classic backward liveness over named locals/temps (vN/tN and
+     * the renamed params), then delete an assignment `v = X` (X side-effect
+     * free, v a tracked Var) whenever v is not live at the point right after the
+     * store. Conservative: only Var (not Mem) destinations, and a var that is
+     * ever address-taken (`&v`) is treated as always-live so we never drop a
+     * store whose value could escape. Iterates to a fixpoint since removing one
+     * store can make an earlier one dead. */
+    /* Replace every subtree of `e` structurally equal to `pat` with a reference
+     * to the variable `var`. Used to fix the fused dec/jnz off-by-one. */
+    void replace_subexpr(ExprP& e, const ExprP& pat, const std::string& var, int w) {
+        if (!e || !pat) return;
+        if (e->kind != EK::Var && exprEqual(e, pat)) { e = mkVar(var, w); return; }
+        replace_subexpr(e->a, pat, var, w);
+        replace_subexpr(e->b, pat, var, w);
+        replace_subexpr(e->c, pat, var, w);
+        for (auto& ar : e->args) replace_subexpr(ar, pat, var, w);
+    }
+
+    /* Fix the fused `dec/sub reg,k; jcc` (and `inc/add`) idiom that pervades /O2
+     * loops. The branch flag tests the RESULT of the arithmetic, which the block
+     * already materialized as its last statement `t = <expr>` (e.g. t2 = t2 - 1).
+     * Rendered sequentially, a condition that re-uses `<expr>` evaluates it on the
+     * POST-assignment value: `t2 = t2 - 1; if (t2 - 1 != 0)` tests t2-2, an
+     * off-by-one in the loop trip count. Replace the re-evaluated expression in
+     * the branch with the just-assigned variable -> `if (t2 != 0)`. Only fires
+     * when the matching assignment is the block's final statement (nothing runs
+     * between it and the branch), so it is exact. The /Od corpus never hits this
+     * (its loops use a separate `cmp` that re-reads the slot as the bare var). */
+    void canonicalize_branch_after_assign() {
+        for (auto& b : blocks) {
+            if (!b.cond) continue;
+            const Stmt* last = nullptr;
+            for (int i = (int)b.stmts.size() - 1; i >= 0; --i) {
+                const Stmt& s = b.stmts[i];
+                if (s.kind == SK::Comment) continue;
+                if (s.kind == SK::Assign && s.lhs && s.lhs->kind == EK::Var &&
+                    s.rhs && s.rhs->kind != EK::Var && s.rhs->kind != EK::Const &&
+                    !has_call(s.rhs))
+                    last = &s;
+                break;   /* only the genuinely-last statement qualifies */
+            }
+            if (!last) continue;
+            replace_subexpr(b.cond, last->rhs, last->lhs->name,
+                            last->lhs->width ? last->lhs->width : 4);
+        }
+    }
+
+    /* Coalesce phi-split / register-move locals into ONE name. After copy_propagate,
+     * the residual noise is MULTI-use copies (`t9=t5; …t9…; …t5…`) and phi lowerings
+     * (`tN=<pred value>` per predecessor) — the SAME logical variable under several
+     * names. Two names are merged ONLY when their live ranges do NOT interfere
+     * (classic Chaitin graph + copy exception): the class then shares one physical
+     * variable, sound iff no two members are simultaneously live with distinct values.
+     * PHYSICAL rename (Expr::name + type maps) so AUTONAME later aliases the canonical.
+     * Only bare `x = y` copies between same-decl_type, non-address-taken scalar v/t
+     * locals are candidates. Gated by DS_NO_COALESCE. */
+    void coalesce_locals() {
+        if (std::getenv("DS_NO_COALESCE")) return;
+        auto ok = [&](const std::string& nm) -> bool {
+            if (nm.size() < 2 || (nm[0] != 'v' && nm[0] != 't')) return false;
+            for (size_t i = 1; i < nm.size(); ++i) if (nm[i] < '0' || nm[i] > '9') return false;
+            return !array_locals.count(nm);
+        };
+        std::set<std::string> addr; collect_addr_taken(addr);
+        /* (1) candidate copies x = y */
+        struct C { std::string x, y; };
+        std::vector<C> cand;
+        for (auto& b : blocks) for (auto& s : b.stmts)
+            if (s.kind == SK::Assign && s.lhs && s.lhs->kind == EK::Var &&
+                s.rhs && s.rhs->kind == EK::Var && s.lhs->name != s.rhs->name) {
+                const std::string& x = s.lhs->name; const std::string& y = s.rhs->name;
+                if (ok(x) && ok(y) && !addr.count(x) && !addr.count(y) && decl_type(x) == decl_type(y))
+                    cand.push_back({x, y});
+            }
+        if (cand.empty()) return;
+        std::set<std::string> uni; for (auto& c : cand) { uni.insert(c.x); uni.insert(c.y); }
+        /* (2) per-name liveness over the candidate universe (backward dataflow) */
+        size_t n = blocks.size(); std::map<int,size_t> ix; for (size_t i=0;i<n;++i) ix[blocks[i].id]=i;
+        std::vector<std::set<std::string>> lin(n), lout(n);
+        /* single-walk collection of uni-vars read by an expr: O(expr), not O(uni*expr).
+         * (The naive per-name count_var_reads made this pass hang on large functions.) */
+        auto uses = [&](const ExprP& e, std::set<std::string>& S){
+            std::function<void(const ExprP&)> w = [&](const ExprP& x){
+                if (!x) return;
+                if (x->kind == EK::Var && uni.count(x->name)) S.insert(x->name);
+                w(x->a); w(x->b); w(x->c); for (auto& a : x->args) w(a);
+            };
+            w(e);
+        };
+        auto killdef = [&](Stmt& s, std::set<std::string>& cur){
+            /* a Var-def kills the name then reads its rhs; any other stmt (incl. a
+             * Mem store `*(T*)(x+k)=y`) reads BOTH sides (the address x and the value). */
+            if (s.kind == SK::Assign && s.lhs && s.lhs->kind == EK::Var) {
+                cur.erase(s.lhs->name); uses(s.rhs, cur);
+            } else { uses(s.rhs, cur); uses(s.lhs, cur); }
+        };
+        for (bool df = true; df; ) { df = false;
+            for (size_t ii = n; ii-- > 0; ) { Block& b = blocks[ii];
+                std::set<std::string> out;
+                for (int s : b.succ) { auto it = ix.find(s); if (it != ix.end()) out.insert(lin[it->second].begin(), lin[it->second].end()); }
+                std::set<std::string> cur = out;
+                uses(b.cond, cur); uses(b.ret_value, cur); uses(b.ret_raw, cur); uses(b.switch_var, cur); uses(b.tail_call, cur);
+                for (size_t k = b.stmts.size(); k-- > 0; ) killdef(b.stmts[k], cur);
+                if (cur != lin[ii]) { lin[ii] = cur; df = true; } lout[ii] = out;
+            }
+        }
+        /* (3) interference: at each def d, edge to every var live-AFTER, EXCEPT the copy source */
+        std::map<std::string,std::set<std::string>> adj;
+        auto E = [&](const std::string& a, const std::string& b){ if (a != b) { adj[a].insert(b); adj[b].insert(a); } };
+        for (size_t ii = 0; ii < n; ++ii) { Block& b = blocks[ii]; size_t m = b.stmts.size();
+            std::vector<std::set<std::string>> aft(m + 1); aft[m] = lout[ii];
+            uses(b.cond, aft[m]); uses(b.ret_value, aft[m]); uses(b.ret_raw, aft[m]); uses(b.switch_var, aft[m]); uses(b.tail_call, aft[m]);
+            for (size_t k = m; k-- > 0; ) { std::set<std::string> cur = aft[k+1]; killdef(b.stmts[k], cur); aft[k] = cur; }
+            for (size_t k = 0; k < m; ++k) { Stmt& s = b.stmts[k];
+                if (s.kind != SK::Assign || !s.lhs || s.lhs->kind != EK::Var) continue;
+                const std::string& d = s.lhs->name; if (!uni.count(d)) continue;
+                bool cp = s.rhs && s.rhs->kind == EK::Var; std::string src = cp ? s.rhs->name : "";
+                for (auto& v : aft[k+1]) if (v != d && !(cp && v == src)) E(d, v);
+            }
+        }
+        /* (4) union-find with conservative CLASS-vs-CLASS interference gate */
+        std::map<std::string,std::string> par; std::map<std::string,std::set<std::string>> mem;
+        std::function<std::string(const std::string&)> find = [&](const std::string& x) -> std::string {
+            auto it = par.find(x); if (it == par.end()) { par[x] = x; return x; }
+            return it->second == x ? x : par[x] = find(it->second);
+        };
+        for (auto& nm : uni) { find(nm); mem[nm] = {nm}; }
+        auto clash = [&](const std::string& ra, const std::string& rb) -> bool {
+            for (auto& a : mem[ra]) { auto it = adj.find(a); if (it == adj.end()) continue;
+                for (auto& bb : mem[rb]) if (it->second.count(bb)) return true; }
+            return false;
+        };
+        for (auto& c : cand) { std::string ra = find(c.x), rb = find(c.y);
+            if (ra == rb || clash(ra, rb)) continue;
+            par[rb] = ra; mem[ra].insert(mem[rb].begin(), mem[rb].end()); mem[rb].clear();
+        }
+        /* (5) canonical (prefer v over t, then lowest #), rename in place, drop x=x, reconcile types */
+        auto better = [&](const std::string& a, const std::string& b){
+            int ka = a[0]=='v'?0:1, kb = b[0]=='v'?0:1;
+            return ka != kb ? ka < kb : atoi(a.c_str()+1) < atoi(b.c_str()+1);
+        };
+        std::map<std::string,std::string> canon;
+        for (auto& nm : uni) { std::string r = find(nm), best = nm; for (auto& e : mem[r]) if (better(e, best)) best = e; canon[nm] = best; }
+        for (auto& kv : canon) { const std::string& c = kv.second; const std::string& o = kv.first; if (c == o) continue;
+            if (var_width.count(o)) var_width[c] = std::max(var_width.count(c) ? var_width[c] : 0, var_width[o]);
+            if (var_is_float.count(o) && var_is_float[o]) var_is_float[c] = true;
+            if (var_pointer.count(o) && var_pointer[o]) var_pointer[c] = true;
+            if (force_float_vars.count(o)) force_float_vars.insert(c);
+        }
+        std::function<void(ExprP&)> ren = [&](ExprP& e){ if (!e) return;
+            if (e->kind == EK::Var) { auto it = canon.find(e->name); if (it != canon.end()) e->name = it->second; }
+            ren(e->a); ren(e->b); ren(e->c); for (auto& a : e->args) ren(a);
+        };
+        for (auto& b : blocks) { for (auto& s : b.stmts) { ren(s.lhs); ren(s.rhs); }
+            ren(b.cond); ren(b.ret_value); ren(b.ret_raw); ren(b.switch_var); ren(b.tail_call); }
+        for (auto& b : blocks) { std::vector<Stmt> keep;
+            for (auto& s : b.stmts) {
+                if (s.kind == SK::Assign && s.lhs && s.rhs && s.lhs->kind == EK::Var &&
+                    s.rhs->kind == EK::Var && s.lhs->name == s.rhs->name) continue;   /* self-copy */
+                keep.push_back(std::move(s));
+            }
+            b.stmts = std::move(keep);
+        }
+    }
+
+    void global_dead_store_elim() {
+        bool changed = true; int guard = 0;
+        while (changed && guard++ < 16) {
+            changed = false;
+            size_t n = blocks.size();
+            /* address-taken vars are never considered dead (value may escape) */
+            std::set<std::string> addr_taken;
+            for (auto& b : blocks) {
+                auto scan = [&](const ExprP& e, auto&& self) -> void {
+                    if (!e) return;
+                    if (e->kind == EK::AddrOf && e->a && e->a->kind == EK::Var)
+                        addr_taken.insert(e->a->name);
+                    self(e->a, self); self(e->b, self); self(e->c, self);
+                    for (auto& ar : e->args) self(ar, self);
+                };
+                for (auto& s : b.stmts) { scan(s.rhs, scan); scan(s.lhs, scan); }
+                scan(b.cond, scan); scan(b.ret_value, scan); scan(b.ret_raw, scan);
+                scan(b.switch_var, scan); scan(b.tail_call, scan);
+            }
+
+            /* per-block live-in / live-out sets over tracked var names */
+            std::vector<std::set<std::string>> live_in(n), live_out(n);
+            /* map block id -> index in `blocks` (ids may be sparse) */
+            std::map<int,size_t> idx_of;
+            for (size_t i = 0; i < n; ++i) idx_of[blocks[i].id] = i;
+
+            bool df = true; int dg = 0;
+            while (df && dg++ < 1024) {
+                df = false;
+                /* iterate blocks in reverse for faster convergence */
+                for (size_t ii = n; ii-- > 0; ) {
+                    Block& b = blocks[ii];
+                    /* out = union of successors' in */
+                    std::set<std::string> out;
+                    for (int s : b.succ) {
+                        auto it = idx_of.find(s);
+                        if (it == idx_of.end()) continue;
+                        out.insert(live_in[it->second].begin(),
+                                   live_in[it->second].end());
+                    }
+                    /* transfer: in = use(terminator+stmts, backward) U (out - def) */
+                    std::set<std::string> cur = out;
+                    /* terminator reads happen after all stmts */
+                    for (auto& kv : var_width) {
+                        const std::string& nm = kv.first;
+                        if (count_var_reads(b.cond, nm) ||
+                            count_var_reads(b.ret_value, nm) ||
+                            count_var_reads(b.ret_raw, nm) ||
+                            count_var_reads(b.switch_var, nm) ||
+                            count_var_reads(b.tail_call, nm))
+                            cur.insert(nm);
+                    }
+                    for (size_t si = b.stmts.size(); si-- > 0; ) {
+                        Stmt& s = b.stmts[si];
+                        /* def: plain Var assignment kills the var (write before read) */
+                        if (s.kind == SK::Assign && s.lhs &&
+                            s.lhs->kind == EK::Var) {
+                            const std::string& dn = s.lhs->name;
+                            /* live_before = (live_after - def) U uses. The def must
+                             * be removed BEFORE adding the uses, so a read-modify-
+                             * write `v = v OP x` keeps v live (the RHS reads it
+                             * before the assignment). Erasing after inserting would
+                             * wrongly kill v and drop its prior definition. */
+                            cur.erase(dn);
+                            for (auto& kv : var_width) {
+                                const std::string& nm = kv.first;
+                                if (count_var_reads(s.rhs, nm) ||
+                                    count_lhs_addr_reads(s.lhs, nm))
+                                    cur.insert(nm);
+                            }
+                        } else {
+                            for (auto& kv : var_width) {
+                                const std::string& nm = kv.first;
+                                if (count_var_reads(s.rhs, nm) ||
+                                    count_var_reads(s.lhs, nm))
+                                    cur.insert(nm);
+                            }
+                        }
+                    }
+                    if (cur != live_in[ii]) { live_in[ii] = cur; df = true; }
+                    live_out[ii] = out;
+                }
+            }
+
+            /* second forward scan within each block to know liveness at the
+             * point right after a given store, then drop dead stores. */
+            for (size_t ii = 0; ii < n; ++ii) {
+                Block& b = blocks[ii];
+                size_t m = b.stmts.size();
+                /* live[k] = set live immediately BEFORE stmt k; compute backward
+                 * from live_out so we can test liveness after each store. */
+                std::vector<std::set<std::string>> after(m + 1);
+                after[m] = live_out[ii];
+                /* terminator uses are part of the value live at block end */
+                for (auto& kv : var_width) {
+                    const std::string& nm = kv.first;
+                    if (count_var_reads(b.cond, nm) ||
+                        count_var_reads(b.ret_value, nm) ||
+                        count_var_reads(b.switch_var, nm))
+                        after[m].insert(nm);
+                }
+                for (size_t k = m; k-- > 0; ) {
+                    std::set<std::string> cur = after[k + 1];
+                    Stmt& s = b.stmts[k];
+                    if (s.kind == SK::Assign && s.lhs && s.lhs->kind == EK::Var) {
+                        const std::string& dn = s.lhs->name;
+                        /* (live_after - def) U uses: erase def first so a
+                         * read-modify-write keeps the var live (see above). */
+                        cur.erase(dn);
+                        for (auto& kv : var_width) {
+                            const std::string& nm = kv.first;
+                            if (count_var_reads(s.rhs, nm) ||
+                                count_lhs_addr_reads(s.lhs, nm))
+                                cur.insert(nm);
+                        }
+                    } else {
+                        for (auto& kv : var_width) {
+                            const std::string& nm = kv.first;
+                            if (count_var_reads(s.rhs, nm) ||
+                                count_var_reads(s.lhs, nm))
+                                cur.insert(nm);
+                        }
+                    }
+                    after[k] = cur;
+                }
+                std::vector<Stmt> keep;
+                keep.reserve(m);
+                for (size_t k = 0; k < m; ++k) {
+                    Stmt& s = b.stmts[k];
+                    bool drop = false;
+                    if (s.kind == SK::Assign && s.lhs && s.lhs->kind == EK::Var &&
+                        !has_call(s.rhs)) {
+                        const std::string& dn = s.lhs->name;
+                        /* only touch tracked locals/temps, never address-taken */
+                        if (var_width.count(dn) && !addr_taken.count(dn) &&
+                            after[k + 1].find(dn) == after[k + 1].end()) {
+                            drop = true;
+                        }
+                    }
+                    if (drop) changed = true;
+                    else keep.push_back(s);
+                }
+                b.stmts.swap(keep);
+            }
+        }
+    }
+
+    /* Count total reads of a var name across the whole function. */
+    int total_reads(const std::string& nm) {
+        int c = 0;
+        for (auto& b : blocks) {
+            for (auto& s : b.stmts)
+                c += count_var_reads(s.rhs, nm) + count_lhs_addr_reads(s.lhs, nm);
+            /* MUST cover every expression-bearing block field or a var used only in a
+             * tail-call / raw-return is under-counted -> wrongly inlined (same bug class
+             * as the collect_addr_taken fix). */
+            c += count_var_reads(b.cond, nm) + count_var_reads(b.ret_value, nm) +
+                 count_var_reads(b.ret_raw, nm) + count_var_reads(b.switch_var, nm) +
+                 count_var_reads(b.tail_call, nm);
+        }
+        return c;
+    }
+
+    /* A call bound to a temp that is never read is a void-style call: drop the
+     * `t =` and emit it as a bare call statement (the call's side effects stay). */
+    /* Drop phantom TRAILING call arguments: a bare local that is never assigned
+     * anywhere and is not a parameter is reading uninitialized stack — it comes
+     * from over-counting the callee's arity (a spill slot mistaken for a stack
+     * arg). A genuine Nth arg is always stored by the caller first, so its slot
+     * IS an assignment LHS and survives. Only trims from the END (dropping a
+     * middle arg would renumber the rest). Conservative: stops at the first
+     * non-phantom trailing arg. */
+    void trim_phantom_call_args() {
+        std::set<std::string> assigned, addr_taken;
+        for (int i = 0; i < num_params; ++i) assigned.insert("a" + std::to_string(i + 1));
+        /* a var whose address is taken (`&v`) may be filled by an out-parameter
+         * call we don't model as an assignment — never trim such a var. */
+        std::function<void(const ExprP&)> scan_addr = [&](const ExprP& e) {
+            if (!e) return;
+            if (e->kind == EK::AddrOf && e->a && e->a->kind == EK::Var)
+                addr_taken.insert(e->a->name);
+            scan_addr(e->a); scan_addr(e->b); scan_addr(e->c);
+            for (auto& ar : e->args) scan_addr(ar);
+        };
+        for (auto& b : blocks) {
+            for (auto& s : b.stmts) {
+                if (s.kind == SK::Assign && s.lhs && s.lhs->kind == EK::Var)
+                    assigned.insert(s.lhs->name);
+                scan_addr(s.lhs); scan_addr(s.rhs);
+            }
+            scan_addr(b.cond); scan_addr(b.ret_value); scan_addr(b.ret_raw);
+            scan_addr(b.switch_var); scan_addr(b.tail_call);
+        }
+        auto is_phantom = [&](const ExprP& a)->bool {
+            /* a never-written, never-address-taken, non-parameter bare local —
+             * reading uninitialized stack. Keep ctx_* (a genuine lost incoming
+             * value), array/aggregate locals (buf/sN — written through memory, not
+             * scalar assignment, and legitimately passed as a pointer), and any
+             * non-Var expression. */
+            return a && a->kind == EK::Var &&
+                   a->name.rfind("ctx_", 0) != 0 &&
+                   !array_locals.count(a->name) &&
+                   !assigned.count(a->name) && !addr_taken.count(a->name);
+        };
+        std::function<void(ExprP&)> visit = [&](ExprP& e) {
+            if (!e) return;
+            if (e->kind == EK::Call)
+                while (!e->args.empty() && is_phantom(e->args.back()))
+                    e->args.pop_back();
+            visit(e->a); visit(e->b); visit(e->c);
+            for (auto& ar : e->args) visit(ar);
+        };
+        for (auto& b : blocks) {
+            for (auto& s : b.stmts) { visit(s.lhs); visit(s.rhs); }
+            visit(b.cond); visit(b.ret_value); visit(b.tail_call);
+        }
+    }
+
+    void simplify_unused_call_temps() {
+        for (auto& b : blocks) {
+            for (auto& s : b.stmts) {
+                if (s.kind == SK::Assign && s.lhs && s.lhs->kind == EK::Var &&
+                    call_temps.count(s.lhs->name) && s.rhs && has_call(s.rhs) &&
+                    total_reads(s.lhs->name) == 0) {
+                    s.kind = SK::Call;
+                    s.lhs = nullptr;
+                }
+            }
+        }
+    }
+    int total_writes(const std::string& nm) {
+        int c = 0;
+        for (auto& b : blocks)
+            for (auto& s : b.stmts)
+                if (s.kind == SK::Assign && s.lhs && s.lhs->kind == EK::Var &&
+                    s.lhs->name == nm) c++;
+        return c;
+    }
+
+    /* Inline a single-def, single-use temp into its one use when both live in the
+     * same block with no intervening hazard. Folds `v3 = t4; t3 = v3 + t5;` to
+     * `t3 = t4 + t5;`. Conservative: only for tN/vN temps written exactly once
+     * and read exactly once, with a side-effect-free rhs. */
+    void walk_addr_taken(const ExprP& e, std::set<std::string>& out) {
+        if (!e) return;
+        if (e->kind == EK::AddrOf && e->a && e->a->kind == EK::Var)
+            out.insert(e->a->name);
+        walk_addr_taken(e->a, out);
+        walk_addr_taken(e->b, out);
+        walk_addr_taken(e->c, out);
+        for (auto& ar : e->args) walk_addr_taken(ar, out);
+    }
+    void collect_addr_taken(std::set<std::string>& out) {
+        for (auto& b : blocks) {
+            for (auto& s : b.stmts) { walk_addr_taken(s.lhs, out); walk_addr_taken(s.rhs, out); }
+            /* MUST scan every expression-carrying block field, not just cond: a
+             * bit-reinterpret `*(u64*)&t` (movd/movq float->GP) or an out-param `&v`
+             * often lives in the RETURN value / tail-call args / switch selector. If
+             * missed here, a consumer (copy_propagate, coalesce, the temp inliners)
+             * treats the var as non-address-taken and inlines its def into the `&`,
+             * emitting `&(cast)` / `&(a+b)` — a non-lvalue (C2102). */
+            walk_addr_taken(b.cond, out);
+            walk_addr_taken(b.ret_value, out);
+            walk_addr_taken(b.ret_raw, out);
+            walk_addr_taken(b.switch_var, out);
+            walk_addr_taken(b.tail_call, out);
+        }
+    }
+
+    void copy_propagate() {
+        /* A variable whose address is taken (`&v` / passed by-ref as an out-param)
+         * can be mutated through that pointer, so its definition must NEVER be
+         * inlined into a use — doing so both loses the callee's write-back and
+         * folds nonsense like `&v1` into `&*(int*)(...)`. */
+        std::set<std::string> addr_taken;
+        collect_addr_taken(addr_taken);
+        bool changed = true; int guard = 0;
+        while (changed && guard++ < 8) {
+            changed = false;
+            for (auto& b : blocks) {
+                /* iterate to the LAST stmt (not size-1): a `result = e` that is the
+                 * final stmt has its only use in the TERMINATOR (ret_value/cond/switch/
+                 * tail_call), so it must be considered for terminal-inline too. The
+                 * stmt-use search below simply finds nothing and falls to that path. */
+                for (size_t i = 0; i < b.stmts.size(); ++i) {
+                    Stmt& def = b.stmts[i];
+                    if (def.kind != SK::Assign || !def.lhs || def.lhs->kind != EK::Var)
+                        continue;
+                    const std::string nm = def.lhs->name;
+                    /* params and stack arrays are never inlined away */
+                    if (nm.size()==2 && nm[0]=='a' && nm[1]>='1' && nm[1]<='4') continue;
+                    if (array_locals.count(nm)) continue;
+                    if (addr_taken.count(nm)) continue;
+                    if (total_writes(nm) != 1) continue;
+                    if (total_reads(nm) != 1) continue;
+                    /* AGGRESSIVE (DS_NO_CALLINLINE disables): a CALL-result temp used
+                     * exactly once IS inlined into its use (`t=f(); v=t+1` -> `v=f()+1`)
+                     * — the dominant temp-cascade source and the biggest gap vs Hex-Rays.
+                     * A call has side effects + may read/write through pointers, so it is
+                     * only safe to move to the use site when NOTHING between the def and
+                     * the use has a call or touches memory (read OR write), and the use
+                     * itself has no OTHER call (evaluation order of two calls in one
+                     * expression is unspecified). These extra hazards are applied below
+                     * when rhs_has_call. */
+                    /* only an IMPURE call needs reorder hazards — a pure `__`-intrinsic
+                     * (__mulh/__fabs/__bsr) is a side-effect-free value like any expr. */
+                    bool rhs_has_call = has_impure_call(def.rhs);
+                    if (rhs_has_call && std::getenv("DS_NO_CALLINLINE")) continue;
+                    /* find the single use in this block after i */
+                    int use = -1;
+                    for (size_t j = i + 1; j < b.stmts.size(); ++j) {
+                        if (count_var_reads(b.stmts[j].rhs, nm) +
+                            count_lhs_addr_reads(b.stmts[j].lhs, nm) > 0) { use = (int)j; break; }
+                    }
+                    if (use < 0) {
+                        /* The single use is the BRANCH CONDITION (`t = *p & m; if (t)`),
+                         * the RETURN VALUE (`t = e; return t;`), or the SWITCH SELECTOR,
+                         * not a statement. Inline it there so the block becomes
+                         * statement-free — which lets merge_short_circuit fold the
+                         * `&&`/`||` chain into one predicate (the dominant goto source:
+                         * every compiler `a && b || c` is a chain of compare blocks) and
+                         * collapses `t=e; return t;` -> `return e;`. Same hazard rules;
+                         * these are evaluated after all stmts, so the window is def+1..end. */
+                        /* the terminal use is the branch cond, the RETURN value/raw,
+                         * the SWITCH selector, or a TAIL-CALL arg. Covering all of them
+                         * (the comment above always claimed to, but only `cond` was wired)
+                         * collapses `t = e; return t;` -> `return e;` and the switch/tail
+                         * equivalents — the Hex-Rays single-`result` return shape. */
+                        ExprP* tgt = nullptr;
+                        if (b.cond && count_var_reads(b.cond, nm) > 0) tgt = &b.cond;
+                        else if (b.ret_value && count_var_reads(b.ret_value, nm) > 0) tgt = &b.ret_value;
+                        else if (b.ret_raw && count_var_reads(b.ret_raw, nm) > 0) tgt = &b.ret_raw;
+                        else if (b.switch_var && count_var_reads(b.switch_var, nm) > 0) tgt = &b.switch_var;
+                        else if (b.tail_call && count_var_reads(b.tail_call, nm) > 0) tgt = &b.tail_call;
+                        if (tgt) {
+                            /* a call inlined into a condition that ALREADY has an impure
+                             * call is safe ONLY if the cond has exactly ONE impure call
+                             * and t1 nests inside its args (`g(f())` — f before g); any
+                             * sibling reorders. */
+                            if (rhs_has_call && has_impure_call(*tgt) &&
+                                (count_impure_calls(*tgt) != 1 ||
+                                 reads_var_outside_call_args(*tgt, nm))) continue;
+                            bool rhs_mem2 = reads_mem(def.rhs);
+                            bool hz = false;
+                            for (int j = (int)i + 1; j < (int)b.stmts.size(); ++j) {
+                                Stmt& s = b.stmts[j];
+                                if (s.kind == SK::Comment) continue;
+                                if (s.kind != SK::Assign) { hz = true; break; }
+                                if (has_call(s.rhs)) { hz = true; break; }
+                                if (s.lhs && s.lhs->kind == EK::Mem && (rhs_mem2 || rhs_has_call)) { hz = true; break; }
+                                /* a call may read memory a later store hasn't yet made, or
+                                 * write memory a later read would see stale — so ANY
+                                 * intervening memory touch reorders it. */
+                                if (rhs_has_call && reads_mem(s.rhs)) { hz = true; break; }
+                                if (s.lhs && s.lhs->kind == EK::Var &&
+                                    reads_named_var(def.rhs, s.lhs->name)) { hz = true; break; }
+                            }
+                            if (!hz) {
+                                subst_var(*tgt, nm, def.rhs);
+                                *tgt = fold(*tgt);
+                                def.kind = SK::Comment; def.label = "";
+                                b.stmts.erase(b.stmts.begin() + i);
+                                changed = true;
+                                break;
+                            }
+                        }
+                        continue;     /* used in another block / hazard: skip */
+                    }
+                    /* a call inlined into a use with another impure call is safe ONLY
+                     * when the ENTIRE use (store address lhs + value rhs — their eval
+                     * order is unspecified) has EXACTLY ONE impure call and t1 NESTS
+                     * inside its args (`g(f())` — f evaluates before g); a sibling
+                     * (`f()+g()`, `*(f()+8)=g()`) has unspecified order. This captures
+                     * the dominant chained-call cascade `t=get(); use(t)`. */
+                    if (rhs_has_call) {
+                        int use_calls = count_impure_calls(b.stmts[use].rhs) +
+                                        count_impure_calls(b.stmts[use].lhs);
+                        bool outside = reads_var_outside_call_args(b.stmts[use].rhs, nm) ||
+                                       reads_var_outside_call_args(b.stmts[use].lhs, nm);
+                        if (use_calls > 0 && (use_calls != 1 || outside)) continue;
+                    }
+                    /* hazard check: rhs must not read a var/mem rewritten between */
+                    bool rhs_mem = reads_mem(def.rhs);
+                    bool hazard = false;
+                    for (int j = (int)i + 1; j < use; ++j) {
+                        Stmt& s = b.stmts[j];
+                        if (s.kind != SK::Assign) { hazard = true; break; }
+                        if (has_call(s.rhs)) { hazard = true; break; }
+                        if (s.lhs && s.lhs->kind == EK::Mem && (rhs_mem || rhs_has_call)) { hazard = true; break; }
+                        if (rhs_has_call && reads_mem(s.rhs)) { hazard = true; break; }
+                        if (s.lhs && s.lhs->kind == EK::Var &&
+                            reads_named_var(def.rhs, s.lhs->name)) { hazard = true; break; }
+                    }
+                    if (hazard) continue;
+                    /* the use statement must not itself write nm before reading */
+                    /* perform substitution */
+                    ExprP val = def.rhs;
+                    subst_var(b.stmts[use].rhs, nm, val);
+                    subst_var(b.stmts[use].lhs, nm, val);
+                    /* re-fold the use site: inlining can expose new constant folds
+                     * (e.g. `t=field_0*9; ... t*8` -> `field_0*72`) that fold() never
+                     * saw because the two multiplies lived in separate statements. */
+                    b.stmts[use].rhs = fold(b.stmts[use].rhs);
+                    if (b.stmts[use].lhs && b.stmts[use].lhs->kind == EK::Mem)
+                        b.stmts[use].lhs = fold(b.stmts[use].lhs);
+                    def.kind = SK::Comment; def.label = "";  /* mark removed */
+                    /* remove the now-empty comment slot */
+                    b.stmts.erase(b.stmts.begin() + i);
+                    changed = true;
+                    break;   /* indices shifted; restart this block */
+                }
+            }
+        }
+    }
+
+    /* Hex-Rays `return X;` shape. Fold `v = e; return v;` -> `return e;` where v is the
+     * return variable, single-def, used ONLY in this block's ret_value/ret_raw. This is
+     * exactly the case copy_propagate cannot reach: the return value is cloned into BOTH
+     * ret_value AND ret_raw (a typing mirror), so total_reads==2 fails its single-use
+     * gate — yet ret_text emits ret_value ONLY (ret_raw is analysis-only, never emitted),
+     * so folding e into ret_value is a SINGLE evaluation even when e is a call. The same
+     * reorder hazards as copy_propagate guard a non-terminal def. Gated DS_NO_RETFOLD. */
+    void fold_return_temps() {
+        if (std::getenv("DS_NO_RETFOLD")) return;
+        std::set<std::string> addr; collect_addr_taken(addr);
+        auto peel = [](ExprP e){ while (e && e->kind == EK::Cast) e = e->a; return e; };
+        for (auto& b : blocks) {
+            if (b.stmts.empty() || !b.ret_value) continue;
+            ExprP leaf = peel(b.ret_value);
+            if (!leaf || leaf->kind != EK::Var) continue;
+            const std::string v = leaf->name;
+            if (addr.count(v) || array_locals.count(v)) continue;
+            if (v.size()==2 && v[0]=='a' && v[1]>='1' && v[1]<='4') continue;   /* never a param */
+            if (total_writes(v) != 1) continue;
+            /* used ONLY in this block's ret_value/ret_raw (nowhere else at all) */
+            int here = count_var_reads(b.ret_value, v) + count_var_reads(b.ret_raw, v);
+            if (total_reads(v) != here) continue;
+            /* locate v's single def stmt in this block; anything reading v in a stmt
+             * before we find the def means it is used in a statement -> keep it. */
+            int di = -1;
+            for (int i = 0; i < (int)b.stmts.size(); ++i) {
+                Stmt& s = b.stmts[i];
+                if (count_var_reads(s.rhs, v) + count_lhs_addr_reads(s.lhs, v)) { di = -1; break; }
+                if (s.kind == SK::Assign && s.lhs && s.lhs->kind == EK::Var && s.lhs->name == v) { di = i; break; }
+            }
+            if (di < 0 || !b.stmts[di].rhs) continue;
+            Stmt& def = b.stmts[di];
+            /* reorder hazard for a non-last def (the terminal evaluates after all stmts) */
+            bool rmem = reads_mem(def.rhs), rcall = has_impure_call(def.rhs); bool hz = false;
+            for (int j = di + 1; j < (int)b.stmts.size() && !hz; ++j) {
+                Stmt& s = b.stmts[j];
+                if (s.kind != SK::Assign) { hz = true; break; }
+                if ((rmem || rcall) && (has_call(s.rhs) || (s.lhs && s.lhs->kind == EK::Mem))) hz = true;
+                else if (rcall && reads_mem(s.rhs)) hz = true;
+                else if (s.lhs && s.lhs->kind == EK::Var && reads_named_var(def.rhs, s.lhs->name)) hz = true;
+            }
+            if (hz) continue;
+            ExprP e = def.rhs;
+            subst_var(b.ret_value, v, e); b.ret_value = fold(b.ret_value);
+            b.ret_raw = clone(b.ret_value);   /* mirror kept consistent; never emitted */
+            b.stmts.erase(b.stmts.begin() + di);
+        }
+    }
+
+    void subst_var(ExprP& e, const std::string& nm, const ExprP& val) {
+        if (!e) return;
+        /* Replace the expression ITSELF when it is the target variable. The old
+         * code only checked e->a/b/c, so a use where the variable is the whole
+         * expression (e.g. `*p = v4;` — rhs is bare `v4`) was never substituted,
+         * yet copy_propagate still deleted the definition, leaving a dangling
+         * reference. This corrupts every load-then-store / swap pattern. */
+        if (e->kind == EK::Var && e->name == nm) { e = clone(val); return; }
+        subst_var(e->a, nm, val);
+        subst_var(e->b, nm, val);
+        subst_var(e->c, nm, val);
+        for (auto& ar : e->args) subst_var(ar, nm, val);
+    }
+
+    /* AGGRESSIVE TEMP REDUCER (DS_NO_INVINLINE). Inline every single-DEF, non-address-
+     * taken temp whose rhs is a SMALL, side-effect-free, MEMORY-FREE expression built
+     * only from single-def / param inputs — an SSA/loop-invariant value that is safe to
+     * RECOMPUTE at each use. This is what makes Hex-Rays render `(char*)a1 + 0x10` /
+     * `v3 * 8` / `(int)v5` inline instead of parking them in a tN, collapsing the
+     * residual temp cloud that copy_propagate (single-use) and coalesce (copies) leave.
+     * SOUND: a single-def var never changes after its def, and memory-free means no
+     * aliasing store can invalidate the value, so recomputing it anywhere is identical.
+     * Iterates so a chain (t2 feeds t1) fully collapses. */
+    void inline_invariant_temps() {
+        if (std::getenv("DS_NO_INVINLINE")) return;
+        std::set<std::string> addr; collect_addr_taken(addr);
+        auto is_tmp = [&](const std::string& n){
+            if (n.size() < 2 || (n[0] != 'v' && n[0] != 't')) return false;
+            for (size_t i = 1; i < n.size(); ++i) if (n[i] < '0' || n[i] > '9') return false;
+            return !array_locals.count(n);
+        };
+        bool changed = true; int guard = 0;
+        while (changed && guard++ < 15) {
+            changed = false;
+            std::map<std::string,int> writes;
+            for (auto& b : blocks) for (auto& s : b.stmts)
+                if (s.kind == SK::Assign && s.lhs && s.lhs->kind == EK::Var) writes[s.lhs->name]++;
+            for (auto& b : blocks) {
+                for (auto& def : b.stmts) {
+                    if (def.kind != SK::Assign || !def.lhs || def.lhs->kind != EK::Var || !def.rhs) continue;
+                    const std::string nm = def.lhs->name;
+                    if (!is_tmp(nm) || addr.count(nm) || writes[nm] != 1) continue;
+                    if (has_call(def.rhs) || reads_mem(def.rhs) || node_count(def.rhs) > 8) continue;
+                    /* TRULY invariant only: every var input must be a PARAM (aN) — a param
+                     * never changes, so the expr is the same at every program point on EVERY
+                     * path/iteration. A single-static-def LOCAL is NOT enough: it may be
+                     * loop-carried (`v=v+1`) or reloaded per iteration (`v=a[i]`), giving a
+                     * different value each time — inlining it globally would be UNSOUND. */
+                    bool inv = true;
+                    std::function<void(const ExprP&)> chk = [&](const ExprP& e){
+                        if (!e || !inv) return;
+                        if (e->kind == EK::Var) {
+                            bool is_param = e->name.size() >= 2 && e->name[0] == 'a' &&
+                                            e->name[1] >= '1' && e->name[1] <= '9';
+                            auto w = writes.find(e->name);
+                            bool reassigned = w != writes.end() && w->second > 0;
+                            /* a param is invariant ONLY if it is NEVER reassigned — a
+                             * clamp/saturate `a1 = lo;` makes `(char*)a1+K` iteration-
+                             * and path-dependent, so a global recompute would be wrong. */
+                            if (!is_param || reassigned || addr.count(e->name)) inv = false;
+                        }
+                        chk(e->a); chk(e->b); chk(e->c); for (auto& a : e->args) chk(a);
+                    };
+                    chk(def.rhs);
+                    if (!inv) continue;
+                    /* PROVABLY-SOUND GUARD: the def must DOMINATE every use. `writes[nm]`
+                     * counts only explicit SK::Assign stmts, but a param-HOME alias local
+                     * gets its initial value implicitly (`int v2 = a2;` is v2 sharing a2's
+                     * home slot, NOT an assign), so a swap `v2 = a3;` inside a branch is the
+                     * ONLY counted def -> writes[v2]==1 misidentifies v2 as single-def. A
+                     * genuine single-def invariant temp's def dominates all its uses; a
+                     * misidentified one (branch def, used after the join) does NOT dominate
+                     * the join use. Requiring dominance refuses exactly the unsound case and
+                     * costs nothing on real invariants (defined once, early). */
+                    int def_blk = b.id;
+                    bool dom_ok = true;
+                    for (auto& b2 : blocks) {
+                        if (!dom_ok) break;
+                        bool uses = false;
+                        for (auto& s2 : b2.stmts) { if (&s2 == &def) continue;
+                            if (count_var_reads(s2.rhs, nm) + count_lhs_addr_reads(s2.lhs, nm)) { uses = true; break; } }
+                        if (!uses) uses = count_var_reads(b2.cond, nm) || count_var_reads(b2.ret_value, nm) ||
+                                          count_var_reads(b2.ret_raw, nm) || count_var_reads(b2.switch_var, nm) ||
+                                          count_var_reads(b2.tail_call, nm);
+                        if (uses && !dominates(def_blk, b2.id)) dom_ok = false;
+                    }
+                    if (!dom_ok) continue;
+                    ExprP val = def.rhs;
+                    for (auto& b2 : blocks) {
+                        for (auto& s2 : b2.stmts) { if (&s2 == &def) continue; subst_var(s2.rhs, nm, val); subst_var(s2.lhs, nm, val); }
+                        subst_var(b2.cond, nm, val); subst_var(b2.ret_value, nm, val); subst_var(b2.ret_raw, nm, val);
+                        subst_var(b2.switch_var, nm, val); subst_var(b2.tail_call, nm, val);
+                    }
+                    def.kind = SK::Comment; def.label = "\x01inl";   /* mark removed */
+                    changed = true;
+                }
+            }
+            if (changed) for (auto& b : blocks)
+                b.stmts.erase(std::remove_if(b.stmts.begin(), b.stmts.end(),
+                    [](const Stmt& s){ return s.kind == SK::Comment && s.label == "\x01inl"; }), b.stmts.end());
+        }
+    }
+
+    /* SAME-BLOCK MEMORY-LOAD INLINER (DS_NO_LOADINLINE). The bulk of the residual temps
+     * are field/array LOADS (`t = a1->field_8`). Inlining a load requires that neither
+     * its ADDRESS (its var inputs) nor the MEMORY it reads changes between the def and
+     * each use. This handles the common case SOUNDLY: a single-def load whose EVERY use
+     * is in the def's own block, with NO store and NO call between the def and the last
+     * use (either would alias/clobber the loaded cell). The address' var inputs must be
+     * single-def/param (invariant) so the address itself is stable. */
+    void inline_local_loads() {
+        if (std::getenv("DS_NO_LOADINLINE")) return;
+        std::set<std::string> addr; collect_addr_taken(addr);
+        auto is_tmp = [&](const std::string& n){
+            if (n.size() < 2 || (n[0] != 'v' && n[0] != 't')) return false;
+            for (size_t i = 1; i < n.size(); ++i) if (n[i] < '0' || n[i] > '9') return false;
+            return !array_locals.count(n);
+        };
+        bool changed = true; int guard = 0;
+        while (changed && guard++ < 12) {
+            changed = false;
+            std::map<std::string,int> writes;
+            for (auto& b : blocks) for (auto& s : b.stmts)
+                if (s.kind == SK::Assign && s.lhs && s.lhs->kind == EK::Var) writes[s.lhs->name]++;
+            for (size_t bi = 0; bi < blocks.size(); ++bi) {
+                Block& b = blocks[bi];
+                for (size_t i = 0; i < b.stmts.size(); ++i) {
+                    Stmt& def = b.stmts[i];
+                    if (def.kind != SK::Assign || !def.lhs || def.lhs->kind != EK::Var || !def.rhs) continue;
+                    const std::string nm = def.lhs->name;
+                    if (!is_tmp(nm) || addr.count(nm) || writes[nm] != 1) continue;
+                    if (has_call(def.rhs) || node_count(def.rhs) > 14) continue;
+                    bool rmem = reads_mem(def.rhs);
+                    /* within ONE block execution a single-def input never changes (no
+                     * reassignment, and a loop re-entry crosses a block boundary), so a
+                     * same-block memory-free expr OR a memory load with no aliasing store
+                     * between def and use is safe to inline. The ADDRESS/inputs must be
+                     * single-def/param so they are stable; memory loads additionally need
+                     * the store/call barrier check below. */
+                    bool stable = true; std::set<std::string> ins;   /* the expr's var inputs */
+                    std::function<void(const ExprP&)> chk = [&](const ExprP& e){
+                        if (!e || !stable) return;
+                        if (e->kind == EK::Var) {
+                            ins.insert(e->name);
+                            auto w = writes.find(e->name);
+                            if ((w != writes.end() && w->second > 1) || addr.count(e->name)) stable = false;
+                        }
+                        chk(e->a); chk(e->b); chk(e->c); for (auto& a : e->args) chk(a);
+                    };
+                    chk(def.rhs);
+                    if (!stable) continue;
+                    /* every use must be in THIS block */
+                    bool ext = false;
+                    for (size_t bj = 0; bj < blocks.size() && !ext; ++bj) {
+                        if (bj == bi) continue; Block& o = blocks[bj];
+                        for (auto& s2 : o.stmts) if (count_var_reads(s2.rhs, nm) + count_lhs_addr_reads(s2.lhs, nm)) { ext = true; break; }
+                        if (!ext && (count_var_reads(o.cond, nm) || count_var_reads(o.ret_value, nm) ||
+                                     count_var_reads(o.ret_raw, nm) || count_var_reads(o.switch_var, nm) ||
+                                     count_var_reads(o.tail_call, nm))) ext = true;
+                    }
+                    if (ext) continue;
+                    bool used_term = count_var_reads(b.cond, nm) || count_var_reads(b.ret_value, nm) ||
+                                     count_var_reads(b.ret_raw, nm) || count_var_reads(b.switch_var, nm) ||
+                                     count_var_reads(b.tail_call, nm);
+                    int lastst = -1;
+                    for (size_t j = i + 1; j < b.stmts.size(); ++j)
+                        if (count_var_reads(b.stmts[j].rhs, nm) + count_lhs_addr_reads(b.stmts[j].lhs, nm)) lastst = (int)j;
+                    if (lastst < 0 && !used_term) continue;   /* no use (dead): leave to DSE */
+                    int hz_end = used_term ? (int)b.stmts.size() : lastst;
+                    bool hz = false;
+                    for (int j = (int)i + 1; j < hz_end && !hz; ++j) {
+                        Stmt& s = b.stmts[j];
+                        /* an ASSIGNMENT to an input var between the def and a use changes
+                         * the recomputed value (a single-def input can still be reassigned
+                         * inside this window — `t=a1->f; a1=…; use t`). Always a hazard. */
+                        if (s.kind == SK::Assign && s.lhs && s.lhs->kind == EK::Var && ins.count(s.lhs->name)) hz = true;
+                        else if (rmem && has_call(s.rhs)) hz = true;             /* a call may write the cell */
+                        else if (rmem && s.lhs && s.lhs->kind == EK::Mem) hz = true;  /* a store may alias */
+                    }
+                    if (hz) continue;
+                    ExprP val = def.rhs;
+                    for (size_t j = i + 1; j < b.stmts.size(); ++j) { subst_var(b.stmts[j].rhs, nm, val); subst_var(b.stmts[j].lhs, nm, val); }
+                    subst_var(b.cond, nm, val); subst_var(b.ret_value, nm, val); subst_var(b.ret_raw, nm, val);
+                    subst_var(b.switch_var, nm, val); subst_var(b.tail_call, nm, val);
+                    def.kind = SK::Comment; def.label = "\x01inl";
+                    changed = true;
+                }
+                b.stmts.erase(std::remove_if(b.stmts.begin(), b.stmts.end(),
+                    [](const Stmt& s){ return s.kind == SK::Comment && s.label == "\x01inl"; }), b.stmts.end());
+            }
+        }
+    }
+
+    /* ===================== Magic-number division recovery (idiom #4) =====================
+     * Reconstruct `x / C` and `x % C` from the compiler's multiply-high + shift idiom
+     * (MSVC/GCC lower a constant divisor to `mulhi(x, M) [±x] >> s [+ signbit]`).
+     *
+     * SAFETY BY CONSTRUCTION: a candidate divisor is accepted ONLY when re-deriving the
+     * magic number for it (Hacker's-Delight `magics`/`magicu`, validated by exhaustive
+     * x-sweep) reproduces the OBSERVED magic constant M, shift s, AND correction shape
+     * EXACTLY. A mismatch leaves the raw `__mulh` form untouched, so recognition can
+     * never change behavior -- worst case it simply does not fire. This matters because
+     * the behavioral corpus contains no magic division, so round-trip verification (not
+     * the corpus) is the correctness guarantee here. */
+    static const int64_t MD_DLIMIT = 100000;   /* search divisors up to this; larger => not folded */
+
+    struct MSm { uint64_t M; int s; };          /* signed magic: M as bit pattern */
+    struct MUm { uint64_t M; int s; int a; };   /* unsigned magic: +add-flag */
+    static MSm md_magics(int64_t d, int bits) {
+        if (bits == 32) {
+            int32_t dd = (int32_t)d; uint32_t ad = (dd < 0) ? (uint32_t)(-(int64_t)dd) : (uint32_t)dd;
+            const uint32_t two31 = 0x80000000u; uint32_t t = two31 + ((uint32_t)dd >> 31);
+            uint32_t anc = t - 1 - t % ad; int p = 31;
+            uint32_t q1 = two31/anc, r1 = two31 - q1*anc, q2 = two31/ad, r2 = two31 - q2*ad, delta;
+            do { p++; q1 = 2*q1; r1 = 2*r1; if (r1 >= anc) { q1++; r1 -= anc; }
+                 q2 = 2*q2; r2 = 2*r2; if (r2 >= ad) { q2++; r2 -= ad; } delta = ad - r2;
+            } while (q1 < delta || (q1 == delta && r1 == 0));
+            int32_t M = (int32_t)(q2 + 1); if (dd < 0) M = -M;
+            return MSm{ (uint64_t)(uint32_t)M, p - 32 };
+        } else {
+            int64_t dd = d; uint64_t ad = (dd < 0) ? (uint64_t)(0 - (uint64_t)dd) : (uint64_t)dd;
+            const uint64_t two63 = 0x8000000000000000ull; uint64_t t = two63 + ((uint64_t)dd >> 63);
+            uint64_t anc = t - 1 - t % ad; int p = 63;
+            uint64_t q1 = two63/anc, r1 = two63 - q1*anc, q2 = two63/ad, r2 = two63 - q2*ad, delta;
+            do { p++; q1 = 2*q1; r1 = 2*r1; if (r1 >= anc) { q1++; r1 -= anc; }
+                 q2 = 2*q2; r2 = 2*r2; if (r2 >= ad) { q2++; r2 -= ad; } delta = ad - r2;
+            } while (q1 < delta || (q1 == delta && r1 == 0));
+            int64_t M = (int64_t)(q2 + 1); if (dd < 0) M = -M;
+            return MSm{ (uint64_t)M, p - 64 };
+        }
+    }
+    static MUm md_magicu(uint64_t d, int bits) {
+        if (bits == 32) {
+            uint32_t dd = (uint32_t)d; int a = 0, p; uint32_t nc, delta, q1, r1, q2, r2;
+            nc = (uint32_t)(-1) - (uint32_t)(-(int64_t)dd) % dd; p = 31;
+            q1 = 0x80000000u/nc; r1 = 0x80000000u - q1*nc; q2 = 0x7FFFFFFFu/dd; r2 = 0x7FFFFFFFu - q2*dd;
+            do { p++;
+                 if (r1 >= nc - r1) { q1 = 2*q1 + 1; r1 = 2*r1 - nc; } else { q1 = 2*q1; r1 = 2*r1; }
+                 if (r2 + 1 >= dd - r2) { if (q2 >= 0x7FFFFFFFu) a = 1; q2 = 2*q2 + 1; r2 = 2*r2 + 1 - dd; }
+                 else                  { if (q2 >= 0x80000000u) a = 1; q2 = 2*q2;     r2 = 2*r2 + 1; }
+                 delta = dd - 1 - r2;
+            } while (p < 64 && (q1 < delta || (q1 == delta && r1 == 0)));
+            return MUm{ (uint64_t)(uint32_t)(q2 + 1), p - 32, a };
+        } else {
+            uint64_t dd = d; int a = 0, p; uint64_t nc, delta, q1, r1, q2, r2;
+            const uint64_t two63 = 0x8000000000000000ull, max63 = 0x7FFFFFFFFFFFFFFFull;
+            nc = (uint64_t)(-1) - (uint64_t)(0 - dd) % dd; p = 63;
+            q1 = two63/nc; r1 = two63 - q1*nc; q2 = max63/dd; r2 = max63 - q2*dd;
+            do { p++;
+                 if (r1 >= nc - r1) { q1 = 2*q1 + 1; r1 = 2*r1 - nc; } else { q1 = 2*q1; r1 = 2*r1; }
+                 if (r2 + 1 >= dd - r2) { if (q2 >= max63) a = 1; q2 = 2*q2 + 1; r2 = 2*r2 + 1 - dd; }
+                 else                  { if (q2 >= two63) a = 1; q2 = 2*q2;     r2 = 2*r2 + 1; }
+                 delta = dd - 1 - r2;
+            } while (p < 128 && (q1 < delta || (q1 == delta && r1 == 0)));
+            return MUm{ q2 + 1, p - 64, a };
+        }
+    }
+
+    /* single-def temp -> its pure defining rhs, so the matcher can peek through the CSE
+     * temps the divisor idiom is split across (`t1 = __mulh(..); t2 = t1 >> 1; ...`). */
+    std::map<std::string, ExprP> md_defs;
+    void md_build_defs() {
+        md_defs.clear();
+        std::set<std::string> addr; collect_addr_taken(addr);
+        std::map<std::string,int> wc;
+        for (auto& b : blocks) for (auto& s : b.stmts)
+            if (s.kind == SK::Assign && s.lhs && s.lhs->kind == EK::Var) wc[s.lhs->name]++;
+        for (auto& b : blocks) for (auto& s : b.stmts)
+            if (s.kind == SK::Assign && s.lhs && s.lhs->kind == EK::Var && s.rhs &&
+                wc[s.lhs->name] == 1 && !addr.count(s.lhs->name) &&
+                !array_locals.count(s.lhs->name) && !has_call(s.rhs))
+                md_defs[s.lhs->name] = s.rhs;
+    }
+    ExprP md_resolve(const ExprP& e) {
+        ExprP cur = e; int g = 0;
+        while (cur && cur->kind == EK::Var && g++ < 32) {
+            auto it = md_defs.find(cur->name);
+            if (it == md_defs.end()) break;
+            cur = it->second;
+        }
+        return cur ? cur : e;
+    }
+    ExprP md_strip(const ExprP& e) {   /* resolve temps + peel casts to the core value */
+        ExprP c = md_resolve(e); int g = 0;
+        while (c && c->kind == EK::Cast && c->a && g++ < 8) c = md_resolve(c->a);
+        return c;
+    }
+    bool md_contains_mulhi(const ExprP& e) {
+        if (!e) return false;
+        if (e->kind == EK::Binary && (e->op == "mulh" || e->op == "umulh")) return true;
+        if (e->kind == EK::Binary && e->op == ">>" && e->b && e->b->kind == EK::Const &&
+            e->b->cval == 32 && e->a && e->a->kind == EK::Binary && e->a->op == "*") return true;
+        if (md_contains_mulhi(e->a) || md_contains_mulhi(e->b) || md_contains_mulhi(e->c)) return true;
+        for (auto& ar : e->args) if (md_contains_mulhi(ar)) return true;
+        return false;
+    }
+    /* the __mulh/__umulh INTRINSIC specifically (needs a prototype); the 32-bit
+     * `(*)>>32` form is plain C and does NOT. Used to recompute `used_mulh`. */
+    bool md_has_mulh_intrinsic(const ExprP& e) {
+        if (!e) return false;
+        if (e->kind == EK::Binary && (e->op == "mulh" || e->op == "umulh")) return true;
+        if (md_has_mulh_intrinsic(e->a) || md_has_mulh_intrinsic(e->b) || md_has_mulh_intrinsic(e->c)) return true;
+        for (auto& ar : e->args) if (md_has_mulh_intrinsic(ar)) return true;
+        return false;
+    }
+    /* Match a multiply-high node; extract core x, magic M (bit pattern), width (32/64),
+     * and whether it is an UNSIGNED high-multiply. */
+    bool md_match_mulhi(const ExprP& e0, ExprP& x, uint64_t& M, int& bits, bool& uns) {
+        /* md_strip resolves temps AND peels casts, so a mulhi wrapped in extra
+         * `(unsigned int)(...)`/temp layers (the add-1 unsigned form) still matches. */
+        ExprP e = md_strip(e0);
+        if (!e) return false;
+        if (e->kind == EK::Binary && (e->op == "mulh" || e->op == "umulh")) {
+            ExprP ra = md_strip(e->a), rb = md_strip(e->b);
+            if (ra && ra->kind == EK::Const)      { M = (uint64_t)ra->cval; x = md_strip(e->b); }
+            else if (rb && rb->kind == EK::Const) { M = (uint64_t)rb->cval; x = md_strip(e->a); }
+            else return false;
+            bits = 64; uns = (e->op == "umulh");
+            return x != nullptr;
+        }
+        /* 32-bit: ((ll/ull)x * (ll/ull)M) >> 32  (the outer (int)/(unsigned) cast is
+         * already peeled by md_strip, so signedness comes from the wide multiply). */
+        if (e->kind == EK::Binary && e->op == ">>") {
+            ExprP shb = md_strip(e->b);
+            if (shb && shb->kind == EK::Const && shb->cval == 32) {
+                ExprP prod = md_strip(e->a);
+                if (prod && prod->kind == EK::Binary && prod->op == "*") {
+                    ExprP ka = md_strip(prod->a), kb = md_strip(prod->b);
+                    /* keep the RAW (unstripped) dividend so a `(int)v2` narrowing survives —
+                     * md_strip would peel it, exposing an over-wide (width-8) temp and failing
+                     * the 32-bit check below even though the DIVIDEND is 32-bit. */
+                    if (ka && ka->kind == EK::Const)      { M = (uint64_t)ka->cval; x = prod->b; }
+                    else if (kb && kb->kind == EK::Const) { M = (uint64_t)kb->cval; x = prod->a; }
+                    else return false;
+                    if (!x) return false;
+                    /* A genuine 32-bit magic mulhi is `(int)(((ll)x32 * (ll)M32) >> 32)` — a
+                     * 32->64 WIDENING multiply of a 32-bit dividend by a 32-bit magic. Peel
+                     * only WIDENING casts (to width>=8); if what remains is <=4 bytes the
+                     * dividend is 32-bit (even when the underlying var is a width-8 temp read
+                     * as `(int)v2`). A residue still >4 bytes is a real 64-bit dividend -> do
+                     * NOT fold (its low 32 bits could coincidentally match a magic). */
+                    { ExprP xe = md_resolve(x);
+                      while (xe && xe->kind == EK::Cast && xe->width >= 8 && xe->a) xe = md_resolve(xe->a);
+                      if (!xe || xe->width > 4) return false;
+                      x = xe; }
+                    uint64_t hi = M >> 32;
+                    if (hi != 0 && hi != 0xFFFFFFFFull) return false;
+                    bits = 32; uns = prod->is_unsigned || e->is_unsigned;
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+    /* brute-force the divisor and require an EXACT round-trip on (M, s, correction). */
+    bool md_find_signed(uint64_t M, int s, int corr, int bits, int64_t& d_out) {
+        for (int64_t ad = 3; ad <= MD_DLIMIT; ++ad)
+            for (int sg = 0; sg < 2; ++sg) {
+                int64_t d = sg ? -ad : ad;
+                MSm mg = md_magics(d, bits);
+                uint64_t Mo = (bits == 32) ? (uint32_t)M : M;
+                uint64_t Md = (bits == 32) ? (uint32_t)mg.M : mg.M;
+                if (Mo != Md || mg.s != s) continue;
+                bool Mneg = (bits == 32) ? ((int32_t)mg.M < 0) : ((int64_t)mg.M < 0);
+                int pred = (d > 0 && Mneg) ? +1 : (d < 0 && !Mneg) ? -1 : 0;
+                if (pred != corr) continue;
+                d_out = d; return true;
+            }
+        return false;
+    }
+    bool md_find_unsigned(uint64_t M, int s, int a, int bits, int64_t& d_out) {
+        for (int64_t d = 3; d <= MD_DLIMIT; ++d) {
+            MUm mg = md_magicu((uint64_t)d, bits);
+            uint64_t Mo = (bits == 32) ? (uint32_t)M : M;
+            uint64_t Md = (bits == 32) ? (uint32_t)mg.M : mg.M;
+            if (mg.a == a && Mo == Md && mg.s == s) { d_out = d; return true; }
+        }
+        return false;
+    }
+    /* Recognize a quotient expression rooted at n; on success fill x/d/uns/wbytes. */
+    bool md_match_quotient(const ExprP& n, ExprP& x_out, int64_t& d_out, bool& uns_out, int& wbytes) {
+        if (!n || n->kind != EK::Binary) return false;
+        /* SIGNED:  (CORE >> s)  +  ((unsigned)(CORE >> s) >> (W-1)) */
+        if (n->op == "+") {
+            for (int sw = 0; sw < 2; ++sw) {
+                ExprP A = sw ? n->b : n->a;          /* the shifted quotient S */
+                ExprP B = sw ? n->a : n->b;          /* the sign-bit add term */
+                ExprP rB = md_resolve(B);
+                if (!(rB && rB->kind == EK::Binary && rB->op == ">>")) continue;
+                /* the sign-bit add MUST be a LOGICAL shift (`+1 if negative`, round toward
+                 * zero); an arithmetic `>>` would be `-1 if negative` and NOT x/d. The
+                 * unsignedness can live on the shift node OR on an unsigned operand cast. */
+                ExprP rBa = md_resolve(rB->a);
+                bool logical = rB->is_unsigned || (rBa && rBa->kind == EK::Cast && rBa->is_unsigned);
+                if (!logical) continue;
+                ExprP rBb = md_resolve(rB->b);
+                if (!(rBb && rBb->kind == EK::Const && (rBb->cval == 31 || rBb->cval == 63))) continue;
+                int W = (int)rBb->cval + 1;
+                ExprP sbInner = (rBa && rBa->kind == EK::Cast) ? md_strip(rB->a) : rBa;
+                /* compare STRIPPED forms: for s==0 the quotient part A is `(int)(mulhi)`
+                 * while sbInner is the cast-peeled mulhi, so md_resolve(A) (casts kept)
+                 * would spuriously differ by the `(int)`. */
+                if (!exprEqual(sbInner, md_strip(A))) continue;
+                ExprP S = md_resolve(A);
+                int s; ExprP CORE;
+                /* CAUTION: the mulhi ITSELF is `(M*x) >> 32`, a `>>` node. So the DIVISION
+                 * shift `>> s` (s in [1,W-1]) is an OUTER shift only when S is NOT already a
+                 * bare mulhi. Test mulhi FIRST -> s==0 (div by 3/6, magic 0x2aaaaaab/…). */
+                { ExprP xt; uint64_t Mt; int mbt; bool mut;
+                  if (md_match_mulhi(S, xt, Mt, mbt, mut)) { s = 0; CORE = S; }
+                  else if (S && S->kind == EK::Binary && S->op == ">>" && !S->is_unsigned) {
+                      ExprP Sb = md_resolve(S->b);
+                      if (!(Sb && Sb->kind == EK::Const)) continue;
+                      s = (int)Sb->cval; if (s < 0 || s >= W) continue;
+                      CORE = md_resolve(S->a);
+                  } else if (S && S->kind == EK::Binary && (S->op == "+" || S->op == "-")) {
+                      s = 0; CORE = S;   /* s==0 with a mulhi±x correction inside CORE */
+                  } else continue;
+                }
+                int corr = 0; ExprP x, mx; uint64_t M = 0; int mb = 0; bool mu = false;
+                if (md_match_mulhi(CORE, x, M, mb, mu) && !mu) {
+                    corr = 0;
+                } else if (CORE && CORE->kind == EK::Binary && (CORE->op == "+" || CORE->op == "-")) {
+                    if (md_match_mulhi(CORE->a, x, M, mb, mu) && !mu &&
+                        exprEqual(md_strip(CORE->b), x)) {
+                        corr = (CORE->op == "+") ? +1 : -1;
+                    } else if (CORE->op == "+" && md_match_mulhi(CORE->b, x, M, mb, mu) && !mu &&
+                               exprEqual(md_strip(CORE->a), x)) {
+                        corr = +1;
+                    } else continue;
+                } else continue;
+                if (mb != W) continue;
+                int64_t d;
+                if (md_find_signed(M, s, corr, W, d)) {
+                    x_out = clone(x); d_out = d; uns_out = false; wbytes = W / 8; return true;
+                }
+            }
+        }
+        /* UNSIGNED (add-flag 0):  mulhi_u(x, M) >> s */
+        if (n->op == ">>" && n->is_unsigned) {
+            ExprP nb = md_resolve(n->b);
+            if (nb && nb->kind == EK::Const) {
+                int s = (int)nb->cval; ExprP x; uint64_t M = 0; int mb = 0; bool mu = false;
+                if (md_match_mulhi(n->a, x, M, mb, mu) && mu && s >= 0 && s < mb) {
+                    int64_t d;
+                    if (md_find_unsigned(M, s, 0, mb, d)) {
+                        x_out = clone(x); d_out = d; uns_out = true; wbytes = mb / 8; return true;
+                    }
+                }
+            }
+        }
+        /* UNSIGNED (add-flag 1):  (T + ((x - T) >> 1)) >> (s-1),  T = mulhi_u(x, M).
+         * The compiler wraps T and the subtraction in `(unsigned int)`/`(int)` casts,
+         * so every structural step strips casts (md_strip) before matching. */
+        if (n->op == ">>") {
+            ExprP nb = md_resolve(n->b), sum = md_strip(n->a);
+            if (nb && nb->kind == EK::Const && sum && sum->kind == EK::Binary && sum->op == "+") {
+                int s1 = (int)nb->cval;
+                for (int sw = 0; sw < 2; ++sw) {
+                    ExprP T = sw ? sum->b : sum->a;
+                    ExprP H = sw ? sum->a : sum->b;
+                    ExprP rH = md_strip(H);
+                    if (!(rH && rH->kind == EK::Binary && rH->op == ">>")) continue;
+                    ExprP rHb = md_strip(rH->b);
+                    if (!(rHb && rHb->kind == EK::Const && rHb->cval == 1)) continue;
+                    ExprP sub = md_strip(rH->a);
+                    if (!(sub && sub->kind == EK::Binary && sub->op == "-")) continue;
+                    ExprP x; uint64_t M = 0; int mb = 0; bool mu = false;
+                    if (!(md_match_mulhi(T, x, M, mb, mu) && mu)) continue;
+                    /* sub = x - T : sub->b is the same mulhi as T, sub->a is x */
+                    if (!exprEqual(md_strip(sub->b), md_strip(T))) continue;
+                    if (!exprEqual(md_strip(sub->a), x)) continue;
+                    int s = s1 + 1; int64_t d;
+                    if (s >= 1 && s <= mb && md_find_unsigned(M, s, 1, mb, d)) {
+                        x_out = clone(x); d_out = d; uns_out = true; wbytes = mb / 8; return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+    /* Fold `X - (X / d) * d` -> `X % d` once the quotient has been recognized. */
+    bool md_try_modulo(ExprP& e) {
+        if (!(e->kind == EK::Binary && e->op == "-" && e->a && e->b)) return false;
+        /* F2: `x - (x/d)*d` -> `x % d`. The compiler often leaves the subtrahend
+         * UN-reduced as `(x/d * k) + (x/d * k)` (2k == d), so also accept `A + A`
+         * (the doubled form) as `2*A`. md_strip peels the `(int)` casts around each. */
+        ExprP rhs = md_strip(e->b);
+        ExprP mul = rhs; int64_t extra = 1;
+        if (rhs && rhs->kind == EK::Binary && rhs->op == "+" && rhs->a && rhs->b &&
+            exprEqual(md_strip(rhs->a), md_strip(rhs->b))) {
+            mul = md_strip(rhs->a); extra = 2;
+        }
+        if (!(mul && mul->kind == EK::Binary && mul->op == "*" && mul->a && mul->b)) return false;
+        for (int sw = 0; sw < 2; ++sw) {
+            ExprP c = md_strip(sw ? mul->a : mul->b);
+            ExprP q = md_strip(sw ? mul->b : mul->a);
+            if (!(c && c->kind == EK::Const)) continue;
+            int64_t d = c->cval * extra;                    /* effective divisor */
+            if (q && q->kind == EK::Binary && q->op == "/" && q->b && q->b->kind == EK::Const &&
+                q->b->cval == d && q->a && exprEqual(md_strip(e->a), md_strip(q->a))) {
+                bool uns = q->is_unsigned; int w = q->width ? q->width : 8;
+                e = mkBinary("%", clone(q->a), mkConst(d, w, uns), w, uns);
+                return true;
+            }
+        }
+        return false;
+    }
+    bool md_changed = false;
+    void md_rewrite(ExprP& e) {
+        if (!e) return;
+        md_rewrite(e->a); md_rewrite(e->b); md_rewrite(e->c);
+        for (auto& ar : e->args) md_rewrite(ar);
+        if (md_try_modulo(e)) { md_changed = true; return; }
+        ExprP x; int64_t d; bool uns; int wb;
+        if (md_match_quotient(e, x, d, uns, wb)) {
+            e = mkBinary("/", x, mkConst(d, wb, uns), wb, uns);
+            md_changed = true;
+        }
+    }
+    /* total_reads() now covers every block expr field (incl. tail_call/ret_raw), so
+     * this is a plain alias kept for call-site clarity. */
+    int md_total_reads(const std::string& nm) { return total_reads(nm); }
+    void md_dce_mulhi() {   /* drop the now-orphaned pure `tN = __mulh(..)` temp stores */
+        std::set<std::string> addr; collect_addr_taken(addr);
+        bool ch = true;
+        while (ch) {
+            ch = false;
+            for (auto& b : blocks) {
+                auto& v = b.stmts;
+                for (size_t i = 0; i < v.size(); ++i) {
+                    Stmt& s = v[i];
+                    if (s.kind == SK::Assign && s.lhs && s.lhs->kind == EK::Var && s.rhs &&
+                        !has_call(s.rhs) && !addr.count(s.lhs->name) &&
+                        !array_locals.count(s.lhs->name) &&
+                        md_contains_mulhi(s.rhs) && md_total_reads(s.lhs->name) == 0) {
+                        v.erase(v.begin() + i); ch = true; break;
+                    }
+                }
+                if (ch) break;
+            }
+        }
+    }
+    void recognize_magic_div() {
+        md_build_defs();
+        md_changed = false;
+        /* The divisor idiom lives wherever the value flows: block statements, the
+         * per-block return value / tail call (a straight-line function keeps its
+         * result in ret_value, NOT stmts), branch conditions, and switch selectors. */
+        for (auto& b : blocks) {
+            for (auto& s : b.stmts) { md_rewrite(s.rhs); md_rewrite(s.lhs); }
+            md_rewrite(b.cond);
+            md_rewrite(b.ret_value);
+            md_rewrite(b.tail_call);
+            md_rewrite(b.switch_var);
+        }
+        if (md_changed) {
+            md_dce_mulhi();
+            /* folding the last division may have removed every __mulh/__umulh: lower
+             * used_mulh so no unused intrinsic prototype is emitted (never raise it).
+             * Scan EVERY expression an intrinsic can survive in, incl. s.lhs (a store
+             * address like `*(int*)(p + __umulh(i,M)) = v` keeps the intrinsic in the
+             * lvalue) — missing it would drop a still-needed prototype -> compile error. */
+            if (used_mulh) {
+                bool any = false;
+                for (auto& b : blocks) {
+                    for (auto& s : b.stmts)
+                        if (md_has_mulh_intrinsic(s.rhs) || md_has_mulh_intrinsic(s.lhs)) any = true;
+                    if (md_has_mulh_intrinsic(b.ret_value) || md_has_mulh_intrinsic(b.tail_call) ||
+                        md_has_mulh_intrinsic(b.cond) || md_has_mulh_intrinsic(b.switch_var)) any = true;
+                }
+                if (!any) used_mulh = false;
+            }
+        }
+    }
+
+    /* ---- post-typing idiom recognition (DS_IDIOM) ----
+     * A pure expression-tree rewrite: touches no CFG edge/block/structured set, so the
+     * goto count cannot move and no dominator/loop recompute is needed. Runs LAST (after
+     * all typing + merge_short_circuit + struct recovery), before body emission.
+     *
+     * Idiom 1 — provably-unsigned range check:
+     *     (x - lo) <=u range   ->   x >= lo && x <= hi     (hi = lo + range)
+     * Exact for unsigned arithmetic (a<=u x<=u b  <=>  (x-a) <=u (b-a)); the extra
+     * bound hi <= signed-max-of-width keeps it correct regardless of how x is rendered
+     * (signed/unsigned) and lets char-literal recovery fire (e.g. `x >= '0' && x <= '9'`). */
+    int idiom_node_count(const ExprP& e, int cap = 16) {
+        if (!e || cap <= 0) return 0;
+        int n = 1 + idiom_node_count(e->a, cap - 1) + idiom_node_count(e->b, cap - 1)
+                  + idiom_node_count(e->c, cap - 1);
+        for (auto& ar : e->args) n += idiom_node_count(ar, cap - 1);
+        return n;
+    }
+    ExprP match_range_check(const ExprP& e) {
+        static const bool dbg = std::getenv("DS_IDIOM_DBG") != nullptr;
+        if (!e || e->kind != EK::Binary || e->is_float || !e->is_unsigned) return e;
+        const std::string& op = e->op;
+        /* conjunction for the IN-range polarities (<=,<), disjunction for OUT (>,>=). */
+        bool conj;
+        if      (op == "<=" || op == "<")  conj = true;
+        else if (op == ">"  || op == ">=") conj = false;
+        else return e;
+        ExprP S = e->a, R = e->b;
+        if (!isConst(R) || R->is_float || R->cval < 0) return e;
+        /* hi = inclusive upper bound of the IN-range interval [lo, hi]. */
+        int64_t Rc = R->cval;
+        if (!S || S->kind != EK::Binary || S->op != "-" || !isConst(S->b) || S->b->is_float) return e;
+        int64_t lo = S->b->cval;
+        if (lo <= 0) return e;                                 /* lo == 0 degenerates to x cmp hi */
+        ExprP x = S->a;
+        if (!x || isConst(x) || has_call(x)) return e;         /* no side-effecting double-eval */
+        /* width comes from the OPERANDS (the subtraction), not the compare (bool) result. */
+        int w = S->width ? S->width : (x->width ? x->width : 4);
+        /* inclusive upper bound of the in-range interval, per op:
+         *   <= R : [lo, lo+R]      <  R : [lo, lo+R-1]
+         *   >  R : complement of [lo, lo+R]     >= R : complement of [lo, lo+R-1]  */
+        int64_t hi = (op == "<=" || op == ">") ? lo + Rc : lo + Rc - 1;
+        if (hi <= lo) return e;                                /* degenerate single-value range */
+        int64_t smax = (w == 1) ? 0x7f : (w == 2) ? 0x7fff : 0x7fffffffLL;  /* qword clamped */
+        if (dbg) fprintf(stderr, "[IDIOM]  cand op=%s lo=0x%llx hi=0x%llx w=%d conj=%d nc=%d\n",
+                         op.c_str(), (unsigned long long)lo, (unsigned long long)hi, w, (int)conj, idiom_node_count(x));
+        if (hi > smax) return e;                               /* signed-safe: both renderings agree */
+        if (idiom_node_count(x) > 8) return e;                 /* don't duplicate a large subtree */
+        if (dbg) fprintf(stderr, "[IDIOM]  >>> MATCH (%s)\n", conj ? "&&" : "||");
+        ExprP lo_c = mkConst(lo, w, e->is_unsigned), hi_c = mkConst(hi, w, e->is_unsigned);
+        if (conj) {   /* x >= lo && x <= hi */
+            ExprP ge = mkBinary(">=", clone(x), lo_c, w, e->is_unsigned);
+            ExprP le = mkBinary("<=", clone(x), hi_c, w, e->is_unsigned);
+            return mkBinary("&&", ge, le, 4, false);
+        }
+        /* x < lo || x > hi */
+        ExprP lt = mkBinary("<", clone(x), lo_c, w, e->is_unsigned);
+        ExprP gt = mkBinary(">", clone(x), hi_c, w, e->is_unsigned);
+        return mkBinary("||", lt, gt, 4, false);
+    }
+    void idiom_rewrite(ExprP& e) {
+        if (!e) return;
+        idiom_rewrite(e->a); idiom_rewrite(e->b); idiom_rewrite(e->c);
+        for (auto& ar : e->args) idiom_rewrite(ar);
+        e = match_range_check(e);
+    }
+    void recognize_idioms() {
+        for (auto& b : blocks) {
+            for (auto& s : b.stmts) { idiom_rewrite(s.rhs); idiom_rewrite(s.lhs); }
+            idiom_rewrite(b.cond);
+            idiom_rewrite(b.ret_value);
+            idiom_rewrite(b.tail_call);
+            idiom_rewrite(b.switch_var);
+        }
+    }
+
+    void collect_var_info() {
+        for (auto& b : blocks) {
+            for (auto& s : b.stmts) {
+                scan_types(s.lhs, true);
+                scan_types(s.rhs, false);
+            }
+            scan_types(b.cond, false);
+            scan_types(b.ret_value, false);
+            scan_types(b.switch_var, false);
+            scan_types(b.tail_call, false);
+        }
+    }
+
+    /* Pointer-only re-marking: walk every expression and run mark_ptr_in_addr on each
+     * Mem's address, WITHOUT scan_types' var_width max-wins bump. Used as a LATE pass
+     * (after CSE mints its temps) so a hoisted `tN = glob+off` that is dereferenced
+     * gets typed a pointer — but a re-run of full collect_var_info would also widen a
+     * `float` accumulator to `double` (max-wins width), silently changing FP precision
+     * and failing the behavioral float corpus (arr_sum/arr_normalize01). This skips
+     * that side effect. */
+    /* Mark ONLY a "clean pointer base": a bare var, or `(cast)var ± CONSTANT`. Unlike
+     * mark_ptr_in_addr this REFUSES `var + <non-const>` — because the non-const side may
+     * itself be the real base (a stack array or another pointer), and marking BOTH makes
+     * `p + q` = C2110 "cannot add two pointers" (fn_00039aa0: `(char*)t817 + (s4+0x24)`
+     * where t817 is a scaled index `(float*)(i*4)` and s4 is the array base). The late
+     * pass only needs the unambiguous `tN = glob+off; *(T*)(tN ± const)` shape anyway. */
+    void mark_clean_ptr_base(const ExprP& e, int elem_w, bool elem_uns, bool elem_float) {
+        if (!e) return;
+        if (e->kind == EK::Var) {
+            if (array_locals.count(e->name)) return;
+            mark_ptr_in_addr(e, elem_w, elem_uns, elem_float, false);
+            return;
+        }
+        if (e->kind == EK::Cast) { mark_clean_ptr_base(e->a, elem_w, elem_uns, elem_float); return; }
+        if (e->kind == EK::Binary && (e->op == "+" || e->op == "-")) {
+            if (e->b && e->b->kind == EK::Const) { mark_clean_ptr_base(e->a, elem_w, elem_uns, elem_float); return; }
+            if (e->a && e->a->kind == EK::Const && e->op == "+") { mark_clean_ptr_base(e->b, elem_w, elem_uns, elem_float); return; }
+        }
+        /* var+var / var+arrayexpr / scaled index / anything else: ambiguous — do not mark. */
+    }
+    void mark_deref_pointers_expr(const ExprP& e) {
+        if (!e) return;
+        if (e->kind == EK::Mem)
+            mark_clean_ptr_base(e->a, e->width ? e->width : 1, e->is_unsigned, e->is_float);
+        mark_deref_pointers_expr(e->a);
+        mark_deref_pointers_expr(e->b);
+        mark_deref_pointers_expr(e->c);
+        for (auto& ar : e->args) mark_deref_pointers_expr(ar);
+    }
+    void mark_late_deref_pointers() {
+        for (auto& b : blocks) {
+            for (auto& s : b.stmts) { mark_deref_pointers_expr(s.lhs); mark_deref_pointers_expr(s.rhs); }
+            mark_deref_pointers_expr(b.cond);
+            mark_deref_pointers_expr(b.ret_value);
+            mark_deref_pointers_expr(b.switch_var);
+            mark_deref_pointers_expr(b.tail_call);
+        }
+    }
+
+    std::set<std::string> conflict_raw_vars;   /* declare as raw `long long` */
+    /* A variable declared as a POINTER (mis-inferred) but ASSIGNED a float value
+     * — `int* t10 = <float t8>` — is a hard C2440 with no valid cast (float and
+     * pointer are unrelated types). It arises from a mis-merged register: a gp
+     * pointer live-range and an xmm float live-range collapsed into one temp (an
+     * SSE min/max search shuttling point coordinates). We can't cleanly un-merge
+     * here, but declaring the temp as the RAW 8-byte `long long` register it
+     * physically is makes EVERY assignment/use compile through the existing
+     * conversion+cast paths (float->ll and ptr->ll are /w-suppressed warnings, not
+     * errors), eliminating the hard error. Only touches pointer-typed vars that
+     * receive a float value — all already-broken — so it can never regress
+     * working code. */
+    void mark_type_conflict_raw() {
+        conflict_raw_vars.clear();
+        /* does the expression render/declare as a FLOAT value? (a float var via
+         * var_is_float OR force_float_vars, an is_float expr/deref, or a cast of
+         * one). A float* pointer is NOT a float value. */
+        std::function<bool(const ExprP&)> is_float_val = [&](const ExprP& x) -> bool {
+            if (!x) return false;
+            if (expr_is_pointer(x)) return false;
+            if (x->is_float) return true;
+            if (x->kind == EK::Var) {
+                const std::string& n = x->name;
+                return (var_is_float.count(n) && var_is_float[n]) || force_float_vars.count(n);
+            }
+            if (x->kind == EK::Cast) return is_float_val(x->a);
+            return false;
+        };
+        /* an ADDRESS value: a pointer, an &x, a stack array, or +/- arithmetic on
+         * one (`s7 + 12`). Used for the symmetric conflict below. */
+        std::function<bool(const ExprP&)> is_addr_val = [&](const ExprP& x) -> bool {
+            if (!x) return false;
+            if (expr_is_pointer(x) || x->kind == EK::AddrOf) return true;
+            if (x->kind == EK::Var && array_locals.count(x->name)) return true;
+            if (x->kind == EK::Binary && (x->op == "+" || x->op == "-"))
+                return is_addr_val(x->a) || is_addr_val(x->b);
+            if (x->kind == EK::Cast) return is_addr_val(x->a);
+            return false;
+        };
+        /* SYMMETRIC conflict: a FLOAT-typed var that receives a POINTER/address
+         * value (`float v4 = s7 + 12`, C2440 char*->float) — the same mis-merged
+         * register the other way round. Declare it raw so both the address and any
+         * float assignment compile as conversions. */
+        for (auto& b : blocks)
+            for (auto& s : b.stmts) {
+                if (s.kind != SK::Assign || !s.lhs || s.lhs->kind != EK::Var || !s.rhs)
+                    continue;
+                const std::string& t = s.lhs->name;
+                bool decl_float = (var_is_float.count(t) && var_is_float[t]) ||
+                                  force_float_vars.count(t);
+                /* a float-typed var that receives an ADDRESS (`v4 = s7+12`) or an
+                 * 8-byte QWORD int/pointer LOAD (`t5 = *(long long*)(a1+0x2a8)`,
+                 * later returned as a pointer) is the mis-merge the other way — the
+                 * value is not a float. Raw it. (A 4-byte int load into a float is
+                 * left alone: that is a legitimate int->float conversion.) */
+                bool nonfloat_qword = s.rhs->kind == EK::Mem && !s.rhs->is_float &&
+                                      s.rhs->width >= 8;
+                if (decl_float && (is_addr_val(s.rhs) || nonfloat_qword))
+                    conflict_raw_vars.insert(t);
+            }
+        /* PARAM mis-type: a float/double parameter that is really a pointer/integer
+         * arriving in an xmm register (the mis-merged register the other way) — the
+         * WHOLE value, not a float. Detect it from POINTER/INTEGER-only uses that a
+         * genuine float param never exhibits, and declare the PARAM raw `long long`
+         * so subtraction (`a2 - a1`), masks (`& -32`), subscripts, derefs and
+         * compares involving it compile. The corpus float DLLs (floattorture,
+         * geometry) gate this so a real float param is never demoted. */
+        auto flt_param = [&](const ExprP& x) -> std::string {
+            if (!x || x->kind != EK::Var) return "";
+            const std::string& n = x->name;
+            bool isp = n.size() >= 2 && n[0] == 'a' && isdigit((unsigned char)n[1]);
+            bool isf = (var_is_float.count(n) && var_is_float[n]) || force_float_vars.count(n);
+            return (isp && isf) ? n : "";
+        };
+        /* (a) copied wholesale into a pointer variable (`t8 = a1`, `t2 = (T*)a4`) —
+         * unwrap any reinterpret cast the lifter inserted for a double->ptr move. */
+        for (auto& b : blocks)
+            for (auto& s : b.stmts) {
+                if (s.kind != SK::Assign || !s.lhs || s.lhs->kind != EK::Var || !s.rhs)
+                    continue;
+                if (!(var_pointer.count(s.lhs->name) && var_pointer[s.lhs->name])) continue;
+                ExprP rv = s.rhs;
+                while (rv && rv->kind == EK::Cast) rv = rv->a;
+                std::string p = flt_param(rv);
+                if (!p.empty()) conflict_raw_vars.insert(p);
+            }
+        /* (b) used in a POINTER/INTEGER-only operator: a bitwise/shift/mod on it, or
+         * `+`/`-` against a NON-float (pointer/int) sibling — i.e. address
+         * arithmetic like `(a2 - a1) & -32` where a2 is a `long long` end pointer. */
+        std::function<void(const ExprP&)> scan_pmis = [&](const ExprP& e) {
+            if (!e) return;
+            if (e->kind == EK::Binary) {
+                const std::string& o = e->op;
+                std::string p;
+                if (o=="&"||o=="|"||o=="^"||o=="<<"||o==">>"||o=="%") {
+                    if (!(p = flt_param(e->a)).empty()) conflict_raw_vars.insert(p);
+                    if (!(p = flt_param(e->b)).empty()) conflict_raw_vars.insert(p);
+                } else if (o=="+"||o=="-") {
+                    if (!(p = flt_param(e->a)).empty() && !is_float_val(e->b))
+                        conflict_raw_vars.insert(p);
+                    if (!(p = flt_param(e->b)).empty() && !is_float_val(e->a))
+                        conflict_raw_vars.insert(p);
+                }
+            }
+            scan_pmis(e->a); scan_pmis(e->b); scan_pmis(e->c);
+            for (auto& ar : e->args) scan_pmis(ar);
+        };
+        for (auto& b : blocks) {
+            for (auto& s : b.stmts) { scan_pmis(s.lhs); scan_pmis(s.rhs); }
+            scan_pmis(b.cond);
+        }
+        for (int iter = 0; iter < 8; ++iter) {   /* fixpoint: a conflicted var may feed another */
+            bool changed = false;
+            for (auto& b : blocks)
+                for (auto& s : b.stmts) {
+                    if (s.kind != SK::Assign || !s.lhs || s.lhs->kind != EK::Var || !s.rhs)
+                        continue;
+                    const std::string& t = s.lhs->name;
+                    if (conflict_raw_vars.count(t)) continue;
+                    if (!(var_pointer.count(t) && var_pointer[t])) continue;   /* declared a pointer */
+                    /* If the var is already known-float (var_is_float set, from a float
+                     * EXPRESSION assignment), decl_type's float-wins rule ALREADY
+                     * declares it `float` correctly — do NOT override to raw `long
+                     * long` (that truncates a genuine float sum: vec2_add's `t1 =
+                     * a.x+b.x`). conflict_raw is only for a pointer var that receives
+                     * float BITS a bare copy never marked float (fn_00011470's t10). */
+                    if (var_is_float.count(t) && var_is_float[t]) continue;
+                    if (is_float_val(s.rhs)) { conflict_raw_vars.insert(t); changed = true; }
+                }
+            if (!changed) break;
+        }
+    }
+
+    bool ret_is_pointer = false;
+    bool ret_is_float = false;     /* function returns float/double in xmm0 */
+    bool ret_conflict_raw = false; /* returns BOTH a float and a pointer -> raw ll */
+    bool ret_is_unsigned = false;  /* integer return computed by unsigned ops */
+    int  ret_ptr_elem_w = 0;
+    bool ret_ptr_elem_uns = false;
+    int  ret_small_w = 0;          /* 1/2 when every path returns a byte/short value */
+    bool ret_small_uns = false;    /* signedness of that narrow return */
+
+    /* True if `e` is a pointer-typed value: an address (AddrOf), a pointer
+     * variable, or pointer arithmetic with a pointer-var operand. Used to
+     * recover pointer-returning functions whose RAX-at-ret holds an element
+     * address (e.g. my_strchr `return &s[i]`). */
+    bool expr_is_pointer(const ExprP& e, int* elem_w = nullptr, bool* elem_u = nullptr) {
+        if (!e) return false;
+        if (e->kind == EK::AddrOf) return true;
+        if (e->kind == EK::Var) {
+            auto it = var_pointer.find(e->name);
+            if (it != var_pointer.end() && it->second) {
+                if (elem_w) { auto w = ptr_elem_width.find(e->name);
+                    if (w != ptr_elem_width.end()) *elem_w = w->second; }
+                if (elem_u) { auto u = ptr_elem_uns.find(e->name);
+                    if (u != ptr_elem_uns.end()) *elem_u = u->second; }
+                return true;
+            }
+            return false;
+        }
+        if (e->kind == EK::Binary && (e->op == "+" || e->op == "-"))
+            return expr_is_pointer(e->a, elem_w, elem_u) ||
+                   expr_is_pointer(e->b, elem_w, elem_u);
+        if (e->kind == EK::Cast) return expr_is_pointer(e->a, elem_w, elem_u);
+        return false;
+    }
+
+    /* Late return-type recovery: if any ret holds a pointer value, the function
+     * returns a pointer. Promote the return to 8 bytes and strip the bogus
+     * `(int)` truncation the initial sig-table width forced. This fixes
+     * pointer-returning functions (strchr/strcpy/strcat) the linear sig-table
+     * scan mis-sized as `int` because the last RAX write before a merged ret was
+     * a 32-bit `xor eax,eax` on a different path. */
+    /* Is `e` a value of POINTER type (not just "contains a pointer")? `ptr + i`
+     * and `ptr - i` are pointers; `ptr - ptr` is a ptrdiff (NOT a pointer); a
+     * copy or cast of a pointer is a pointer. Stricter than expr_is_pointer so
+     * the propagation below never mistypes an integer temp. */
+    bool ptr_value_of(const ExprP& e, int* ew, bool* eu) {
+        if (!e) return false;
+        if (e->kind == EK::AddrOf) return true;
+        if (e->kind == EK::Var) {
+            auto it = var_pointer.find(e->name);
+            if (it == var_pointer.end() || !it->second) return false;
+            if (ew) { auto w = ptr_elem_width.find(e->name); if (w != ptr_elem_width.end()) *ew = w->second; }
+            if (eu) { auto u = ptr_elem_uns.find(e->name);   if (u != ptr_elem_uns.end())   *eu = u->second; }
+            return true;
+        }
+        if (e->kind == EK::Cast) return ptr_value_of(e->a, ew, eu);
+        if (e->kind == EK::Binary && (e->op == "+" || e->op == "-")) {
+            /* capture the element width from WHICHEVER side is the pointer — a
+             * `offset + base` (pointer on the right) must still carry base's elem
+             * width, else the temp is marked a pointer but with no width and decl_type
+             * degrades it back to `long long` (roadmap #1: address arithmetic hoisted
+             * to a temp loses its pointer type). */
+            int ewa=0, ewb=0; bool eua=false, eub=false;
+            bool ap = ptr_value_of(e->a, &ewa, &eua);
+            bool bp = ptr_value_of(e->b, &ewb, &eub);
+            if (e->op == "-") {                        /* ptr - int only */
+                if (ap && !bp) { if (ew) *ew = ewa; if (eu) *eu = eua; return true; }
+                return false;
+            }
+            if (ap && !bp) { if (ew) *ew = ewa; if (eu) *eu = eua; return true; }
+            if (bp && !ap) { if (ew) *ew = ewb; if (eu) *eu = eub; return true; }
+            return false;                              /* neither / both a pointer */
+        }
+        return false;
+    }
+
+    /* Propagate pointer-ness through assignments: a temp assigned a pointer value
+     * (`t = base + i`) is itself a pointer. Without this a returned pointer held
+     * in a temp (`t1 = s + i; return t1;`) is never recognised, so the return
+     * type stays `int` and `return (int)t1` TRUNCATES the 64-bit pointer to 32
+     * bits — every my_strchr/my_strrchr-style result was wrong (50000/50000). */
+    void propagate_pointer_types() {
+        bool changed = true; int guard = 0;
+        while (changed && guard++ < 8) {
+            changed = false;
+            for (auto& b : blocks) {
+                for (auto& s : b.stmts) {
+                    if (s.kind != SK::Assign || !s.lhs || s.lhs->kind != EK::Var) continue;
+                    const std::string& nm = s.lhs->name;
+                    if (array_locals.count(nm)) continue;
+                    if (var_pointer.count(nm) && var_pointer[nm]) continue;
+                    int ew = 0; bool eu = false;
+                    if (s.rhs && ptr_value_of(s.rhs, &ew, &eu)) {
+                        var_pointer[nm] = true; var_is_ll[nm] = true;
+                        if (ew > 0 && !ptr_elem_width.count(nm)) {
+                            ptr_elem_width[nm] = ew; ptr_elem_uns[nm] = eu;
+                        }
+                        changed = true;
+                    }
+                }
+            }
+        }
+    }
+
+    /* Is `e` a value of FLOATING-POINT type? A scalar-SSE op / float literal /
+     * float-typed deref already carries is_float; a copy/cast/ternary of a float
+     * is float; `+ - * /` with a float operand yields a float. Conservative — it
+     * never crosses a (int)-cast boundary (cvttss2si), so an int that was
+     * converted FROM a float stays int. */
+    /* Float WIDTH of a value: 4 (single, `ss`/`*(float*)`/`4.0f`), 8 (double,
+     * `sd`/`*(double*)`), or 0 (not float). Tracking the width — not just "is
+     * float" — is what keeps a single-precision chain `float` instead of widening
+     * it to `double`. A binary takes the wider operand; a cvtss2sd/cvtsd2ss cast
+     * carries the cast's own width. */
+    int float_width_of(const ExprP& e) {
+        if (!e) return 0;
+        /* a comparison (`a > b`, `x == y`) yields a boolean int 0/1 — NEVER a float,
+         * even when its operands are float (the node may carry is_float from the FP
+         * compare). Without this the result temp is mis-declared `float`
+         * (`float t7 = 0.0f > t6;` then used as `t7 ? .. : ..`). */
+        if (e->kind == EK::Binary &&
+            (e->op=="<"||e->op==">"||e->op=="<="||e->op==">="||e->op=="=="||e->op=="!="))
+            return 0;
+        if (e->is_float) return e->width >= 8 ? 8 : 4;
+        if (e->kind == EK::Var) {
+            if (var_is_float.count(e->name) && var_is_float[e->name])
+                return (var_width.count(e->name) && var_width[e->name] >= 8) ? 8 : 4;
+            return 0;
+        }
+        if (e->kind == EK::Cast) return e->is_float ? (e->width >= 8 ? 8 : 4) : 0;
+        if (e->kind == EK::Ternary) {
+            int a = float_width_of(e->b), b = float_width_of(e->c);
+            return a ? a : b;
+        }
+        if (e->kind == EK::Binary &&
+            (e->op=="+"||e->op=="-"||e->op=="*"||e->op=="/")) {
+            int a = float_width_of(e->a), b = float_width_of(e->b);
+            return (a || b) ? std::max(a, b) : 0;
+        }
+        return 0;
+    }
+    bool float_value_of(const ExprP& e) { return float_width_of(e) != 0; }
+
+    /* Recursively re-tag bare INTEGER Const nodes as float when they sit in a
+     * provably-float position: a `.rdata` float constant (`movss xmm,[rip+C]`) is
+     * folded to its raw bit pattern Const, and the is_float tag set at lift time
+     * (as_float) is sometimes lost across copy-prop / CSE — so `float t = 0x40800000;`
+     * (which assigns 1082130432.0f, NOT 4.0f) escapes. Marking the Const float makes
+     * render_const reinterpret the bits as `4.0f`. `fw` is the float width (4/8) of
+     * the surrounding context. Only a leaf Const is retagged (the value IS the float);
+     * we do NOT descend into mixed integer arithmetic where a const is a real scale. */
+    void retag_float_const(ExprP& e, int fw) {
+        if (!e) return;
+        if (e->kind == EK::Const) {
+            if (!e->is_float) { e->is_float = true; e->width = (fw >= 8) ? 8 : 4; }
+            return;
+        }
+        /* a ternary selects between two float values — both arms are float consts */
+        if (e->kind == EK::Ternary) { retag_float_const(e->b, fw); retag_float_const(e->c, fw); return; }
+        /* a float arithmetic op: a Const operand is a real float literal too */
+        if (e->kind == EK::Binary &&
+            (e->op=="+"||e->op=="-"||e->op=="*"||e->op=="/")) {
+            if (e->a && e->a->kind == EK::Const) retag_float_const(e->a, fw);
+            if (e->b && e->b->kind == EK::Const) retag_float_const(e->b, fw);
+        }
+    }
+    void retype_float_constants() {
+        for (auto& b : blocks) for (auto& s : b.stmts) {
+            if (s.kind != SK::Assign || !s.lhs || !s.rhs) continue;
+            int fw = 0;
+            if (s.lhs->kind == EK::Var) {
+                const std::string& nm = s.lhs->name;
+                if (var_is_float.count(nm) && var_is_float[nm] &&
+                    !(var_pointer.count(nm) && var_pointer[nm]))
+                    fw = (var_width.count(nm) && var_width[nm] >= 8) ? 8 : 4;
+            } else if (s.lhs->kind == EK::Mem && s.lhs->is_float) {
+                fw = (s.lhs->width >= 8) ? 8 : 4;
+            }
+            if (fw) retag_float_const(s.rhs, fw);
+        }
+    }
+
+    /* Propagate float-ness through the temp SSA: a temp defined from a float
+     * value is itself float, to a fixpoint (so it flows through phi merges); then
+     * a pointer that a float value is stored through is a float*. Without this the
+     * SSE ops decode correctly but the temps and the destination pointer stay
+     * `long long` (the cb50/cee0 "float math in long long temps" lag). */
+    /* A temp whose EVERY definition is a comparison (`t = a > b`) holds a boolean
+     * int 0/1, so it must not be float-typed — the lift sometimes marks it float
+     * (force_float) because the setcc result shared an XMM-class register with a
+     * neighbouring float compare (`t7 = 0.0f > t6;` used as `t7 ? .. : ..`). Demote
+     * such temps to `int`. Conservative: any NON-comparison def leaves it alone. */
+    void demote_comparison_temps() {
+        auto is_cmp = [](const ExprP& e) {
+            return e && e->kind == EK::Binary &&
+                (e->op=="<"||e->op==">"||e->op=="<="||e->op==">="||e->op=="=="||e->op=="!=");
+        };
+        std::map<std::string,bool> cmp_def, other_def;
+        for (auto& b : blocks) for (auto& s : b.stmts) {
+            if (s.kind != SK::Assign || !s.lhs || s.lhs->kind != EK::Var || !s.rhs) continue;
+            if (is_cmp(s.rhs)) cmp_def[s.lhs->name] = true;
+            else               other_def[s.lhs->name] = true;
+        }
+        for (auto& kv : cmp_def) {
+            const std::string& n = kv.first;
+            if (other_def.count(n)) continue;              /* mixed def — leave it */
+            if (var_pointer.count(n) && var_pointer[n]) continue;
+            var_is_float.erase(n); force_float_vars.erase(n);
+            var_width[n] = 4; var_is_ll[n] = false;        /* int */
+        }
+    }
+
+    void propagate_float_types() {
+        bool changed = true; int guard = 0;
+        while (changed && guard++ < 8) {
+            changed = false;
+            for (auto& b : blocks) for (auto& s : b.stmts) {
+                if (s.kind != SK::Assign || !s.lhs || s.lhs->kind != EK::Var) continue;
+                const std::string& nm = s.lhs->name;
+                if (var_pointer.count(nm) && var_pointer[nm]) continue;   /* pointer wins */
+                int fw = s.rhs ? float_width_of(s.rhs) : 0;
+                if (!fw) continue;
+                if (!var_is_float.count(nm) || !var_is_float[nm]) {
+                    var_is_float[nm] = true; changed = true;
+                }
+                /* set the FLOAT width (4 vs 8) — overriding the phi-temp default
+                 * of 8 so a single-precision temp declares `float`, not `double`. */
+                if (var_width[nm] != fw) { var_width[nm] = fw; changed = true; }
+                if (fw < 8) var_is_ll[nm] = false;
+            }
+        }
+        /* a store of a float value types the destination pointer `float*`/`double*`.
+         * Keep the store's REAL access width (the instruction operand size): a
+         * single-precision value packed into an 8-byte `movsd` (`unpcklps` of two
+         * floats -> Vector2) must stay an 8-byte store, not shrink to `*(float*)`
+         * — otherwise the declared pointer width and the store width disagree. */
+        for (auto& b : blocks) for (auto& s : b.stmts) {
+            if (s.kind == SK::Assign && s.lhs && s.lhs->kind == EK::Mem && s.rhs) {
+                int fw = float_width_of(s.rhs);
+                if (!fw) continue;
+                int aw = s.lhs->width ? s.lhs->width : fw;
+                s.lhs->is_float = true;
+                if (s.lhs->width < fw) s.lhs->width = fw;   /* widen only, never shrink */
+                mark_ptr_in_addr(s.lhs->a, aw, false, true);
+            }
+        }
+    }
+
+    bool ret_ptr_elem_float = false;
+    /* does a returned pointer expression deref a float* (for `float*` returns)? */
+    bool ret_expr_float_ptr(const ExprP& e) {
+        if (!e) return false;
+        if (e->kind == EK::Var) return ptr_elem_float.count(e->name) && ptr_elem_float[e->name];
+        if (e->kind == EK::Cast || e->kind == EK::AddrOf) return ret_expr_float_ptr(e->a);
+        if (e->kind == EK::Binary) return ret_expr_float_ptr(e->a) || ret_expr_float_ptr(e->b);
+        return false;
+    }
+    /* A function whose EVERY return value is a void callee's result (`return
+     * g();` where g is void) — modulo trivial `0` sentinels on void early-exit
+     * paths — is itself void. build_sig_table's linear heuristic can type such a
+     * wrapper `int` (quicksort_full → the now-void quicksort_range), which then
+     * binds the void result to a returned temp (`t12 = quicksort_range(...);
+     * return t12;`) — invalid C. Uses real dataflow (resolved return exprs), so a
+     * genuine value return (a `count` load) is never demoted. Runs before
+     * simplify_unused_call_temps so the orphaned temp collapses to a bare call. */
+    void demote_void_call_returns() {
+        if (!used_return || ret_is_float) return;
+        std::vector<ExprP> rets;
+        for (auto& b : blocks) {
+            if (!b.has_ret_value || !b.ret_raw) continue;
+            ExprP rr = b.ret_raw;
+            if (rr->kind == EK::Var) {
+                const std::string nm = rr->name;
+                bool found = false;
+                for (auto& b2 : blocks)
+                    for (auto& s : b2.stmts)
+                        if (s.kind == SK::Assign && s.lhs && s.lhs->kind == EK::Var &&
+                            s.lhs->name == nm && s.rhs) { rets.push_back(s.rhs); found = true; }
+                if (!found) rets.push_back(rr);
+            } else rets.push_back(rr);
+        }
+        if (rets.empty()) return;
+        bool any_void_call = false;
+        for (auto& rr : rets) {
+            ExprP v = rr;
+            while (v && v->kind == EK::Cast && v->a) v = v->a;   /* peel (int) framing */
+            if (v && v->kind == EK::Call && v->ret_kind == 0) { any_void_call = true; continue; }
+            if (v && v->kind == EK::Const) continue;             /* void early-exit sentinel */
+            return;   /* a real value return -> not void */
+        }
+        if (!any_void_call) return;
+        used_return = false;
+        for (auto& b : blocks) {
+            b.has_ret_value = false;
+            b.ret_value = nullptr;
+            b.ret_raw = nullptr;
+        }
+    }
+
+    void recover_return_type() {
+        recover_signedness();   /* always: params/locals of void fns get sign too */
+        if (!used_return) return;
+        /* Gather the actual returned VALUES. When a function returns a single merged
+         * temp (`switch{ case: t=...; } return t;`), the bare `return t` carries no
+         * type; resolve the temp to its per-case assignments so the pointer/integer/
+         * sign tallies see the real expressions (one `char*` Pearson path must not
+         * make the whole hash function `signed char*`). */
+        std::vector<ExprP> rets;
+        for (auto& b : blocks) {
+            if (!b.has_ret_value || !b.ret_raw) continue;
+            ExprP rr = b.ret_raw;
+            if (rr->kind == EK::Var) {
+                const std::string nm = rr->name;
+                bool found = false;
+                for (auto& b2 : blocks)
+                    for (auto& s : b2.stmts)
+                        if (s.kind==SK::Assign && s.lhs && s.lhs->kind==EK::Var &&
+                            s.lhs->name==nm && s.rhs) { rets.push_back(s.rhs); found = true; }
+                if (!found) rets.push_back(rr);
+            } else rets.push_back(rr);
+        }
+        int ew = 0; bool eu = false; bool any_ptr = false; bool fl = false;
+        int ptr_rets = 0, int_rets = 0;
+        int uns_rets = 0, sgn_rets = 0;
+        /* a bit-reinterpret `*(int*)&f` (a movd of a float's bits) is an INTEGER value,
+         * not a pointer — its address is an `&` but its VALUE is the int at that address.
+         * Without this it counts as neither, leaving int_rets==0 and mis-inferring the whole
+         * function as pointer-returning (every `return f` becomes an illegal `(int*)f`). */
+        auto is_bit_reinterp = [&](const ExprP& x) -> bool {
+            ExprP m = x; while (m && m->kind == EK::Cast) m = m->a;
+            return m && m->kind == EK::Mem && m->a && m->a->kind == EK::AddrOf && !m->is_float;
+        };
+        for (auto& rr : rets) {
+            int e2 = 0; bool u2 = false;
+            if (expr_is_pointer(rr, &e2, &u2) && !is_bit_reinterp(rr)) {
+                any_ptr = true; ++ptr_rets;
+                if (e2 && !ew) { ew = e2; eu = u2; }
+                if (ret_expr_float_ptr(rr)) fl = true;
+            } else if (expr_clearly_integer(rr) || is_bit_reinterp(rr)) {
+                ++int_rets;
+            }
+            /* return signedness: a value computed by unsigned ops (logical >>,
+             * unsigned / %, unsigned casts/loads) is `unsigned`. Tally per path. */
+            /* UNSIGNED uses variable signedness (a returned `crc` var is unsigned from
+             * its logical-shift history). SIGNED requires a strong signed OPERATION in
+             * the return expression itself (sar / signed div / a `(signed char)` movsx
+             * read) — a signed VARIABLE alone (`return len*2`) doesn't count, since it
+             * is merely converted to the return type. */
+            if (expr_signedness(rr) > 0) ++uns_rets;
+            if (ret_has_strong_signed_op(rr)) ++sgn_rets;
+        }
+        /* Unsigned return: at least one path is genuinely unsigned and NONE is
+         * genuinely signed. `sgn_rets` now counts only STRONG signed evidence (sar,
+         * signed div, a movsx `(signed char)`/`(short)` read, a var proven signed) —
+         * NOT width-framing casts or signed params through agnostic ops — so a hash
+         * suite (all logical shifts) stays unsigned while a codec (movsx i-reads +
+         * idiv) is correctly signed. */
+        if (uns_rets > 0 && sgn_rets == 0) ret_is_unsigned = true;
+
+        /* MIXED return: some paths return a float (ret_is_float, in xmm0) and others
+         * a pointer (in rax). One C return type cannot hold both register classes,
+         * so `return ptr` from a `double` function is C2440. Declare the raw `long
+         * long`: both `return <ptr>` and `return <floatexpr>` then compile as
+         * conversions (fn_00031b50 returns either a node pointer or a float score). */
+        if (ret_is_float && any_ptr) ret_conflict_raw = true;
+
+        /* Byte/short return: the ABI returns an int8/int16 in eax framed as an int
+         * `(int)(char)x`, so a uint8_t/int16_t function comes out `unsigned int`.
+         * When EVERY return path is such a narrow-cast value (a `(signed char)` /
+         * `(unsigned short)` truncation, peeling any outer int/long framing cast),
+         * recover the narrow type — reverse_bits8/sum8/crc8 -> `unsigned char`.
+         * Reached only through an explicit truncation cast (not a bare byte load or
+         * const), so `int f(){ return buf[i]; }` is never wrongly narrowed. */
+        if (!any_ptr && !fl && !ret_is_float && !rets.empty()) {
+            std::function<int(const ExprP&, bool&)> narrow_w =
+                [&](const ExprP& e, bool& uns) -> int {
+                    if (!e || e->kind != EK::Cast) return 0;
+                    if (e->width == 1 || e->width == 2) { uns = e->is_unsigned; return e->width; }
+                    if (e->width >= 4) return narrow_w(e->a, uns);   /* peel int framing */
+                    return 0;
+                };
+            int sw = 0; bool su = false; bool ok = true; bool saw_cast = false;
+            std::vector<int64_t> consts;
+            for (auto& rr : rets) {
+                bool u2 = false; int w2 = narrow_w(rr, u2);
+                if (w2) {
+                    saw_cast = true;
+                    if (sw == 0) { sw = w2; su = u2; }
+                    else if (w2 != sw) { sw = std::max(sw, w2); su = su && u2; }
+                } else {
+                    /* a bare constant path (a null-guard `return 0`) rides along a
+                     * narrow return as long as it fits the recovered width. */
+                    ExprP c = rr; while (c && c->kind == EK::Cast && c->a) c = c->a;
+                    if (c && c->kind == EK::Const) consts.push_back(c->cval);
+                    else { ok = false; break; }
+                }
+            }
+            if (ok && saw_cast && (sw == 1 || sw == 2)) {
+                int64_t lo = sw == 1 ? (su ? 0 : -128) : (su ? 0 : -32768);
+                int64_t hi = sw == 1 ? (su ? 255 : 127) : (su ? 65535 : 32767);
+                for (int64_t cv : consts) if (cv < lo || cv > hi) { ok = false; break; }
+            }
+            if (ok && saw_cast && (sw == 1 || sw == 2)) {
+                ret_small_w = sw; ret_small_uns = su; ret_width = sw;
+                for (auto& b : blocks) {
+                    if (!b.has_ret_value || !b.ret_raw) continue;
+                    ExprP r = clone(b.ret_raw);
+                    while (r && r->kind == EK::Cast && r->width >= 4 && r->a) r = r->a;
+                    if (!(r && r->kind == EK::Cast && r->width == sw))
+                        r = mkCast(cast_str(sw, su), r, sw, su);
+                    b.ret_value = fold(r);
+                }
+                return;   /* narrow return settled; pointer/int tally is moot */
+            }
+        }
+
+        /* A function is pointer-returning only when NO path returns a clearly-integer
+         * value: one `char*` path (a Pearson table walker) among 16 integer-hash
+         * returns is an integer function, not a `signed char*` one. A path that returns a
+         * FLOAT (in xmm0) makes it a mixed float/ptr fn — handled as `long long` by
+         * ret_conflict_raw above, NOT a pointer (else `return f` becomes an illegal `(T*)f`). */
+        if (!any_ptr || int_rets > 0 || ret_is_float) return;
+        ret_is_pointer = true;
+        ret_ptr_elem_w = ew;
+        ret_ptr_elem_uns = eu;
+        ret_ptr_elem_float = fl;
+        ret_width = 8;
+        /* rebuild ret_value from the untruncated raw expression */
+        for (auto& b : blocks) {
+            if (b.has_ret_value && b.ret_raw) b.ret_value = clone(b.ret_raw);
+        }
+    }
+
+    /* A return expression that is plainly an integer computation (arithmetic / a
+     * cast to an integer type), NOT a pointer and NOT a bare const sentinel. Used to
+     * stop one stray pointer-typed path from making the whole function pointer-typed. */
+    bool expr_clearly_integer(const ExprP& e) {
+        if (!e) return false;
+        if (e->kind == EK::Binary) {
+            const std::string& o = e->op;
+            return o=="+"||o=="-"||o=="*"||o=="/"||o=="%"||o=="<<"||o==">>"||
+                   o=="&"||o=="|"||o=="^"||o=="mulh"||o=="umulh";
+        }
+        if (e->kind == EK::Cast) {
+            return e->op.find("char*") == std::string::npos &&
+                   e->op.find("*") == std::string::npos;
+        }
+        return false;
+    }
+
+    /* True if the expression performs a STRONG signed OPERATION: an arithmetic `>>`
+     * (sar), a signed `/`/`%` (idiv), or a `(signed char)`/`(short)` movsx read. These
+     * are sign-revealing operations, unlike a signed variable merely converted to the
+     * return type. Used so a hash suite (all logical shifts) stays unsigned while a
+     * codec with a real `idiv`/`sar`/movsx return is correctly signed. */
+    bool ret_has_strong_signed_op(const ExprP& e) {
+        if (!e) return false;
+        if (e->kind == EK::Binary) {
+            const std::string& o = e->op;
+            if ((o==">>"||o=="/"||o=="%") && !e->is_unsigned) return true;
+        }
+        if (e->kind == EK::Cast &&
+            (e->op.find("(signed char)") != std::string::npos ||
+             e->op.find("(short)") != std::string::npos))
+            return true;
+        return ret_has_strong_signed_op(e->a) || ret_has_strong_signed_op(e->b) ||
+               ret_has_strong_signed_op(e->c);
+    }
+
+    /* Signedness of a value: +1 unsigned, -1 signed, 0 unknown. C's "unsigned is
+     * contagious" rule: a mixed arithmetic expression is unsigned if any operand is.
+     * Strong signals: logical `>>` / unsigned `/ %` (is_unsigned set by SHR/DIV) =>
+     * unsigned; arithmetic `>>` / signed `/ %` => signed; an `(unsigned ...)` cast =>
+     * unsigned. Variables consult var_unsigned (filled by propagate_signedness). */
+    int expr_signedness(const ExprP& e) {
+        if (!e) return 0;
+        switch (e->kind) {
+            case EK::Cast: {
+                const std::string& c = e->op;
+                if (c.find("unsigned") != std::string::npos) return 1;   /* unsigned conv */
+                /* a NARROWING signed cast (`(signed char)`/`(short)`) is the movsx
+                 * sign-extension idiom — strong evidence the value is signed. A WIDE
+                 * cast (`(int)`/`(long long)`) is usually return/width framing that
+                 * wraps a value of either sign, so recurse to the inner value. */
+                if (c.find("(signed char)") != std::string::npos ||
+                    c.find("(short)") != std::string::npos)
+                    return -1;
+                int inner = expr_signedness(e->a);
+                return inner ? inner : 0;
+            }
+            case EK::Mem:
+                return e->is_unsigned ? 1 : 0;
+            case EK::Var: {
+                auto it = var_unsigned.find(e->name);
+                if (it != var_unsigned.end()) return it->second ? 1 : -1;
+                return 0;
+            }
+            case EK::Const:
+                if (e->is_unsigned) return 1;
+                /* a 32-bit literal above INT_MAX is `unsigned int` in C (`0xfffffc80`),
+                 * so `x & C` / `x | C` is unsigned — a real signedness signal for the
+                 * C4018 relational fix. */
+                if (e->width && e->width <= 4 &&
+                    (unsigned long long)e->cval > 0x7fffffffULL &&
+                    (unsigned long long)e->cval <= 0xffffffffULL) return 1;
+                return 0;   /* otherwise a literal carries no decisive signedness */
+            case EK::Binary: {
+                const std::string& o = e->op;
+                if (o==">>"||o=="/"||o=="%") return e->is_unsigned ? 1 : -1;
+                if (o=="<"||o=="<="||o==">"||o==">="||o=="=="||o=="!="||
+                    o=="&&"||o=="||") return 0;   /* boolean result */
+                if (o=="umulh") return 1;
+                if (o=="mulh")  return -1;
+                /* +,-,*,&,|,^,<<: contagion — unsigned if either side is */
+                int sa = expr_signedness(e->a), sb = expr_signedness(e->b);
+                if (sa > 0 || sb > 0) return 1;
+                if (sa < 0 || sb < 0) return -1;
+                return 0;
+            }
+            case EK::Unary:
+                return expr_signedness(e->a);
+            default:
+                return 0;
+        }
+    }
+
+    /* Per-variable signedness recovery — a FLAGSHIP correctness goal: recover the
+     * declared sign of every integer parameter, local and return value. Two evidence
+     * sources, both behavior-safe (the rendered output already casts each operation,
+     * so a variable's declared sign affects only the recovered TYPE, never the
+     * computed value):
+     *   (1) USE CONTEXT — a var consumed by a logical `>>`, an unsigned `/`/`%`, or
+     *       an unsigned compare (`ja/jb`) is unsigned; by an arithmetic `>>` (sar),
+     *       a signed `/`, or a signed compare (`jg/jl`) is signed. Votes are tallied.
+     *   (2) DEFINITION — a temp assigned a value that is itself unsigned (a movzx
+     *       zero-extend, an unsigned op) is unsigned; propagated to a fixpoint so
+     *       temp->temp chains resolve. Definition evidence (precise) wins over the
+     *       use votes (which a value used both ways can split).
+     * Parameters have no definition, so their sign comes from use votes alone. */
+    void collect_sign_votes(const ExprP& e) {
+        if (!e) return;
+        if (e->kind == EK::Binary) {
+            const std::string& o = e->op;
+            int s = e->is_unsigned ? +1 : -1;
+            auto vote = [&](const ExprP& x){ if (x && x->kind==EK::Var) sign_votes[x->name] += s; };
+            /* Only the STRONG signals vote: a logical-vs-arithmetic `>>` (shr/sar) and
+             * an unsigned-vs-signed `/`/`%` (div/idiv) directly reflect the operand's
+             * declared sign. COMPARES do NOT vote: MSVC emits an unsigned `cmp;ja` for
+             * switch/range bounds even on signed values (`(unsigned)algo > 16`), which
+             * would falsely mark a signed selector unsigned. */
+            if (o == ">>") vote(e->a);                                 /* shifted value */
+            else if (o=="/"||o=="%") { vote(e->a); vote(e->b); }
+            /* A SIGNED ordered compare against 0 (`x < 0` / `x >= 0`, from jl/jge/
+             * js/jns) is authoritative: an unsigned value is never < 0, so the
+             * compiler would never emit a signed compare-to-zero on it. This is the
+             * `if (x < 0)` sign-test idiom (my_itoa's negative-number handling) and
+             * must override the copy-taint from an unsigned sibling (e.g. the abs
+             * value `v = x` then `v / 10` unsigned). Unlike general compares (which
+             * do NOT vote), the operand-vs-ZERO signed test cannot be an unsigned
+             * range-check trick. */
+            else if ((o=="<"||o=="<="||o==">"||o==">=") && !e->is_unsigned) {
+                if (e->b && e->b->kind==EK::Const && e->b->cval==0 && e->a && e->a->kind==EK::Var)
+                    zero_signed_vars.insert(e->a->name);
+                else if (e->a && e->a->kind==EK::Const && e->a->cval==0 && e->b && e->b->kind==EK::Var)
+                    zero_signed_vars.insert(e->b->name);
+            }
+        }
+        collect_sign_votes(e->a); collect_sign_votes(e->b); collect_sign_votes(e->c);
+        for (auto& ar : e->args) collect_sign_votes(ar);
+    }
+
+    void recover_signedness() {
+        sign_votes.clear();
+        zero_signed_vars.clear();
+        for (auto& b : blocks) {
+            for (auto& s : b.stmts) { collect_sign_votes(s.lhs); collect_sign_votes(s.rhs); }
+            collect_sign_votes(b.cond);
+            collect_sign_votes(b.ret_raw);
+            collect_sign_votes(b.ret_value);
+            collect_sign_votes(b.switch_var);
+            if (b.tail_call) collect_sign_votes(b.tail_call);
+        }
+        /* seed from use votes (the only evidence for parameters) */
+        for (auto& kv : sign_votes) {
+            if (kv.second > 0) var_unsigned[kv.first] = true;
+            else if (kv.second < 0) var_unsigned[kv.first] = false;
+        }
+        /* definition-based propagation overrides votes for assigned temps/locals */
+        for (int pass = 0; pass < 5; ++pass) {
+            bool changed = false;
+            for (auto& b : blocks) {
+                for (auto& s : b.stmts) {
+                    if (s.kind != SK::Assign || !s.lhs || !s.rhs) continue;
+                    if (s.lhs->kind != EK::Var) continue;
+                    int sg = expr_signedness(s.rhs);
+                    if (sg != 0) {
+                        bool u = (sg > 0);
+                        auto it = var_unsigned.find(s.lhs->name);
+                        if (it == var_unsigned.end() || it->second != u) {
+                            var_unsigned[s.lhs->name] = u; changed = true;
+                        }
+                    }
+                    /* A pure copy `t = src` (Var=Var) carries the SAME value, so an
+                     * unsigned use of either side implies the other is unsigned too.
+                     * Back-propagate so a `seed` copied then logical-shifted (the /O2
+                     * `mov rX,seed; shr rX,32` form) recovers the unsigned parameter. */
+                    if (s.rhs->kind == EK::Var) {
+                        bool lu = var_unsigned.count(s.lhs->name) && var_unsigned[s.lhs->name];
+                        bool ru = var_unsigned.count(s.rhs->name) && var_unsigned[s.rhs->name];
+                        if (lu && !ru) { var_unsigned[s.rhs->name] = true; changed = true; }
+                        else if (ru && !lu) { var_unsigned[s.lhs->name] = true; changed = true; }
+                    }
+                }
+            }
+            if (!changed) break;
+        }
+        /* Authoritative override: a var sign-tested against 0 (`x < 0`/`x >= 0`) is
+         * signed, no matter what copy/def propagation concluded from an unsigned
+         * sibling. Applied last so it wins. */
+        for (auto& n : zero_signed_vars) var_unsigned[n] = false;
+    }
+    std::map<std::string,int> sign_votes;
+    std::set<std::string> zero_signed_vars;   /* proven signed by `x</>=0` sign-test */
+    void scan_types(const ExprP& e, bool is_lhs) {
+        if (!e) return;
+        if (e->kind == EK::Mem) mark_ptr_in_addr(e->a, e->width ? e->width : 1, e->is_unsigned, e->is_float);
+        if (e->kind == EK::Var) {
+            int w = e->width ? e->width : 4;
+            auto it = var_width.find(e->name);
+            if (it == var_width.end() || w > it->second) var_width[e->name] = w;
+        }
+        scan_types(e->a, false); scan_types(e->b, false); scan_types(e->c, false);
+        for (auto& ar : e->args) scan_types(ar, false);
+        (void)is_lhs;
+    }
+    void mark_ptr_in_addr(const ExprP& e, int elem_w = 0, bool elem_uns = false,
+                          bool elem_float = false, bool stride_match = false) {
+        if (!e) return;
+        /* `*(T*)&x` (a bit-reinterpret, e.g. movd of a float's bits) has an AddrOf address:
+         * the inner `x` is a VALUE being reinterpreted, NOT a pointer. Do not descend past
+         * the `&` — else a float local `f` in `*(int*)&f` is mis-typed `int*` (C2111/C2440
+         * in sinf/cosf Taylor code). Same for the offset form `*(int*)((char*)&s + off)`. */
+        if (e->kind == EK::AddrOf) return;
+        if (e->kind == EK::Var) {
+            /* stack-array locals keep their `char buf[N]` declaration; do not
+             * retype them as pointers (the byte-addressed (T*) casts stay). */
+            if (array_locals.count(e->name)) return;
+            var_pointer[e->name] = true; var_is_ll[e->name] = true;
+            /* Element width from the deref. The ARRAY STRIDE is authoritative: an
+             * access `*(T*)(p + i*sizeof(T))` whose index scale EQUALS the access
+             * width is genuine array iteration and reveals the element type. A
+             * const-offset wide store (a merged memset: int[16] zeroed via qword
+             * stores) or a sub-field read (the low 4 bytes of a long long) has
+             * scale != width and is weaker evidence. Rules: a stride-matched width
+             * beats a non-stride-matched one; among equals, the LARGER wins (a
+             * sub-field read never widens a real element). Fixes BOTH int[16]-as-
+             * long long[8] (histogram: int stride-4 beats qword const-offset) AND
+             * long long*-as-int* (regs: qword stride-8 beats int sub-field reads). */
+            if (elem_w > 0) {
+                auto it = ptr_elem_width.find(e->name);
+                bool was_auth = ptr_elem_authoritative.count(e->name) != 0;
+                if (it == ptr_elem_width.end()) {
+                    ptr_elem_width[e->name] = elem_w; ptr_elem_uns[e->name] = elem_uns;
+                    if (stride_match) ptr_elem_authoritative.insert(e->name);
+                } else if (stride_match && !was_auth) {
+                    it->second = elem_w; ptr_elem_uns[e->name] = elem_uns;
+                    ptr_elem_authoritative.insert(e->name);
+                } else if (stride_match == was_auth) {
+                    /* same authority class: a wider element wins (sub-field reads
+                     * and partial merged stores are both narrower than the real). */
+                    if (elem_w > it->second) { it->second = elem_w; ptr_elem_uns[e->name] = elem_uns; }
+                }
+                /* (!stride_match && was_auth): never let a non-stride access
+                 * override an authoritative array stride. */
+            }
+            /* a deref proven float (movss/scalar-FP) types the pointer float*. */
+            if (elem_float) {
+                ptr_elem_float[e->name] = true;
+                /* float element width is MIN-wins (single beats double): a `movss`
+                 * (4B) store/load proves a single-precision element; a sibling `movsd`
+                 * (8B) is a PACKED 2-float (Vector2) store, not a double. Without this
+                 * a float[] written `movss [p];movss [p+4]; movsd [p]` (unpcklps pack)
+                 * typed `double*` from the 8B max-wins width (fun_0000d1f0/0x11080). */
+                if (elem_w > 0) {
+                    auto it = ptr_elem_float_w.find(e->name);
+                    if (it == ptr_elem_float_w.end() || elem_w < it->second)
+                        ptr_elem_float_w[e->name] = elem_w;
+                }
+            }
+            /* ...but a NON-float qword deref through the same pointer proves it is a
+             * heterogeneous STRUCT base (its first field a pointer/handle), not a
+             * float array — a real float[]/double[] never holds a qword scalar. Record
+             * it so the float typing is suppressed later (the per-field `*(float*)`
+             * casts still render the float members; the bare `*p` then derefs the
+             * qword correctly instead of being mistyped `*(double*)`). */
+            if (!elem_float && elem_w >= 8) ptr_nonfloat_qword.insert(e->name);
+            return;
+        }
+        /* For `base + index*scale`, only the additive base is the pointer; a
+         * scaled term (index * const) is the array index, not a pointer. This
+         * keeps the index variable a plain integer rather than mistyping it as
+         * `long long*`, and lets the array-subscript renderer find the base. */
+        if (e->kind == EK::Binary && (e->op == "+" || e->op == "-")) {
+            auto is_scaled = [](const ExprP& x) {
+                return x && x->kind == EK::Binary && x->op == "*";
+            };
+            auto scale_of = [](const ExprP& x) -> int {
+                if (x && x->kind == EK::Binary && x->op == "*") {
+                    if (x->b && x->b->kind == EK::Const) return (int)x->b->cval;
+                    if (x->a && x->a->kind == EK::Const) return (int)x->a->cval;
+                }
+                return 0;
+            };
+            if (is_scaled(e->a) && !is_scaled(e->b)) { mark_ptr_in_addr(e->b, elem_w, elem_uns, elem_float, scale_of(e->a) == elem_w); return; }
+            if (is_scaled(e->b) && !is_scaled(e->a)) { mark_ptr_in_addr(e->a, elem_w, elem_uns, elem_float, scale_of(e->b) == elem_w); return; }
+            /* additive index (esize==1 char arrays): base + index. Mark whichever
+             * side is a Var as the pointer base, the other stays an integer. */
+            if (e->a && e->a->kind == EK::Var && e->b && e->b->kind != EK::Var) {
+                mark_ptr_in_addr(e->a, elem_w, elem_uns, elem_float, elem_w == 1); return;
+            }
+            if (e->b && e->b->kind == EK::Var && e->a && e->a->kind != EK::Var) {
+                mark_ptr_in_addr(e->b, elem_w, elem_uns, elem_float, elem_w == 1); return;
+            }
+        }
+        mark_ptr_in_addr(e->a, elem_w, elem_uns, elem_float, stride_match);
+        mark_ptr_in_addr(e->b, elem_w, elem_uns, elem_float, stride_match);
+    }
+    std::map<std::string,int>  ptr_elem_width;   /* pointer var -> element byte width */
+    std::map<std::string,bool> ptr_elem_uns;     /* pointer var -> element unsigned? */
+    std::map<std::string,bool> ptr_elem_float;   /* pointer var -> element is float */
+    std::map<std::string,int>  ptr_elem_float_w; /* float pointer -> element width (MIN-wins: single beats packed) */
+    std::set<std::string>      ptr_nonfloat_qword;  /* pointer also deref'd as a non-float qword => struct base, not float[] */
+    std::set<std::string>      ptr_elem_authoritative;  /* width came from an array stride (scale==width) */
+
+    void finalize_params() {
+        int max_home = 0;
+        for (auto& kv : param_home_off) {
+            const std::string& nm = kv.second;
+            if (nm.size() >= 2 && nm[0]=='a') {
+                int idx = atoi(nm.c_str() + 1);
+                if (idx > max_home) max_home = idx;
+            }
+        }
+        /* If parameters were homed in the prologue / read off the stack (the
+         * reliable /Od signals, incl. args 5+), trust exactly that count.
+         * Otherwise use the sig-table estimate. */
+        /* float params live in XMM by position and are never homed to a stack
+         * slot, so they don't appear in param_home_off — fold their highest
+         * position in so int-home detection doesn't truncate the count. */
+        int fmax = 0;
+        for (int p = 0; p < 4; ++p) if (is_float_param[p]) fmax = p + 1;
+        /* reg_param_max recovers un-homed GPR args (release builds). It already
+         * includes the homed positions, so it dominates max_home when args are
+         * read straight from registers. */
+        int gmax = std::max(max_home, reg_param_max);
+        if (gmax > 0) {
+            num_params = std::max(gmax, fmax);
+        } else if (sigtab && sigtab->count(f->rva)) {
+            num_params = std::max(num_params, sigtab->at(f->rva).param_count);
+        }
+        num_params = std::max(num_params, std::max(fmax, reg_param_max));
+
+        /* UNHOMED release frames read args straight from registers; the linear
+         * detect_reg_params can still under-count an argument first used only on a
+         * later CFG path (it is a flat instruction walk). That drops a real pointer
+         * parameter and collapses every [rdx+off]/[r8+off]/[r9+off] dereference to
+         * `(char*)0` — the dominant null-base family (0x5cf90's 58, 0x7a628, ...).
+         * Recover it with PRECISE entry-block liveness over genuine operand reads
+         * (compute_reg_liveness(false) excludes the synthetic call-arg uses, so an
+         * indirect call's pc=4 cannot invent phantom params). MS x64 args are
+         * positional: the highest live-in slot implies every lower slot is a param.
+         * This runs for HOMED frames too — a /Od home store `mov [rsp+8],rcx`
+         * genuinely READS its arg reg, so genuine-read liveness reproduces the
+         * homed count exactly (corpus 484/0 unaffected) — while ALSO recovering a
+         * PARTIALLY-homed release frame that homes rcx but reads rdx straight from
+         * the register (0x5cf90: r8=rdx dereferenced as the output struct). The
+         * call-arg-use exclusion (false) is what keeps an indirect call from
+         * inventing phantom params; the old coarse `!homed` whole-function skip is
+         * no longer needed and missed exactly these partially-homed frames. */
+        bool homed = param_used[0]||param_used[1]||param_used[2]||param_used[3];
+        (void)homed;
+        /* Run entry-liveness even on HOMED frames: a /O2 frame that homes rcx/rdx
+         * to the shadow space but keeps r8/r9 in registers (match_here/word_wrap's
+         * 4th arg) was missing the register-only param -> an `in_R9` leak and wrong
+         * recursive-call args. /Od homes ALL params, so the homing-store reads make
+         * live_max == the homed count (corpus unaffected). Only EXTENDS num_params. */
+        if (e->arch == DS_ARCH_X64 && !blocks.empty()) {
+            compute_reg_liveness(false);
+            int eb = entry_block();
+            if (eb >= 0 && eb < (int)reg_live_in.size()) {
+                static const Reg ga[4] = { R_RCX, R_RDX, R_R8, R_R9 };
+                /* GPR arg slots ONLY. XMM is intentionally excluded: float corpus
+                 * routines use xmm0-3 as cross-block accumulators (read-before-
+                 * write spanning blocks), so an xmm-liveness probe invents phantom
+                 * float params and shattered the corpus (484->325). Genuine float
+                 * params are recovered separately by detect_float_params (fmax). */
+                int live_max = 0;
+                for (int p = 0; p < 4; ++p)
+                    if (reg_live_in[eb][ga[p]]) live_max = p + 1;
+                num_params = std::max(num_params, live_max);
+            }
+        }
+        if (num_params > 32) num_params = 32;
+        if (num_params < 0) num_params = 0;
+
+        /* return kind from sig table */
+        if (sigtab && sigtab->count(f->rva)) {
+            const FuncSig& s = sigtab->at(f->rva);
+            int rk = s.ret_kind;
+            if (rk == 0) { used_return = false; }
+            else if (rk == 3 || rk == 4) {           /* float / double in xmm0 */
+                used_return = true; ret_is_float = true;
+                ret_width = (rk == 4) ? 8 : 4;
+            } else { used_return = true; ret_width = (rk == 2) ? 8 : 4; }
+            if (s.ret_byte && used_return && !ret_is_float) {
+                ret_byte_return = true; ret_width = 1;   /* bool/char in al */
+            }
+        }
+    }
+
+    /* +1 if the condition is a compile-time TRUE, -1 if compile-time FALSE, 0 if
+     * it depends on runtime data. fold() deliberately leaves `0 == 0` and friends
+     * un-collapsed, so the literal-vs-literal comparison is evaluated here. */
+    int const_cond(const ExprP& c) {
+        if (!c) return 0;
+        if (c->kind == EK::Const) return c->cval != 0 ? 1 : -1;
+        if (c->kind == EK::Binary && c->a && c->b &&
+            c->a->kind == EK::Const && c->b->kind == EK::Const) {
+            int64_t x = c->a->cval, y = c->b->cval; bool r;
+            const std::string& op = c->op;
+            if (op == "==")      r = (x == y);
+            else if (op == "!=") r = (x != y);
+            else if (op == "<")  r = (x <  y);
+            else if (op == ">")  r = (x >  y);
+            else if (op == "<=") r = (x <= y);
+            else if (op == ">=") r = (x >= y);
+            else return 0;
+            return r ? 1 : -1;
+        }
+        return 0;
+    }
+
+    /* Constant-condition / dead-branch peephole. A conditional block whose
+     * condition folded to a compile-time constant (`if (1)`, `if (0 == 0)`,
+     * `if (1 == 0)`, `if (0 != 0)`) is rewritten to an UNCONDITIONAL jump to its
+     * single live successor, severing the dead edge. Behavior-preserving — the
+     * constant already decided the branch in the emitted code — and it erases the
+     * entire `if (<const>)` artifact class. Dominators/loops are recomputed since
+     * the CFG changed. (Genuine lost conditions are NOT dropped here: cmpxchg/cpuid
+     * are modeled into real conditions upstream, so only true constants reach
+     * this pass.) */
+    void simplify_const_branches() {
+        bool changed = false;
+        for (auto& b : blocks) {
+            if (!b.ends_jcc || b.taken < 0 || b.fall < 0) continue;
+            int cc = const_cond(b.cond);
+            if (cc == 0) continue;
+            int keep = (cc > 0) ? b.taken : b.fall;
+            int drop = (cc > 0) ? b.fall : b.taken;
+            if (drop != keep && drop >= 0 && drop < (int)blocks.size()) {
+                auto& dp = blocks[drop].pred;
+                dp.erase(std::remove(dp.begin(), dp.end(), b.id), dp.end());
+            }
+            b.ends_jcc = false; b.cc = CC::NONE; b.cond = nullptr;
+            b.ends_jmp = true; b.taken = keep; b.fall = -1;
+            b.succ.clear(); if (keep >= 0) b.succ.push_back(keep);
+            changed = true;
+        }
+        if (changed) { compute_dominators(); compute_postdom(); find_loops(); }
+    }
+
+    /* =================================================================== */
+    /*  Top-level driver                                                    */
+    /* =================================================================== */
+
+    std::string run() {
+        if (!disassemble()) return stub("/* decompilation failed: disasm */");
+        self_fname = (f && f->name[0]) ? sani(std::string(f->name))
+                                       : "sub_" + hex(f->rva).substr(2);
+        if (std::getenv("DS_DBG_DISASM")) {
+            fprintf(stderr, "==== DISASM @ 0x%llx (%zu insns) ====\n",
+                    (unsigned long long)(f ? f->rva : 0), insns.size());
+            for (auto& in : insns)
+                fprintf(stderr, "  %llx: %-8s %s\n",
+                        (unsigned long long)in.addr, in.mnem.c_str(), in.ops.c_str());
+        }
+        scan_prologue();
+        detect_param_homes();
+        scan_addressed_stack();
+        scan_callee_saves();
+        scan_cookie_calls();
+        detect_reg_params();
+        detect_stack_params();
+        detect_cdecl_params();
+        detect_float_params();
+        build_cfg();
+        if (blocks.empty()) return stub("/* decompilation failed: no blocks */");
+        if (!std::getenv("DS_NO_FPCOLLAPSE")) collapse_fp_parity_branches();
+
+        finalize_params();
+        detect_reused_param_homes();
+        init_entry_regs();
+
+        compute_dominators();
+        compute_postdom();
+        find_loops();
+
+        /* Cross-block register dataflow: propagate every live register's value
+         * through the whole CFG to a fixpoint (single-pred chains included),
+         * materializing phi-temps at real merges. Replaces the old single-pass
+         * merge-only pass that collapsed carried register values to `0`. The
+         * final iteration's exec leaves reg_out/stmts consistent; then inject the
+         * phi assignments into predecessors (after the last clear, so they live). */
+        compute_call_before_block();   /* before exec: reaching_argc gates on it */
+        compute_entry_regs_fixpoint();
+        inject_phis();
+
+        local_dead_store_elim();
+        dead_store_elim();
+        copy_propagate();
+        local_dead_store_elim();
+        dead_store_elim();
+        global_dead_store_elim();
+        trim_phantom_call_args();
+        demote_void_call_returns();
+        simplify_unused_call_temps();
+        canonicalize_branch_after_assign();
+        collect_var_info();
+        propagate_pointer_types();
+        propagate_float_types();
+        /* A pointer deref'd as a non-float qword somewhere is a struct base, not a
+         * float array: drop the float typing so it declares `long long*` (the per-
+         * field `*(float*)` casts still render the float members correctly). */
+        for (const auto& n : ptr_nonfloat_qword) ptr_elem_float.erase(n);
+        /* AFTER both pointer- and float-type inference are settled: a var declared a
+         * pointer but assigned a float value is a mis-merged register -> raw. */
+        mark_type_conflict_raw();
+        recover_return_type();
+        simplify_const_branches();   /* erase `if (<const>)` artifacts (DCE) */
+        recognize_magic_div();       /* __mulh(x,M)>>s idiom -> x / C  (round-trip verified;
+                                      * runs AFTER naming/typing, BEFORE cse re-splits) */
+        cse_materialize();           /* hoist repeated subexprs into named temps */
+        cse_cross_statement();       /* hoist loop-invariant address arithmetic */
+        cse_global();                /* multi-use pure values -> one temp (strict-dom only) */
+        /* copy_propagate ran BEFORE cse, so the single-use copy chains cse leaves
+         * behind (`t453 = t463; use t453` — register-move temps that only became
+         * dead once cse hoisted their shared source) were never cleaned. Re-run it:
+         * cse temps have >=2 uses so they are never un-hoisted; only these residual
+         * one-use copies collapse, cutting the `tN = tM; tM2 = tM` cascades. */
+        copy_propagate();
+        demote_comparison_temps();   /* bool-in-float-temp -> int (AFTER cse extracts the
+                                      * ternary condition `t7 = 0.0f > t6` into a temp) */
+        retype_float_constants();    /* `float t=0x40800000` -> `4.0f` (lost-is_float .rdata const) */
+        promote_leaked_arg_params(); /* `in_RCX`/`in_XMM2` -> the parameter a1/a3 it IS */
+        /* Re-run the use-as-pointer inference NOW that CSE/materialization (above) has
+         * minted its temps: the pointer-type pass at ~11172 ran BEFORE cse_materialize,
+         * so a hoisted `tN = qword_glob + off` (or `tN = *(long long*)..`) that is later
+         * DEREFERENCED (`*(float*)tN`, `*(float*)((char*)tN+K)`) was left `long long`,
+         * forcing an int->pointer conversion at every use (roadmap #1, the long-long-
+         * global base case the first pass' ptr_value_of can't see). collect_var_info's
+         * mark_ptr_in_addr re-scans the derefs and types tN a pointer; the RHS then
+         * gets the `(T*)` assignment cast. Purely additive (only deref'd temps become
+         * pointers), and the mark_type_conflict_raw below cleans up any new float/ptr
+         * clash. */
+        mark_late_deref_pointers();
+        propagate_pointer_types();
+        for (const auto& n : ptr_nonfloat_qword) ptr_elem_float.erase(n);
+        /* Re-run conflict detection AFTER param promotion: a mis-typed float/double
+         * param arrives as a leaked `in_XMMn` register at the first pass (so the
+         * PARAM rules, keyed on `a1`..`aN`, could not see it) and only becomes `a4`
+         * here. The pass is idempotent (clears + recomputes), so the second run just
+         * refines with the final names (`t2 = a4` now recognizes a4). */
+        mark_type_conflict_raw();
+
+        /* collapse boolean-value diamonds `if(c)X=1;else X=0;` -> `X = c;` BEFORE the
+         * short-circuit merge (removes arm blocks that would otherwise fragment it). */
+        fold_boolean_diamonds();
+        /* Fold short-circuit condition chains, then recompute the CFG analyses the
+         * structurer depends on (the merge changes taken/fall/pred). This lets a
+         * chain of `&&`/`||` guards structure as one `if` instead of degrading to a
+         * goto/state-machine. */
+        merge_short_circuit();
+        /* Cross-jump identical /O2-duplicated tails into one shared block BEFORE the
+         * dominator/loop analysis (it changes taken/fall/pred). Combined with the
+         * structurer's high-fan-in goto gate, this collapses the "same tail 3-6x"
+         * bloat the analysis flagged into one epilogue + goto/fall-through. */
+        merge_identical_tails();
+        compute_dominators();
+        compute_postdom();
+        find_loops();
+
+        /* flag-dispatch multi-exit loops (guarded 2-exit loops) so the shared exit
+         * join has a single predecessor and structures goto-free (recomputes CFG). */
+        flag_dispatch_multiexit_loops();
+
+        if (std::getenv("DS_DBG_LOOPS") && f && f->rva == (getenv("DS_DBG_RVA") ? strtoull(getenv("DS_DBG_RVA"),0,16) : 0x1ab40)) {
+            fprintf(stderr, "[LOOPS] headers:");
+            for (auto& kv : loop_of_header) fprintf(stderr, " blk%d(0x%llx)", kv.first, (unsigned long long)blocks[kv.first].addr);
+            fprintf(stderr, "\n");
+            for (auto& b : blocks)
+                for (int s : b.succ)
+                    if (rpo_num.size() > (size_t)s && rpo_num[s] <= rpo_num[b.id] && s != b.id) {
+                        bool dom = dominates(s, b.id);
+                        fprintf(stderr, "[RETREAT] %d(0x%llx) -> %d(0x%llx)  dominated=%d %s\n",
+                                b.id, (unsigned long long)blocks[b.id].addr, s, (unsigned long long)blocks[s].addr,
+                                (int)dom, dom ? "(natural loop)" : "(IRREDUCIBLE)");
+                    }
+        }
+
+        /* recover per-function struct layouts for pointer params (conservative, with
+         * raw fallback) so `*(int*)((char*)a1 + 0x140)` renders `a1->field_140`. */
+        recover_struct_layouts();
+        assign_global_struct_locals();   /* cache read-only global struct bases in locals */
+        coalesce_locals();   /* AFTER struct recovery so decl_type (including struct-ptr, float,
+                              * pointer) is final: the candidate gate decl_type(x)==decl_type(y)
+                              * would else merge a to-be-struct-ptr var with a float var (C2440). */
+        inline_invariant_temps();   /* slash the residual temp cloud (SSA-invariant recompute) */
+        inline_local_loads();       /* + same-block field/array loads with no aliasing store between */
+        fold_return_temps();         /* `v = e; return v;` -> `return e;` (Hex-Rays return shape) */
+
+        /* post-typing idiom rewrites (unsigned range-check -> x>=lo && x<=hi, etc.).
+         * Pure expression rewrite; no CFG/goto impact. Default-on; DS_NO_IDIOM disables. */
+        if (!std::getenv("DS_NO_IDIOM")) recognize_idioms();
+        detect_for_loops();   /* after idioms so H.cond matches the emitted condition */
+        compute_autonames();  /* after for-loops (consumes induction_var_of_header) */
+        narrow_temp_widths();        /* D1: long long -> int for provably-32-bit-value temps */
+        compute_display_renumber();  /* v#/t# -> contiguous v1,v2,... (Hex-Rays naming) */
+        late_peephole();      /* final value-identical readability folds (nested casts, x+-K, cmp-normalize) */
+
+        /* ---- emit body ---- */
+        std::string body;
+        indent_lvl = 1;
+        out.clear();
+        bool ok_struct = false;
+        try {
+            auto reset_emit = [&]{
+                structured.clear(); threaded.clear(); struct_guard = 0; struct_bailed = false;
+                eff_join_cache.clear();
+                dup_budget = std::getenv("DS_NO_DUP") ? 0 : 160;   /* tail-duplication budget (kept modest: raising it bloats diamonds exponentially — the effective-join trial emits shared joins ONCE instead of duplicating). */
+                indent_lvl = 1; cur_loop_header = -1; cur_loop_follow = -1;
+                for (int m : merged_blocks) structured.insert(m);
+            };
+            /* PASS 1 (discovery): a `goto L_x` dangles when L_x was already emitted
+             * INLINE without a label (need_label wasn't set yet because the goto is
+             * emitted after the block). Historically that reverted the WHOLE function
+             * to a flat goto-CFG — the "goto soup". Instead, run emission once to
+             * DISCOVER every block that becomes a goto target (need_label accumulates
+             * these), then re-emit: pass 2 prints those labels inline so the gotos
+             * resolve and the function keeps its structure. need_label carries over
+             * between the passes; emission decisions do not depend on it, so the two
+             * passes produce identical structure. */
+            need_label.clear();
+            reset_emit();
+            {
+                std::string scratch;
+                emit_region(entry_block(), -1, scratch, -1);
+                for (auto& b : blocks) {
+                    if (structured.count(b.id) || b.insn_idx.empty()) continue;
+                    need_label.insert(b.id);
+                    emit_region(b.id, -1, scratch, -1);
+                }
+            }
+            /* PASS 2 (real): need_label now holds all goto targets from pass 1. */
+            reset_emit();
+            std::string tmp;
+            emit_region(entry_block(), -1, tmp, -1);
+            for (auto& b : blocks) {
+                if (structured.count(b.id)) continue;
+                if (b.insn_idx.empty()) continue;
+                need_label.insert(b.id);
+                emit_region(b.id, -1, tmp, -1);
+            }
+            /* Repair pass: catch any residual dangling target (a block reached only
+             * via duplication, so pass 1 didn't canonically label it). */
+            for (size_t guard = 0; guard <= blocks.size(); ++guard) {
+                std::vector<int> dang = dangling_label_blocks(tmp);
+                bool progress = false;
+                for (int id : dang) {
+                    if (structured.count(id)) continue;  /* will get its label */
+                    need_label.insert(id);
+                    indent_lvl = 1;
+                    emit_region(id, -1, tmp, -1);
+                    progress = true;
+                }
+                if (!progress) break;
+            }
+            /* Drop provably-unreachable statements (a `goto`/stmt after an
+             * unconditional transfer) — including any the repair pass just emitted.
+             * Run AFTER repair so repaired regions are cleaned too. */
+            if (!std::getenv("DS_LEGACY_SM"))
+                tmp = strip_unreachable_after_terminator(tmp);
+            body = tmp;
+            /* A tripped struct_guard means the structured body DROPPED a region
+             * (emitted `/* structurer bailout *\/` and returned) — it is incomplete
+             * and must NOT be accepted, however label-consistent the truncated text
+             * looks. Force the complete goto-CFG fallback (linear, no recursion
+             * guard, never loses a block) instead of silently emitting partial code. */
+            ok_struct = labels_consistent(body) && !struct_bailed;
+        } catch (...) {
+            ok_struct = false;
+        }
+        if (!ok_struct) {
+            /* structured emission still left a dangling goto (e.g. the dangling
+             * target was itself already structured inline, so no fresh region
+             * could be emitted) or threw: fall back to the always-correct labeled
+             * goto-CFG. */
+            /* The reverted-to-goto form is a legitimate (correct) fallback, so the
+             * production output carries no marker. The diagnostic comment (and the
+             * failed structured attempt) is emitted only under DS_DBG_BODY. */
+            std::string dbg;
+            if (std::getenv("DS_DBG_BODY")) {
+                std::vector<int> dang = dangling_label_blocks(body);
+                dbg = "/* DBG reverted; dangling:";
+                for (int d : dang) dbg += " " + block_label(d);
+                dbg += " */\n";
+                dbg += "/* ---- failed structured attempt ----\n" + body + "\n---- end ---- */\n";
+            }
+            indent_lvl = 1;
+            std::string tmp;
+            /* The structured attempt was label-INCONSISTENT (a dangling goto the
+             * two-pass + repair could not resolve) or the guard tripped. Emit the
+             * complete labeled goto-CFG — the ZERO-GOTO GUARANTEE pass just below
+             * then converts it to a loop-switch state machine, so no goto survives. */
+            emit_goto_cfg(tmp);
+            body = dbg + tmp;
+        }
+        body = prune_dead_labels(body);
+        /* MINIMAL-GOTO policy (Hex-Rays / IDA style). The recursive structurer tries
+         * as hard as it can — two-pass label discovery, short-circuit &&/|| merging,
+         * guard-clause inlining, bounded tail duplication — to recover real if/else/
+         * loop structure. When it SUCCEEDS (ok_struct) but leaves a SMALL number of
+         * residual gotos, those are genuinely-irreducible cross-edges it provably
+         * could not remove: an SSE strcmp's byte<->qword loops that jump into each
+         * other, a retry latch with two SCC entries. That structured-with-a-few-gotos
+         * form is EXACTLY what Hex-Rays emits and reads far better than flattening the
+         * whole function into `while(1) switch(__state)`. So KEEP it.
+         *
+         * Convert to a state machine ONLY when structure genuinely could not be
+         * recovered: the flat goto-per-block emit_goto_cfg fallback (!ok_struct), or a
+         * residual goto count above the threshold (a messy multi-target tangle where
+         * the SM is no worse). DS_MAX_GOTO tunes the threshold; DS_FORCE_SM restores
+         * the old strict zero-goto behaviour for A/B measurement. */
+        int goto_n = 0;
+        std::set<std::string> goto_tgts;
+        for (size_t gp = 0; (gp = body.find("goto ", gp)) != std::string::npos; ) {
+            gp += 5;
+            size_t e = gp;
+            while (e < body.size() && body[e] != ';' && body[e] != '\n' && body[e] != ' ') ++e;
+            goto_tgts.insert(body.substr(gp, e - gp));
+            ++goto_n;
+        }
+        /* Readability is gated by DISTINCT targets (following `goto cleanup` a few
+         * times is fine; 88 distinct labels is a tangle) more than raw count. Keep
+         * the structured-goto form when EITHER the total is small OR it targets only
+         * a few shared labels (the C `goto cleanup/error` idiom Hex-Rays emits).
+         * A `while(1) switch(__state)` machine only for the genuinely-tangled rest
+         * (typically the flat emit_goto_cfg fallback, !ok_struct). */
+        int max_goto = 8, max_tgts = 6;
+        if (const char* mg = std::getenv("DS_MAX_GOTO")) max_goto = atoi(mg);
+        if (const char* mt = std::getenv("DS_MAX_GOTO_TGT")) max_tgts = atoi(mt);
+        bool keep_goto = ok_struct && goto_n > 0 &&
+                         (goto_n <= max_goto || (int)goto_tgts.size() <= max_tgts) &&
+                         !std::getenv("DS_FORCE_SM");
+        if (body.find("goto ") != std::string::npos && !std::getenv("DS_SHOW_GOTO") &&
+            !keep_goto) {
+            indent_lvl = 1;
+            std::string sm;
+            emit_state_machine(sm);
+            body = sm;
+        }
+
+        /* Hex-Rays-style else-if chains: fold `} else {\n if(...){...} \n}` staircases
+         * (we otherwise emit ZERO else-if). Runs on the FINAL body (structured or SM). */
+        body = collapse_and_guards(body);   /* if(A){if(B){}} -> if(A && B){} */
+        body = collapse_else_if(body);      /* } else { if(){} } -> } else if(){} */
+
+        /* ---- PROVABLY-CORRECT IRREDUCIBILITY REPORT (DS_IRRED_REPORT=<path>) ----
+         * Emit one CSV row per function so an aggregator can answer, with a proof-
+         * backed graph property, how many goto-emitting functions are TRULY
+         * irreducible (their gotos are mathematically unavoidable) vs merely a
+         * structurer limitation. Fully inert unless the env var is set. */
+        if (const char* rp = std::getenv("DS_IRRED_REPORT")) {
+            int final_gotos = 0;
+            for (size_t gp = 0; (gp = body.find("goto ", gp)) != std::string::npos; gp += 5) ++final_gotos;
+            int nreach = 0; {
+                int n = (int)blocks.size();
+                std::vector<char> reach(n, 0);
+                if (n) { std::vector<int> st{0}; reach[0] = 1;
+                    while (!st.empty()) { int b = st.back(); st.pop_back();
+                        for (int s : blocks[b].succ) if (s >= 0 && s < n && !reach[s]) { reach[s] = 1; st.push_back(s); } } }
+                for (int b = 0; b < n; ++b) nreach += reach[b];
+            }
+            bool reducible = cfg_is_reducible();
+            const char* form = (body.find("switch (__state") != std::string::npos || body.find("switch(__state") != std::string::npos)
+                                   ? "state-machine" : (final_gotos > 0 ? "kept-goto" : "structured");
+            if (FILE* fp = fopen(rp, "ab")) {
+                fprintf(fp, "%llx,%d,%d,%d,%s\n", (unsigned long long)f->rva, nreach,
+                        reducible ? 1 : 0, final_gotos, form);
+                fclose(fp);
+            }
+        }
+
+        /* ---- header + declarations ---- */
+        std::string fname = (f->name[0] ? sani(std::string(f->name))
+                                        : "sub_" + hex(f->rva).substr(2));
+        std::string ret_t;
+        if (!used_return) ret_t = "void";
+        else if (ret_conflict_raw) ret_t = "long long";   /* mixed float+pointer return */
+        else if (ret_small_w == 1) ret_t = ret_small_uns ? "unsigned char" : "signed char";
+        else if (ret_small_w == 2) ret_t = ret_small_uns ? "unsigned short" : "short";
+        else if (ret_byte_return) ret_t = "unsigned char";   /* bool/char in al */
+        else if (ret_is_float) ret_t = (ret_width >= 8) ? "double" : "float";
+        else if (ret_is_pointer) {
+            if (ret_ptr_elem_float)
+                ret_t = (ret_ptr_elem_w >= 8 ? "double" : "float") + std::string("*");
+            else if (ret_ptr_elem_w > 0)
+                ret_t = typ_str(ret_ptr_elem_w, ret_ptr_elem_uns, false) + "*";
+            else ret_t = "long long";
+        } else ret_t = typ_str(ret_width >= 8 ? 8 : 4, ret_is_unsigned, false);
+
+        std::string params;
+        if (num_params == 0) params = "void";
+        else {
+            for (int i = 0; i < num_params; ++i) {
+                if (i) params += ", ";
+                std::string nm = "a" + std::to_string(i + 1);
+                std::string ty = decl_type(nm);
+                /* pointer types already carry `*`; place name without extra space
+                 * collapse so `int* a1` reads cleanly */
+                if (!ty.empty() && ty.back() == '*') params += ty + nm;
+                else params += ty + " " + nm;
+            }
+        }
+
+        /* gather the set of var names actually referenced post-DSE */
+        std::set<std::string> referenced;
+        std::function<void(const ExprP&)> gather = [&](const ExprP& e) {
+            if (!e) return;
+            if (e->kind == EK::Var) referenced.insert(e->name);
+            gather(e->a); gather(e->b); gather(e->c);
+            for (auto& ar : e->args) gather(ar);
+        };
+        for (auto& b : blocks) {
+            for (auto& s : b.stmts) { gather(s.lhs); gather(s.rhs); }
+            gather(b.cond); gather(b.ret_value); gather(b.switch_var); gather(b.tail_call);
+        }
+
+        /* Definite-assignment: a local READ on a path where it was never assigned
+         * (a merged return temp returned on an early-exit path BEFORE its assignment
+         * -> `return (int)t2` with t2 uninitialized, fun_0002b090) must be zero-init'd
+         * so the emitted C has no uninitialized-variable read. A forward "must be
+         * assigned on entry" dataflow (intersection over preds). Zero-init of an
+         * always-assigned var is dead code, so over-approximation is SAFE. Params,
+         * array buffers, and in_<REG> backstops are excluded. */
+        std::set<std::string> maybe_uninit;
+        {
+            int nb = (int)blocks.size();
+            std::vector<std::set<std::string>> gen(nb), ubd(nb);
+            std::set<std::string> allvars;
+            for (int i = 0; i < nb; ++i) {
+                std::set<std::string> defd;
+                for (auto& s : blocks[i].stmts) {
+                    std::set<std::string> reads;
+                    collect_var_names(s.rhs, reads);
+                    if (s.lhs && s.lhs->kind != EK::Var) collect_var_names(s.lhs, reads);
+                    for (auto& r : reads) { allvars.insert(r); if (!defd.count(r)) ubd[i].insert(r); }
+                    if (s.kind == SK::Assign && s.lhs && s.lhs->kind == EK::Var) {
+                        defd.insert(s.lhs->name); allvars.insert(s.lhs->name);
+                    }
+                }
+                std::set<std::string> tr;
+                collect_var_names(blocks[i].cond, tr);
+                collect_var_names(blocks[i].ret_value, tr);
+                collect_var_names(blocks[i].switch_var, tr);
+                for (auto& r : tr) { allvars.insert(r); if (!defd.count(r)) ubd[i].insert(r); }
+                gen[i] = defd;
+            }
+            int entry = entry_block();
+            std::vector<std::set<std::string>> in(nb), out(nb);
+            for (int i = 0; i < nb; ++i) out[i] = allvars;
+            bool changed = true; int guard = 0;
+            while (changed && guard++ < 200000) {
+                changed = false;
+                for (int i = 0; i < nb; ++i) {
+                    std::set<std::string> ni; bool first = true;
+                    if (i != entry && !blocks[i].pred.empty()) {
+                        for (int p : blocks[i].pred) {
+                            if (p < 0 || p >= nb) continue;
+                            if (first) { ni = out[p]; first = false; }
+                            else { std::set<std::string> t; for (auto& v : ni) if (out[p].count(v)) t.insert(v); ni.swap(t); }
+                        }
+                    }
+                    if (first) ni.clear();
+                    in[i] = ni;
+                    std::set<std::string> no = ni;
+                    for (auto& v : gen[i]) no.insert(v);
+                    if (no != out[i]) { out[i] = no; changed = true; }
+                }
+            }
+            auto is_param = [](const std::string& n){ return n.size() >= 2 && n[0]=='a' && n[1]>='1' && n[1]<='9'; };
+            for (int i = 0; i < nb; ++i)
+                for (auto& v : ubd[i])
+                    if (!in[i].count(v) && !is_param(v) && v.rfind("in_", 0) != 0 && !array_locals.count(v))
+                        maybe_uninit.insert(v);
+        }
+        /* A homed parameter that is reassigned in the body was split into a live
+         * range: reads before the recycle keep the param name, the recycle store
+         * and after use a fresh local (home_reuse_local). When that fresh local is
+         * only CONDITIONALLY assigned (the `/Od` in-place `if(x<0)x=0;` / min-max
+         * swap idiom), its fall-through path still holds the INCOMING parameter —
+         * so initialize it to aN, not 0 (the `letter_grade(score)`/`clamp_to_range`
+         * "param reads as 0" bug). Only for maybe-uninit locals, so a genuine
+         * recycle (slot reused for an unrelated value, always written before read)
+         * gets no spurious init. */
+        std::map<std::string,std::string> reuse_local_init;
+        for (auto& kv : home_reuse_local) {
+            auto p = param_home_off.find(kv.first);
+            if (p != param_home_off.end() && !kv.second.empty())
+                reuse_local_init[kv.second] = p->second;
+        }
+        /* Loop-carried homed params modeled as one local: init `vN = aN`. */
+        for (auto& kv : stack_slot_name) {
+            auto p = slot_init_param.find(kv.first);
+            if (p != slot_init_param.end()) reuse_local_init[kv.second] = p->second;
+        }
+        auto uninit_suffix = [&](const std::string& nm) -> std::string {
+            if (!maybe_uninit.count(nm)) return std::string();
+            auto it = reuse_local_init.find(nm);
+            if (it != reuse_local_init.end()) return " = " + it->second;
+            return " = 0";
+        };
+
+        std::string decls;
+        /* stack-array locals: `char bufN[size];` (size from the gap to the next
+         * frame object, clamped to a safe range). */
+        {
+            std::vector<int64_t> offs;
+            for (auto& kv : stack_array_name) offs.push_back(kv.first);
+            std::vector<int64_t> allslots = offs;
+            for (auto& kv : stack_slot_name) allslots.push_back(kv.first);
+            for (auto& kv : param_home_off) allslots.push_back(kv.first);
+            std::sort(allslots.begin(), allslots.end());
+            std::vector<std::pair<int,std::string>> aord;
+            for (auto& kv : stack_array_name)
+                if (referenced.count(kv.second))
+                    aord.push_back({atoi(kv.second.c_str()+3), kv.second});
+            std::sort(aord.begin(), aord.end());
+            for (auto& pr : aord) {
+                int64_t base_off = -1;
+                for (auto& kv : stack_array_name) if (kv.second == pr.second) base_off = kv.first;
+                int64_t next = base_off + 256;
+                for (int64_t o : allslots) if (o > base_off && o < next) next = o;
+                int64_t sz = next - base_off;
+                if (sz < 16) sz = 16;
+                if (sz > 4096) sz = 4096;
+                decls += "    char " + pr.second + "[" + std::to_string((long long)sz) + "];\n";
+            }
+        }
+        /* address-escaped aggregates: `char sN[size];` (out-struct / out-param) */
+        for (auto& r : agg_regions) {
+            if (!referenced.count(r.name)) continue;
+            int64_t sz = r.end - r.base;
+            if (sz < 8) sz = 8;
+            if (sz > 4096) sz = 4096;
+            decls += "    char " + r.name + "[" + std::to_string((long long)sz) + "];\n";
+        }
+        /* read-only global struct bases cached in typed locals (assign_global_struct_locals):
+         * `struct s* gs_X = (struct s*)qword_X;` once, so the body uses `gs_X->field`. */
+        for (auto& kv : global_struct_local) {
+            auto it = param_structs.find(kv.first);
+            if (it == param_structs.end()) continue;
+            decls += "    struct " + it->second.tag + "* " + kv.second +
+                     " = (struct " + it->second.tag + "*)" + kv.first + ";\n";
+        }
+        /* locals: stack slots (declared in numeric order, only if used) */
+        std::vector<std::pair<int,std::string>> ordered;
+        for (auto& kv : stack_slot_name) {
+            const std::string& nm = kv.second;
+            if (nm.size()>=2 && nm[0]=='a' && nm[1]>='1' && nm[1]<='4') continue;
+            if (!referenced.count(nm)) continue;
+            int num = nm.size() > 1 ? atoi(nm.c_str()+1) : 0;
+            ordered.push_back({num, nm});
+        }
+        std::sort(ordered.begin(), ordered.end());
+        for (auto& pr : ordered) {
+            const std::string& nm = pr.second;
+            std::string ty = decl_type(nm);
+            if (!ty.empty() && ty.back() == '*') decls += "    " + ty + disp(nm) + uninit_suffix(nm) + ";\n";
+            else decls += "    " + ty + " " + disp(nm) + uninit_suffix(nm) + ";\n";
+        }
+        /* temps (calls + phis), numeric order */
+        std::set<std::string> alltemps = call_temps;
+        for (auto& t : phi_temps) alltemps.insert(t);
+        for (auto& t : spill_temps) alltemps.insert(t);
+        for (auto& t : cse_temps) alltemps.insert(t);
+        std::vector<std::pair<int,std::string>> tord;
+        for (auto& nm : alltemps) {
+            if (!referenced.count(nm)) continue;
+            tord.push_back({nm.size()>1?atoi(nm.c_str()+1):0, nm});
+        }
+        std::sort(tord.begin(), tord.end());
+        for (auto& pr : tord) {
+            const std::string& nm = pr.second;
+            std::string ty = decl_type(nm);
+            if (!ty.empty() && ty.back() == '*') decls += "    " + ty + disp(nm) + uninit_suffix(nm) + ";\n";
+            else decls += "    " + ty + " " + disp(nm) + uninit_suffix(nm) + ";\n";
+        }
+        /* Backstop locals (in_<REG>): the unrecovered-value placeholders are not
+         * stack slots or temps, so declare each referenced one explicitly. Without
+         * this the value is honest but the C is uncompilable (an undeclared
+         * identifier) — which is itself a defect. Sorted for stable output. */
+        std::vector<std::string> uord;
+        for (auto& kv : unknown_reg_name)
+            if (referenced.count(kv.second)) uord.push_back(kv.second);
+        std::sort(uord.begin(), uord.end());
+        for (auto& nm : uord) {
+            std::string ty = decl_type(nm);
+            if (!ty.empty() && ty.back() == '*') decls += "    " + ty + nm + ";\n";
+            else decls += "    " + ty + " " + nm + ";\n";
+        }
+
+        /* FINAL BACKSTOP for undeclared temps. Every declaration set above is
+         * OPT-IN: a temp is declared only if some pass registered it in
+         * call_temps/phi_temps/spill_temps/cse_temps (or it is a stack slot).
+         * A value materialized into a fresh `t<N>` by a pass that forgot to
+         * register it (e.g. a cmov ternary hoisted to `t = c?x:y; return t;`,
+         * or a phantom stack slot `v<N>` below rsp in a hand-written thunk) then
+         * reaches the body as an UNDECLARED identifier — honest value, but
+         * uncompilable C, which is itself a defect. Declare any referenced
+         * `t<N>`/`v<N>` local no earlier set covered. Mirrors the in_<REG>
+         * backstop above; a no-op when every temp was already registered. */
+        {
+            std::set<std::string> slotnames;
+            for (auto& kv : stack_slot_name) slotnames.insert(kv.second);
+            std::vector<std::string> orphan;
+            for (const auto& nm : referenced) {
+                if (nm.size() < 2 || (nm[0] != 't' && nm[0] != 'v')) continue;
+                bool alldig = true;
+                for (size_t i = 1; i < nm.size(); ++i)
+                    if (!(nm[i] >= '0' && nm[i] <= '9')) { alldig = false; break; }
+                if (!alldig) continue;
+                if (alltemps.count(nm) || slotnames.count(nm)) continue;
+                orphan.push_back(nm);
+            }
+            std::sort(orphan.begin(), orphan.end(),
+                      [](const std::string& a, const std::string& b){
+                          return atoi(a.c_str()+1) < atoi(b.c_str()+1); });
+            for (const auto& nm : orphan) {
+                std::string ty = decl_type(nm);
+                if (!ty.empty() && ty.back() == '*') decls += "    " + ty + disp(nm) + uninit_suffix(nm) + ";\n";
+                else decls += "    " + ty + " " + disp(nm) + uninit_suffix(nm) + ";\n";
+            }
+        }
+
+        std::string protos;
+        /* `while (true)` uses the C99 `true` macro, which is only in scope with
+         * <stdbool.h> under /TC (C mode) — without it every loop is C2065. The header
+         * is include-guarded, so it is safe when many pair-files concatenate into one
+         * TU. (A no-op in C++.) */
+        if (used_while_true) protos += "#include <stdbool.h>\n";
+        /* recovered struct layouts for pointer params: one packed typedef each, emitted
+         * before the body so `struct s_aN* aN` and `aN->field_N` resolve. */
+        /* forward-declare every tag first so a `struct <nested>*` field resolves regardless
+         * of definition order (nested-pointer field retyping). */
+        for (auto& kv : param_structs) protos += "struct " + kv.second.tag + ";\n";
+        for (auto& kv : param_structs) protos += struct_typedef_str(kv.second);
+        /* named absolute-address globals (qword_174148 etc.): one #define each,
+         * semantics-preserving, so the body reads `qword_174148` not the repeated
+         * `*(long long*)0x174148`. */
+        for (auto& kv : named_globals)
+            protos += "#define " + kv.first + " " + kv.second + "\n";
+        if (used_mulh) {
+            /* MSVC intrinsics for the high half of a 64-bit multiply (magic-number
+             * division). Declaring them keeps the recompiled TU self-contained. */
+            protos += "long long __mulh(long long, long long);\n";
+            protos += "unsigned long long __umulh(unsigned long long, unsigned long long);\n";
+        }
+        if (used_mxcsr) {
+            protos += "unsigned int __readmxcsr(void);\n";
+            protos += "void __writemxcsr(unsigned int);\n";
+        }
+        if (used_fabs) {
+            /* self-contained definitions (not prototypes): `fabsf` is header-inline
+             * in MSVC with no CRT export, so a bare prototype leaves it unresolved
+             * at link. `__`-names avoid the reserved-identifier/builtin conflict and
+             * read as pure intrinsics for CSE. Include-guarded so concatenating many
+             * decompiled functions into one TU does not redefine the body. */
+            protos += "#ifndef __DS_FABS_DEFINED\n#define __DS_FABS_DEFINED\n";
+            protos += "static double __fabs(double x){ return x<0.0?-x:x; }\n";
+            protos += "static float __fabsf(float x){ return x<0.0f?-x:x; }\n";
+            protos += "#endif\n";
+        }
+        if (used_sqrt) {
+            /* real CRT exports (unlike header-inline fabsf): a prototype compiles
+             * standalone and links against the CRT for the behavioral corpus. */
+            protos += "double sqrt(double);\nfloat sqrtf(float);\n";
+        }
+        if (used_fdiv0) {
+            /* volatile so the compiler cannot constant-fold `x / __ds_fzero` back
+             * into a compile-time divide-by-zero (C2124); at runtime it is ±inf. */
+            protos += "#ifndef __DS_FZERO_DEFINED\n#define __DS_FZERO_DEFINED\n";
+            protos += "static volatile double __ds_fzero = 0.0;\n";
+            protos += "#endif\n";
+        }
+        if (used_segread) {
+            protos += "unsigned long long __readgsqword(unsigned long long);\n";
+            protos += "unsigned long long __readfsqword(unsigned long long);\n";
+        }
+        if (used_cpuid) {
+            protos += "int __cpuid_eax(int, int);\n";
+            protos += "int __cpuid_ebx(int, int);\n";
+            protos += "int __cpuid_ecx(int, int);\n";
+            protos += "int __cpuid_edx(int, int);\n";
+        }
+        if (used_stos) {
+            protos += "void __stosb(unsigned char*, unsigned char, unsigned long long);\n";
+            protos += "void __stosw(unsigned short*, unsigned short, unsigned long long);\n";
+            protos += "void __stosd(unsigned long*, unsigned long, unsigned long long);\n";
+            protos += "void __stosq(unsigned long long*, unsigned long long, unsigned long long);\n";
+        }
+        std::set<std::string> seen_proto;
+        for (auto& kv : extern_callees) {
+            const std::string& c = kv.first;
+            if (c == fname) continue;
+            if (seen_proto.count(c)) continue;
+            seen_proto.insert(c);
+            /* return type must match the callee's definition (same sig table) so
+             * the recompiled TU has consistent prototypes. K&R "()" arg list
+             * stays compatible with any definition arity. */
+            int rk = kv.second;
+            /* A callee the sig table typed VOID but whose RESULT IS USED here
+             * (`t = c(...)`, `return c(...)`, `... c(...) ...`) must be declared
+             * with a value type — assigning/using a void result is a hard error
+             * (C2186). Return-type detection under-detects such callees
+             * (fun_0006708c returns a value the caller compares to 0). Promote to
+             * long long when the body uses the result rather than discarding it as
+             * a bare `c(...);` statement. */
+            if (rk == 0) {
+                std::string pat = c + "(";
+                for (size_t pos = 0; (pos = body.find(pat, pos)) != std::string::npos; pos += pat.size()) {
+                    size_t j = pos;
+                    while (j > 0 && body[j-1] == ' ') --j;
+                    char prev = (j > 0) ? body[j-1] : '\n';
+                    /* bare statement start => result discarded (void ok); anything
+                     * else (`=`, `(`, operator, `return `) => used as a value. */
+                    if (prev != '\n' && prev != ';' && prev != '{' && prev != '}') {
+                        rk = 2; break;
+                    }
+                }
+            }
+            const char* rt = (rk == 0) ? "void"
+                           : (rk == 2) ? "long long"
+                           : (rk == 3) ? "float"
+                           : (rk == 4) ? "double" : "int";
+            /* Emit typed params when the callee has FLOAT params: a K&R `()` promotes a
+             * `float` arg to `double` at the call (default arg promotion), so a float-bits
+             * helper (`f2u`, isnan/frexp) receives the wrong 8-byte value. Integer-only
+             * callees keep `()` — compatible with any arity, avoids a wrong-arity hard error. */
+            /* Emit typed params when the callee has FLOAT params (only when EVERY float
+             * param's width is known — float_typed_mask — else a double copied via movaps
+             * before any scalar op would mis-type as float and truncate; K&R `()` is
+             * correct for double args, no promotion). callee_typed_proto_arity gates the
+             * IDENTICAL condition the call renderer uses to clamp arg counts, so a fixed-
+             * arity proto always has matching clamped call sites (no C2197/C2198). */
+            std::string pp;
+            int tp_pc = 0;
+            if (callee_typed_proto_arity(c, tp_pc)) {
+                uint64_t crva = strtoull(c.c_str() + 4, nullptr, 16);
+                const FuncSig& s = sigtab->at(crva);
+                for (int p = 0; p < tp_pc; ++p) {
+                    if (p) pp += ", ";
+                    if (s.float_mask & (1u << p))
+                        pp += (s.double_mask & (1u << p)) ? "double" : "float";
+                    else pp += "long long";
+                }
+            }
+            protos += std::string(rt) + " " + c + "(" + pp + ");\n";
+        }
+
+        std::string head = ret_t + " " + fname + "(" + params + ") {\n";
+        std::string full = "/* " + fname + " @ " + hex(f->rva) +
+                           "  size=" + std::to_string((unsigned long long)f->size) + " */\n";
+        full += build_xref_comment();
+        if (!protos.empty()) full += protos;
+        full += head + decls;
+        if (!decls.empty()) full += "\n";
+        full += body;
+        full += "}\n";
+        return full;
+    }
+
+    std::string stub(const std::string& why) {
+        std::string fname = (f && f->name[0]) ? sani(std::string(f->name))
+                            : ("sub_" + (f ? hex(f->rva).substr(2) : std::string("0")));
+        std::string s = why; s += "\n";
+        s += "void " + fname + "(void) {\n}\n";
+        return s;
+    }
+};
+
+
+/* ====================================================================== */
+/*  Signature prepass over all functions                                   */
+/* ====================================================================== */
+
+/* Scalar-FP destination width: 4 for single (`ss`), 8 for double (`sd`), 0 for
+ * a non-scalar-FP write (xorps/movaps clear or move the whole reg — they put a
+ * float value in the reg but carry no single/double width of their own). Used to
+ * decide a float vs double xmm0 return. */
+static int fp_scalar_width(unsigned id) {
+    switch (id) {
+        case X86_INS_MOVSS: case X86_INS_ADDSS: case X86_INS_SUBSS:
+        case X86_INS_MULSS: case X86_INS_DIVSS: case X86_INS_MAXSS:
+        case X86_INS_MINSS: case X86_INS_SQRTSS: case X86_INS_RCPSS:
+        case X86_INS_RSQRTSS: case X86_INS_CVTSI2SS: case X86_INS_CVTSD2SS:
+        case X86_INS_COMISS: case X86_INS_UCOMISS:  /* single-precision compare operands */
+        case X86_INS_CVTPD2PS:   /* packed double->single: xmm0 result is a float */
+            return 4;
+        case X86_INS_MOVSD: case X86_INS_ADDSD: case X86_INS_SUBSD:
+        case X86_INS_MULSD: case X86_INS_DIVSD: case X86_INS_MAXSD:
+        case X86_INS_MINSD: case X86_INS_SQRTSD: case X86_INS_CVTSI2SD:
+        case X86_INS_CVTSS2SD: case X86_INS_CVTPS2PD:
+        case X86_INS_CVTDQ2PD:   /* (packed) int32 -> double: xmm result is double */
+        case X86_INS_COMISD: case X86_INS_UCOMISD:  /* double-precision compare operands */
+            return 8;
+        case X86_INS_CVTDQ2PS:   /* int32 -> float: xmm result is a float */
+            return 4;
+        default: return 0;
+    }
+}
+
+/* True if eax/rax was zeroed (`xor eax,eax` / `sub eax,eax` / `mov eax,0`) shortly
+ * before instruction `setcc_idx` with no intervening rax write — i.e. a `setcc al`
+ * there returns a FULL zero-extended int 0/1 (`int f(){return a>b;}`), not a byte. */
+static bool eax_zeroed_before(cs_insn* ci, long setcc_idx) {
+    for (long j = setcc_idx - 1; j >= 0 && j >= setcc_idx - 8; --j) {
+        if (!ci[j].detail) continue;
+        cs_x86& jx = ci[j].detail->x86;
+        unsigned id = ci[j].id;
+        bool self_zero = (id==X86_INS_XOR || id==X86_INS_SUB) && jx.op_count==2 &&
+            jx.operands[0].type==X86_OP_REG && jx.operands[1].type==X86_OP_REG &&
+            jx.operands[0].reg==jx.operands[1].reg;
+        bool mov_zero = id==X86_INS_MOV && jx.op_count==2 &&
+            jx.operands[0].type==X86_OP_REG && jx.operands[1].type==X86_OP_IMM &&
+            jx.operands[1].imm==0;
+        Reg r0; int w0;
+        if ((self_zero || mov_zero) && jx.op_count>=1 && jx.operands[0].type==X86_OP_REG) {
+            map_reg(jx.operands[0].reg, r0, w0);
+            if (r0 == R_RAX) return true;
+        }
+        /* another write to rax before the zero breaks the widen chain */
+        for (int o = 0; o < jx.op_count; ++o)
+            if (jx.operands[o].type==X86_OP_REG && (jx.operands[o].access & CS_AC_WRITE)) {
+                Reg wr; int ww; map_reg(jx.operands[o].reg, wr, ww);
+                if (wr == R_RAX) return false;
+            }
+    }
+    return false;
+}
+
+void build_sig_table(ds_engine* e, std::map<uint64_t, FuncSig>& tab) {
+    if (!e) return;
+    cs_mode mode = (e->arch == DS_ARCH_X64) ? CS_MODE_64 : CS_MODE_32;
+    csh h;
+    if (cs_open(CS_ARCH_X86, mode, &h) != CS_ERR_OK) return;
+    cs_option(h, CS_OPT_DETAIL, CS_OPT_ON);
+    cs_option(h, CS_OPT_SYNTAX, CS_OPT_SYNTAX_INTEL);
+
+    std::map<uint64_t, uint64_t> tail_of;   /* func rva -> tail-call callee rva */
+    std::map<uint64_t, uint64_t> fwd_thunk_of; /* PURE-forwarding thunk rva -> target:
+                                        * writes NO arg reg before a tail `jmp target`,
+                                        * so it forwards its incoming rcx/rdx/r8/r9
+                                        * unchanged and its arity == the target's. */
+
+    for (size_t fi = 0; fi < e->func_len; ++fi) {
+        const ds_func& f = e->funcs[fi];
+        FuncSig sig;
+        uint64_t tail_target = 0;
+        if (f.rva >= e->image_size) { tab[f.rva] = sig; continue; }
+        uint64_t avail = e->image_size - f.rva;
+        size_t n = (size_t)((f.size && f.size <= avail) ? f.size : avail);
+        if (n > 0x8000) n = 0x8000;
+        if (n == 0) { tab[f.rva] = sig; continue; }
+        cs_insn* ci = nullptr;
+        size_t count = cs_disasm(h, e->image + f.rva, n, f.rva, 0, &ci);
+        if (count == 0) { if (ci) cs_free(ci, count); tab[f.rva] = sig; continue; }
+        if (count > 4000) count = 4000;
+
+        /* params: highest of rcx,rdx,r8,r9 read before written; or homed.
+         * return: does the function set eax/rax meaningfully and end with ret? */
+        bool seen_write[4] = {false,false,false,false};
+        bool used_arg[4] = {false,false,false,false};
+        bool homed_arg[4] = {false,false,false,false};
+        bool xmm_seen_write[4] = {false,false,false,false};
+        bool xmm_used[4] = {false,false,false,false};   /* xmm0-3 read before written => float arg */
+        int  xmm_w[4]    = {0,0,0,0};                    /* its scalar-FP width: 4 float / 8 double */
+        int  max_stack_arg = 0;    /* highest stack-passed arg index (5th+) seen */
+        std::set<int64_t> stk_written; /* rsp-relative disps the callee writes first
+                                        * (spills/locals) — NOT incoming args */
+        int64_t fs = 0; bool sub_done = false;
+        bool writes_eax = false, writes_rax = false, has_ret = false;
+        bool saw_call_result = false;
+        bool saw_byte_ret = false;  /* a ret whose closest rax write is byte-width al */
+        bool saw_wide_ret = false;  /* a ret whose closest rax write is full eax/rax (>=4) */
+        int  last_rax_w = 0;       /* width of most recent rax write (mov/arith/call) */
+        int  ret_rax_w = 0;        /* widest rax width observed live at a ret */
+        bool rax_live_at_ret = false;
+        long last_rax_idx = -1000; /* instr index of the most recent rax write */
+        bool last_rax_from_call = false;  /* most recent rax write was a CALL result */
+        uint64_t last_rax_call_target = 0; /* if from a direct call, the callee rva */
+        bool ret_only_from_call = false;   /* every rax-live ret came from a call result */
+        bool saw_real_value_ret = false;   /* some ret set rax from a deliberate value */
+        uint64_t ret_call_target = 0;      /* callee whose result was taken as the return */
+        bool saw_fp_ret_tail = false;  /* some ret does `cvt/fp-op xmm0; ret` (strong float) */
+        int  tail_ret_inherit = 0;     /* a tail-call thunk inherits its target's ret_kind */
+        bool saw_prior_call = false;   /* a non-tail `call` happened before the tail jmp:
+                                        * the function does real work + discards results,
+                                        * so its tail jmp is a goto, NOT a `return g()` */
+        int  rax_write_count = 0;      /* how many times rax is written in the function */
+        int  rax_param_copy = -1;      /* arg pos if rax's ONLY write is `mov rax,argreg` (return-the-param, e.g. memcpy returns dst) */
+        /* float/double return: xmm0 set near a ret with rax NOT the live value. */
+        int  last_xmm0_fw = 0;     /* scalar-FP width of the most recent xmm0 write */
+        int  xmm_fw[16] = {0};     /* tracked scalar-FP width (8 double / 4 float) per xmm,
+                                    * so `movaps xmm0,xmmN; ret` inherits the double width
+                                    * of the value instead of defaulting to float. */
+        long last_xmm0_idx = -1000;
+        bool last_xmm0_packed = false;  /* most recent xmm0 write was a PACKED 128-bit
+                                         * move (memcpy vector scratch), not a scalar FP
+                                         * return — excluded from the ret-proximity test. */
+        bool xmm0_live_at_ret = false;
+        int  ret_xmm0_w = 0;       /* widest scalar-FP width live at a ret (8>4) */
+        /* A forward in-range `jmp` is the "set return value then branch to the
+         * shared epilogue" idiom ONLY when the target actually reaches a `ret`
+         * without REDEFINING rax/eax. A loop-exit / if-else forward jmp whose
+         * target later does `xor eax,eax` (or another rax write) leaves the rax at
+         * the jmp DEAD — counting it (lu_decompose's 64-bit matrix-element rax)
+         * mis-widened an `int` return to `long long`, corrupting a `return -1`
+         * sentinel into `0xffffffff`. */
+        auto fwd_jmp_is_epilogue = [&](uint64_t tgt) -> bool {
+            long ti = -1;
+            for (long j = 0; j < (long)count; ++j)
+                if (ci[j].address == tgt) { ti = j; break; }
+            if (ti < 0) return false;
+            for (long j = ti; j < (long)count && j < ti + 40; ++j) {
+                if (!ci[j].detail) return false;
+                unsigned id = ci[j].id;
+                if (id == X86_INS_RET || id == X86_INS_RETF) return true;
+                if (id == X86_INS_JMP || id == X86_INS_CALL ||
+                    id == X86_INS_IDIV || id == X86_INS_DIV || id == X86_INS_MUL ||
+                    id == X86_INS_IMUL) return false;   /* can't follow / clobbers rax */
+                const cs_x86& xx = ci[j].detail->x86;
+                for (int k = 0; k < xx.op_count && k < 4; ++k) {
+                    if (xx.operands[k].type == X86_OP_REG &&
+                        (xx.operands[k].access & CS_AC_WRITE)) {
+                        Reg rr; int rw; map_reg(xx.operands[k].reg, rr, rw);
+                        if (rr == R_RAX) return false;  /* rax overwritten before ret */
+                    }
+                }
+            }
+            return false;
+        };
+        for (size_t i = 0; i < count; ++i) {
+            cs_insn& c = ci[i];
+            if (!c.detail) continue;
+            cs_x86& x = c.detail->x86;
+            /* Track each xmm's scalar-FP width. A scalar-FP op (fp_scalar_width!=0)
+             * makes ALL its xmm operands that precision; a reg->reg copy inherits the
+             * source width (movsd/movss force 8/4). Lets the FP-return detection read
+             * the width of a value moved into xmm0 by a `movaps xmm0,xmmN` copy. */
+            {
+                int opw = fp_scalar_width(c.id);
+                if (opw) {
+                    for (int k = 0; k < x.op_count && k < 4; ++k)
+                        if (x.operands[k].type == X86_OP_REG) {
+                            Reg rr; int rw; map_reg(x.operands[k].reg, rr, rw);
+                            if (rr >= R_XMM0 && rr <= R_XMM15) xmm_fw[rr - R_XMM0] = opw;
+                        }
+                }
+                bool copy = (c.id==X86_INS_MOVAPS||c.id==X86_INS_MOVUPS||
+                             c.id==X86_INS_MOVAPD||c.id==X86_INS_MOVUPD||
+                             c.id==X86_INS_MOVDQA||c.id==X86_INS_MOVDQU||
+                             c.id==X86_INS_MOVSD||c.id==X86_INS_MOVSS);
+                if (copy && x.op_count==2 && x.operands[0].type==X86_OP_REG &&
+                    x.operands[1].type==X86_OP_REG) {
+                    Reg d,s; int dw,sw; map_reg(x.operands[0].reg,d,dw); map_reg(x.operands[1].reg,s,sw);
+                    if (d>=R_XMM0 && d<=R_XMM15 && s>=R_XMM0 && s<=R_XMM15) {
+                        int fw = (c.id==X86_INS_MOVSD) ? 8 : (c.id==X86_INS_MOVSS) ? 4
+                                                            : xmm_fw[s - R_XMM0];
+                        xmm_fw[d - R_XMM0] = fw;
+                    }
+                }
+                /* andps/andpd ABS idiom: the .rdata sign-mask carries the precision,
+                 * so the dest width (and thus a leaf `andps xmm0,[mask]; ret` abs
+                 * function's return type) is double for a double mask. */
+                if ((c.id==X86_INS_ANDPS||c.id==X86_INS_ANDPD) && x.op_count>=2 &&
+                    x.operands[0].type==X86_OP_REG &&
+                    x.operands[1].type==X86_OP_MEM &&
+                    x.operands[1].mem.base==X86_REG_RIP &&
+                    x.operands[1].mem.index==X86_REG_INVALID) {
+                    Reg d; int dw; map_reg(x.operands[0].reg, d, dw);
+                    uint64_t a = c.address + c.size + (uint64_t)x.operands[1].mem.disp;
+                    if (d>=R_XMM0 && d<=R_XMM15 && a + 8 <= e->image_size) {
+                        uint32_t lo=(uint32_t)e->image[a]|((uint32_t)e->image[a+1]<<8)|
+                                    ((uint32_t)e->image[a+2]<<16)|((uint32_t)e->image[a+3]<<24);
+                        uint32_t hi=(uint32_t)e->image[a+4]|((uint32_t)e->image[a+5]<<8)|
+                                    ((uint32_t)e->image[a+6]<<16)|((uint32_t)e->image[a+7]<<24);
+                        int mw = (lo==0xffffffffu&&hi==0x7fffffffu) ? 8 :
+                                 (lo==0x7fffffffu&&hi==0) ? 4 :
+                                 (lo==0x7fffffffu&&hi==0x7fffffffu) ? (c.id==X86_INS_ANDPD?8:4) : 0;
+                        if (mw) xmm_fw[d-R_XMM0] = mw;
+                    }
+                }
+            }
+            if (c.id == X86_INS_RET || c.id == X86_INS_RETF) {
+                has_ret = true;
+                /* the return value lives in whichever value register was set
+                 * CLOSEST to the ret: rax (int/ptr) or xmm0 (float/double, the SSE
+                 * return ABI). The /Od epilogue loads it right before add rsp/ret.
+                 * Callee-saved restores (`pop rbx/rsi/rdi/rbp`, leave, `add rsp`)
+                 * sit BETWEEN the value write and the ret and must NOT age it out:
+                 * map_put's `xor eax,eax; pop rdi; pop rsi; pop rbp; pop rbx; ret`
+                 * is 5 insns wide, so the raw <=4 window mis-typed it `void`. */
+                long epi = 0;   /* contiguous epilogue-restore block before the ret */
+                for (long j = (long)i - 1; j >= 0; --j) {
+                    unsigned jid = ci[j].id;
+                    if (jid == X86_INS_POP || jid == X86_INS_LEAVE ||
+                        jid == X86_INS_ADD) ++epi;
+                    else break;
+                }
+                /* eax is the RETURN value if its last write reaches the ret and is
+                 * NOT consumed by a memory store of eax in between. The window is
+                 * generous because a `mov eax,<accumulator>` is often trailed by an
+                 * out-param store + register restores + epilogue (bitset_scan/
+                 * strip_ansi/base64_encode set eax ~7 insns early). But
+                 * `movzx eax; mov [r8],eax; ret` (morton_decode — eax computed FOR
+                 * the store, then incidentally alive) is excluded by the store
+                 * check, avoiding a spurious return on a void out-param function. */
+                bool eax_stored = false;
+                if (last_rax_idx >= 0)
+                    for (long j = last_rax_idx + 1; j < (long)i; ++j) {
+                        cs_insn& sj = ci[j]; if (!sj.detail) continue;
+                        cs_x86& sx = sj.detail->x86;
+                        bool memw = false, raxr = false, raxaddr = false;
+                        for (int o = 0; o < sx.op_count; ++o) {
+                            if (sx.operands[o].type == X86_OP_MEM) {
+                                if (sx.operands[o].access & CS_AC_WRITE) memw = true;
+                                /* rax used as a base/index in an address means it
+                                 * was a computed array INDEX (matmul's cdqe(i*n+j)
+                                 * then `movsd [rcx+rax*8]`), dead after — incidental,
+                                 * not a return value. */
+                                const x86_op_mem& mm = sx.operands[o].mem;
+                                Reg ar; int aw;
+                                if (mm.base  != X86_REG_INVALID) { map_reg(mm.base,  ar, aw); if (ar == R_RAX) raxaddr = true; }
+                                if (mm.index != X86_REG_INVALID) { map_reg(mm.index, ar, aw); if (ar == R_RAX) raxaddr = true; }
+                            }
+                            if (sx.operands[o].type == X86_OP_REG && (sx.operands[o].access & CS_AC_READ)) {
+                                Reg rr; int rw2; map_reg(sx.operands[o].reg, rr, rw2);
+                                if (rr == R_RAX) raxr = true;
+                            }
+                        }
+                        if ((memw && raxr) || raxaddr) { eax_stored = true; break; }
+                    }
+                /* loop-guard exclusion: a `mov eax,[rsp+counter]` reloaded for a
+                 * `cmp eax,n; jge` loop test (then dead) is NOT a return value —
+                 * the widened window would otherwise mis-detect matmul's void as
+                 * `return a4`. A genuine return is a reg copy/compute into eax, not
+                 * a stack reload consumed by a comparison. */
+                bool eax_guard = false;
+                if (last_rax_idx >= 0 && last_rax_idx < (long)count && ci[last_rax_idx].detail) {
+                    /* eax is a LOOP-COUNTER (not a return value) when its last write is
+                     * consumed by a `cmp/test` whose conditional jump loops BACKWARD:
+                     * `inc eax; cmp eax,edx; jl <back>` leaves the counter (==n) in eax
+                     * at the fall-through ret of a VOID loop (arr_clamp/arr_abs). The
+                     * backward-jump test distinguishes it from `mov eax,v; cmp eax,0;
+                     * jl <fwd>; ret` which genuinely RETURNS the compared value. */
+                    for (long j = last_rax_idx + 1; j < (long)i && !eax_guard; ++j) {
+                        if (!ci[j].detail) continue;
+                        /* a fresh rax write before the cmp means the value we test is
+                         * not the one at the ret — stop (avoid false guard). */
+                        {
+                            cs_x86& wx = ci[j].detail->x86;
+                            bool raxw = false;
+                            for (int o = 0; o < wx.op_count && o < 2; ++o)
+                                if (wx.operands[o].type==X86_OP_REG && (wx.operands[o].access & CS_AC_WRITE)) {
+                                    Reg wr; int ww; map_reg(wx.operands[o].reg, wr, ww);
+                                    if (wr==R_RAX) raxw = true;
+                                }
+                            if (raxw && ci[j].id != X86_INS_CMP) break;
+                        }
+                        if (ci[j].id != X86_INS_CMP && ci[j].id != X86_INS_TEST) continue;
+                        cs_x86& cx = ci[j].detail->x86;
+                        bool reads_rax = false;
+                        for (int o = 0; o < cx.op_count; ++o)
+                            if (cx.operands[o].type == X86_OP_REG) {
+                                Reg rr; int rw3; map_reg(cx.operands[o].reg, rr, rw3);
+                                if (rr == R_RAX) reads_rax = true;
+                            }
+                        if (!reads_rax) continue;
+                        /* the cmp feeds a BACKWARD conditional jump -> loop back-edge */
+                        if (j + 1 < (long)count && ci[j + 1].detail) {
+                            cs_insn& jc = ci[j + 1];
+                            cs_x86& jx = jc.detail->x86;
+                            if (jc.id != X86_INS_JMP && jx.op_count >= 1 &&
+                                jx.operands[0].type == X86_OP_IMM &&
+                                (uint64_t)jx.operands[0].imm < jc.address)
+                                eax_guard = true;
+                        }
+                        /* also the legacy case: a `mov eax,[mem]` reload for a cmp
+                         * (matmul) — the reloaded counter, regardless of jump dir. */
+                        if (ci[last_rax_idx].id == X86_INS_MOV) {
+                            cs_x86& lw = ci[last_rax_idx].detail->x86;
+                            if (lw.op_count == 2 && lw.operands[0].type == X86_OP_REG &&
+                                lw.operands[1].type == X86_OP_MEM) {
+                                Reg dr; int dw; map_reg(lw.operands[0].reg, dr, dw);
+                                if (dr == R_RAX) eax_guard = true;
+                            }
+                        }
+                    }
+                }
+                /* xmm0 is the FP RETURN only if its last write reaches the ret
+                 * WITHOUT being consumed by a memory store of xmm0 in between: a
+                 * `movss [rdi+4],xmm0` (value computed FOR an out-param store, then
+                 * incidentally still live in xmm0 at a bare ret) is NOT a return —
+                 * fun_0000d6c0/fun_0001cb60 fill via a1 and have no real FP return.
+                 * Mirrors the integer eax_stored guard. */
+                /* a self-zeroing `xorps/xorpd/pxor xmm0,xmm0` produces a CONSTANT 0,
+                 * commonly a compare operand (`xorps xmm0,xmm0; comiss xmm0,[m]`) — NOT
+                 * a deliberate float return. So when the last xmm0 write is that idiom,
+                 * ANY later read of xmm0 (incl. a compare) consumes it -> void. A bare
+                 * `xorps xmm0,xmm0; ret` (genuine `return 0.0f`) has no such read. */
+                bool last_xmm0_is_zero = false;
+                if (last_xmm0_idx >= 0 && last_xmm0_idx < (long)count && ci[last_xmm0_idx].detail) {
+                    unsigned zid = ci[last_xmm0_idx].id;
+                    if (zid == X86_INS_XORPS || zid == X86_INS_XORPD || zid == X86_INS_PXOR) {
+                        cs_x86& zx = ci[last_xmm0_idx].detail->x86;
+                        if (zx.op_count == 2 && zx.operands[0].type == X86_OP_REG &&
+                            zx.operands[1].type == X86_OP_REG &&
+                            zx.operands[0].reg == zx.operands[1].reg) last_xmm0_is_zero = true;
+                    }
+                }
+                bool xmm0_stored = false;
+                if (last_xmm0_idx >= 0)
+                    for (long j = last_xmm0_idx + 1; j < (long)i; ++j) {
+                        cs_insn& sj = ci[j]; if (!sj.detail) continue;
+                        cs_x86& sx = sj.detail->x86;
+                        bool memw = false, xmm0r = false, regw_other = false;
+                        for (int o = 0; o < sx.op_count; ++o) {
+                            const cs_x86_op& oo = sx.operands[o];
+                            if (oo.type == X86_OP_MEM && (oo.access & CS_AC_WRITE)) memw = true;
+                            if (oo.type == X86_OP_REG) {
+                                Reg rr; int rw5; map_reg(oo.reg, rr, rw5);
+                                if (rr == R_XMM0 && (oo.access & CS_AC_READ)) xmm0r = true;
+                                if (rr != R_XMM0 && (oo.access & CS_AC_WRITE)) regw_other = true;
+                            }
+                        }
+                        /* xmm0 read and then flowing into MEMORY or into ANOTHER
+                         * register via a scalar-FP op (`addss xmm6,xmm0` reduction)
+                         * was a temporary feeding a store/accumulation, not the
+                         * return value. A bare compare (comiss/ucomiss => fp width 0,
+                         * no reg/mem dest) leaves xmm0 intact and does NOT consume it. */
+                        if (xmm0r && (memw || (regw_other && fp_scalar_width(sj.id)) || last_xmm0_is_zero)) { xmm0_stored = true; break; }
+                    }
+                bool rax_close  = (last_rax_w > 0 && ((long)i - last_rax_idx - epi) <= 12 && !eax_stored && !eax_guard);
+                /* a last xmm0 write that is an INDEXED memory load (`movss xmm0,
+                 * [rcx+rax*4]`) is a loop-body array element left over at the
+                 * fall-through ret of a VOID loop (arr_clamp), NOT a return value —
+                 * mirrors the eax loop-counter guard. */
+                bool xmm0_indexed_load = false;
+                if (last_xmm0_idx >= 0 && last_xmm0_idx < (long)count && ci[last_xmm0_idx].detail) {
+                    unsigned lid = ci[last_xmm0_idx].id;
+                    if (lid == X86_INS_MOVSS || lid == X86_INS_MOVSD) {
+                        cs_x86& lx = ci[last_xmm0_idx].detail->x86;
+                        if (lx.op_count == 2 && lx.operands[1].type == X86_OP_MEM &&
+                            lx.operands[1].mem.index != X86_REG_INVALID)
+                            xmm0_indexed_load = true;
+                    }
+                }
+                bool xmm0_close = (last_xmm0_idx >= 0 && ((long)i - last_xmm0_idx - epi) <= 12 &&
+                                   !xmm0_stored && !xmm0_indexed_load);
+                /* if the LAST non-epilogue instruction before the ret writes xmm0
+                 * via a scalar FP op (`movsd xmm0,[maxchange]`), the function
+                 * returns float/double in xmm0 — decisive over a stale rax (an
+                 * array index from a prior `movsd [..rax..]`) that sits closer in
+                 * the linear stream. Fixes the double-returning numerical routines
+                 * (jacobi_step/vec_norms/bisect_root/...) mis-typed `long long`. */
+                bool fp_ret_tail = false;
+                long lastreal = (long)i - 1 - epi;
+                if (lastreal >= 0 && ci[lastreal].detail) {
+                    int fw2 = fp_scalar_width(ci[lastreal].id);
+                    cs_x86& lx = ci[lastreal].detail->x86;
+                    unsigned lid = ci[lastreal].id;
+                    bool copy_to = (lid==X86_INS_MOVAPS||lid==X86_INS_MOVUPS||
+                                    lid==X86_INS_MOVAPD||lid==X86_INS_MOVUPD||
+                                    lid==X86_INS_MOVSD||lid==X86_INS_MOVSS);
+                    if (lx.op_count >= 1 && lx.operands[0].type == X86_OP_REG) {
+                        Reg rr; int rw4; map_reg(lx.operands[0].reg, rr, rw4);
+                        if (rr == R_XMM0) {
+                            if (fw2) { fp_ret_tail = true; saw_fp_ret_tail = true; if (fw2 > last_xmm0_fw) last_xmm0_fw = fw2; }
+                            else if (copy_to && xmm_fw[0]) {   /* movaps xmm0,xmmN of a tracked FP value */
+                                fp_ret_tail = true; saw_fp_ret_tail = true;
+                                if (xmm_fw[0] > last_xmm0_fw) last_xmm0_fw = xmm_fw[0];
+                            }
+                        }
+                    }
+                }
+                if (fp_ret_tail || (!last_xmm0_packed && xmm0_close &&
+                                    (!rax_close || last_xmm0_idx > last_rax_idx))) {
+                    xmm0_live_at_ret = true;
+                    int fw = last_xmm0_fw ? last_xmm0_fw : 4;
+                    if (fw > ret_xmm0_w) ret_xmm0_w = fw;
+                    rax_live_at_ret = false;   /* FP return wins outright */
+                } else if (rax_close) {
+                    if (last_rax_w > ret_rax_w) ret_rax_w = last_rax_w;
+                    rax_live_at_ret = true;
+                    /* provenance for the void fixpoint: a ret taking a raw call
+                     * result (`... = f(); return`) vs a deliberate value. */
+                    if (last_rax_from_call) {
+                        ret_only_from_call = true;
+                        ret_call_target = last_rax_call_target;
+                    } else {
+                        saw_real_value_ret = true;
+                    }
+                    /* the closest rax write to THIS ret was a byte write to al and
+                     * was NOT zero/sign-extended (a movzx/mov eax would make
+                     * last_rax_w >= 4): the bool-in-al contract. One such path is
+                     * enough — the compiler only leaves al's upper bits stale when
+                     * the callers read only al. */
+                    if (last_rax_w == 1) {
+                        if (eax_zeroed_before(ci, last_rax_idx)) saw_wide_ret = true;
+                        else saw_byte_ret = true;
+                    }
+                    else if (last_rax_w >= 4) saw_wide_ret = true;
+                }
+            }
+            /* tail call: jmp to a function start outside [f.rva, f.rva+size) */
+            if (c.id == X86_INS_JMP && x.op_count == 1 &&
+                x.operands[0].type == X86_OP_IMM) {
+                uint64_t tgt = (uint64_t)x.operands[0].imm;
+                bool inside = (tgt >= f.rva && tgt < f.rva + (f.size ? f.size : n));
+                if (!inside) {
+                    for (size_t g = 0; g < e->func_len; ++g)
+                        if (e->funcs[g].rva == tgt) { tail_target = tgt; break; }
+                }
+                /* shared-epilogue return: `mov eax,<val>; jmp <forward, in-range>`
+                 * sets the return value then branches to a common epilogue whose
+                 * `ret` is far away in the linear layout, so the ret-proximity test
+                 * above misses it and the function is mis-typed `void` with every
+                 * `return <val>` dropped (map_put/vm_run/edit_distance/bfs_dist).
+                 * A FORWARD in-range jmp with a just-set eax/xmm0 IS that idiom; a
+                 * BACKWARD jmp is a loop back-edge (eax there is an accumulator). */
+                else if (tgt > c.address && fwd_jmp_is_epilogue(tgt)) {
+                    /* the just-set eax is a shared-epilogue RETURN value only if it
+                     * is NOT consumed between its write and this jmp. A void early
+                     * exit `mov eax,j; cmp i,eax; jne .; jmp epi` computes the
+                     * `i==j` test THROUGH eax and leaves it dead — the jmp is a
+                     * plain `return;`, not a value set (swap_ints/clamp_to/
+                     * heap_sift_*). The genuine idiom (`mov eax,val; jmp epi`) has
+                     * no intervening read of eax (nor an rax address use). */
+                    bool rax_consumed = false;
+                    for (long j = (last_rax_idx >= 0 ? last_rax_idx + 1 : (long)i);
+                         j < (long)i && !rax_consumed; ++j) {
+                        if (!ci[j].detail) continue;
+                        cs_x86& cx = ci[j].detail->x86;
+                        for (int o = 0; o < cx.op_count; ++o) {
+                            const cs_x86_op& oo = cx.operands[o];
+                            if (oo.type == X86_OP_REG && (oo.access & CS_AC_READ)) {
+                                Reg rr; int rw; map_reg(oo.reg, rr, rw);
+                                if (rr == R_RAX) { rax_consumed = true; break; }
+                            } else if (oo.type == X86_OP_MEM) {
+                                const x86_op_mem& mm = oo.mem; Reg ar; int aw;
+                                if (mm.base  != X86_REG_INVALID) { map_reg(mm.base,  ar, aw); if (ar == R_RAX) { rax_consumed = true; break; } }
+                                if (mm.index != X86_REG_INVALID) { map_reg(mm.index, ar, aw); if (ar == R_RAX) { rax_consumed = true; break; } }
+                            }
+                        }
+                    }
+                    if (!rax_consumed && last_rax_w > 0 && ((long)i - last_rax_idx) <= 4) {
+                        if (last_rax_w > ret_rax_w) ret_rax_w = last_rax_w;
+                        rax_live_at_ret = true;
+                        if (last_rax_from_call) {
+                            ret_only_from_call = true;
+                            ret_call_target = last_rax_call_target;
+                        } else {
+                            saw_real_value_ret = true;
+                        }
+                        if (last_rax_w == 1) saw_byte_ret = true;
+                        else if (last_rax_w >= 4) saw_wide_ret = true;
+                    }
+                    if (last_xmm0_idx >= 0 && ((long)i - last_xmm0_idx) <= 4) {
+                        xmm0_live_at_ret = true;
+                        int fw = last_xmm0_fw ? last_xmm0_fw : 4;
+                        if (fw > ret_xmm0_w) ret_xmm0_w = fw;
+                    }
+                }
+            }
+            /* a call sets rax to the callee's return value; remember its width
+             * provisionally (a later explicit eax/rax write or a discard will
+             * override). This lets `call f; ret` wrappers be non-void while a
+             * void function that later overwrites or ignores rax stays void. */
+            if (c.id == X86_INS_CALL) {
+                saw_prior_call = true;   /* real work precedes any later tail jmp */
+                /* width inherited from callee when known, else 4 (int default) */
+                int cw = 4;
+                bool callee_void = false;
+                bool callee_float = false; int callee_fw = 4;
+                if (c.detail && x.op_count >= 1 && x.operands[0].type == X86_OP_IMM) {
+                    uint64_t ct = (uint64_t)x.operands[0].imm;
+                    auto it = tab.find(ct);
+                    if (it != tab.end()) {
+                        if (it->second.ret_kind == 2) cw = 8;
+                        else if (it->second.ret_kind == 0) callee_void = true;
+                        else if (it->second.ret_kind == 3 || it->second.ret_kind == 4) {
+                            callee_float = true;
+                            callee_fw = (it->second.ret_kind == 4) ? 8 : 4;
+                        }
+                    }
+                }
+                if (callee_float) {
+                    /* a FLOAT/DOUBLE-returning callee leaves its result in xmm0 (rax
+                     * is left undefined by the ABI). A `call fp_helper; ret` wrapper
+                     * therefore returns float, not the stale rax — the u2f-based
+                     * bit-reinterpret builders (f_fabs/f_neg/f_copysign/f_rebuild/…)
+                     * end in exactly this shape and were mis-typed `int`, truncating
+                     * the returned float to an integer value. Record the xmm0 result
+                     * so the ret-proximity test picks it as the return, and clear the
+                     * rax-from-call provenance so rax cannot win the tiebreak. */
+                    last_xmm0_idx = (long)i; last_xmm0_fw = callee_fw;
+                    last_xmm0_packed = false;
+                    last_rax_w = 0; last_rax_from_call = false;
+                } else if (callee_void) {
+                    /* a KNOWN-void callee leaves garbage in rax, not a return value.
+                     * A loop/tail body ending in `call void_helper` (build_max_heap/
+                     * heap_sort/comb_sort → heap_sift_down/swap_ints) must not be
+                     * mis-typed as returning that garbage. A later real eax write on
+                     * the ret path still overrides this. */
+                    last_rax_w = 0; last_rax_from_call = false;
+                } else {
+                    last_rax_w = cw; last_rax_idx = (long)i; saw_call_result = true;
+                    last_rax_from_call = true;
+                    last_rax_call_target =
+                        (c.detail && x.op_count >= 1 && x.operands[0].type == X86_OP_IMM)
+                            ? (uint64_t)x.operands[0].imm : 0;
+                }
+            }
+            /* idiv/div/imul/mul (1-operand forms) write the result to eax/rax
+             * IMPLICITLY — capstone does not list eax as an operand, so the
+             * explicit-operand scan below misses it and a function that returns a
+             * division/multiplication result (e.g. fx_mean's `acc/count`) was
+             * mis-detected as void, dropping the whole return. */
+            if (c.id == X86_INS_IDIV || c.id == X86_INS_DIV || c.id == X86_INS_MUL ||
+                (c.id == X86_INS_IMUL && x.op_count == 1)) {
+                int dw = (x.op_count >= 1 && x.operands[0].size) ? x.operands[0].size : 4;
+                if (dw < 4) dw = 4;
+                last_rax_w = dw; last_rax_idx = (long)i;
+            }
+            /* track sub rsp for homing */
+            if (c.id == X86_INS_SUB && x.op_count == 2 &&
+                x.operands[0].type == X86_OP_REG && x.operands[1].type == X86_OP_IMM) {
+                Reg r; int w; map_reg(x.operands[0].reg, r, w);
+                if (r == R_RSP) { fs = x.operands[1].imm; sub_done = true; }
+            }
+            /* param homing mov [rsp+k], argreg */
+            if (c.id == X86_INS_MOV && x.op_count == 2 &&
+                x.operands[0].type == X86_OP_MEM && x.operands[1].type == X86_OP_REG) {
+                const x86_op_mem& m = x.operands[0].mem;
+                Reg base = R_NONE; int t;
+                if (m.base != X86_REG_INVALID) map_reg(m.base, base, t);
+                Reg s; int sw; map_reg(x.operands[1].reg, s, sw);
+                int pidx = (s==R_RCX)?0:(s==R_RDX)?1:(s==R_R8)?2:(s==R_R9)?3:-1;
+                if (base == R_RSP && m.index == X86_REG_INVALID && pidx >= 0) {
+                    int64_t expect = 8 + 8 * pidx;
+                    if (m.disp == expect) { used_arg[pidx] = true; homed_arg[pidx] = true; }
+                }
+            }
+            /* A param that is FORWARDED to a callee (`f(int a){ return g(a); }`)
+             * reaches the callee only through the ABI register, never as an explicit
+             * read operand, so the operand scan misses it and the param count comes
+             * out short (month_len's `y` forwarded to is_leap -> arg dropped at every
+             * call site). On a direct call to an already-analyzed callee, the still-
+             * incoming arg registers it consumes (its param_count, minus any written
+             * here) ARE used params of THIS function. */
+            if (c.id == X86_INS_CALL && x.op_count >= 1 &&
+                x.operands[0].type == X86_OP_IMM) {
+                uint64_t ctgt = (uint64_t)x.operands[0].imm;
+                auto cit = tab.find(ctgt);
+                if (cit != tab.end()) {
+                    int cpc = cit->second.param_count; if (cpc > 4) cpc = 4;
+                    for (int p = 0; p < cpc; ++p)
+                        if (!seen_write[p]) used_arg[p] = true;
+                }
+            }
+            /* Same forwarding through an INDIRECT call to a KNOWN import (`call
+             * qword ptr [IAT]`): a wrapper that forwards a param UNCHANGED into an
+             * API arg (fun_0000c0b0 forwards a3=r8 into a logging call's r8) never
+             * reads that reg as an explicit operand, so the IMM rule above misses
+             * it and the wrapper's arity comes out short — every call site then
+             * DROPS the forwarded arg. Resolve the IAT slot; if it is a recognized
+             * API, mark its arg registers (up to the known arity, minus any this
+             * wrapper wrote itself) as used. Gated to a KNOWN import so an unknown
+             * callee's arity can never over-count a genuinely-local arg reg. */
+            if (c.id == X86_INS_CALL && x.op_count >= 1 &&
+                x.operands[0].type == X86_OP_MEM) {
+                const x86_op_mem& cm = x.operands[0].mem;
+                uint64_t iat = 0; bool have_iat = false;
+                if (cm.base == X86_REG_RIP && cm.index == X86_REG_INVALID) {
+                    iat = c.address + c.size + (uint64_t)cm.disp; have_iat = true;
+                } else if (cm.base == X86_REG_INVALID && cm.index == X86_REG_INVALID) {
+                    iat = (uint64_t)cm.disp;
+                    if (e->base && iat >= e->base) iat -= e->base;
+                    have_iat = true;
+                }
+                if (have_iat) {
+                    std::string inm;
+                    for (size_t k = 0; k < e->import_len; ++k)
+                        if (e->imports[k].iat_rva == iat && e->imports[k].name[0]) {
+                            inm = e->imports[k].name; break;
+                        }
+                    int aargc, ark;
+                    if (!inm.empty() && Decompiler::known_api(inm, aargc, ark)) {
+                        int cpc = aargc; if (cpc > 4) cpc = 4;
+                        for (int p = 0; p < cpc; ++p)
+                            if (!seen_write[p]) used_arg[p] = true;
+                    }
+                }
+            }
+            /* A TAIL-CALL thunk (`… jmp target`) forwards its incoming args to the
+             * target; the arg registers the target consumes that this thunk did NOT
+             * set locally are this thunk's OWN params (fun_0005c660: rcx forwarded to
+             * sub_5bf90 => a1, fixing the `in_RCX` leak). Also inherit the target's
+             * RETURN type — a tail-call thunk returns exactly what its target does. */
+            if (c.id == X86_INS_JMP && x.op_count >= 1 && x.operands[0].type == X86_OP_IMM) {
+                uint64_t jt = (uint64_t)x.operands[0].imm;
+                bool inside = (jt >= f.rva && jt < f.rva + (f.size ? f.size : n));
+                if (!inside) {
+                    auto jit = tab.find(jt);
+                    if (jit != tab.end()) {
+                        int cpc = jit->second.param_count; if (cpc > 4) cpc = 4;
+                        for (int p = 0; p < cpc; ++p)
+                            if (!seen_write[p]) used_arg[p] = true;
+                        /* only a PURE forwarder (`return g()`) inherits an INTEGER
+                         * target's return type; a function that did real work + a
+                         * discarded call before its tail jmp is a void sequencer
+                         * (Ghidra models `call; call; ret`). A float (xmm0) return is
+                         * the exception — it is essentially always the real result. */
+                        int trk = jit->second.ret_kind;
+                        bool trk_float = (trk == 3 || trk == 4);
+                        if (trk != 0 && !writes_eax && !writes_rax &&
+                            (!saw_prior_call || trk_float))
+                            tail_ret_inherit = trk;
+                    }
+                }
+            }
+            /* `xorps/xorpd/pxor xmm,xmm` (same reg) is the zero idiom: a pure define,
+             * not a read of the xmm's incoming (param) value. */
+            bool self_xor_fp = (c.id==X86_INS_XORPS||c.id==X86_INS_XORPD||c.id==X86_INS_PXOR)
+                && x.op_count>=2 && x.operands[0].type==X86_OP_REG &&
+                x.operands[1].type==X86_OP_REG && x.operands[0].reg==x.operands[1].reg;
+            /* self-zeroing idiom (`xor r,r` / `sub r,r`) DEFINES the reg to 0 — its
+             * operand reads are not a use of the incoming (param) value. */
+            bool self_zero_gp = (c.id==X86_INS_XOR || c.id==X86_INS_SUB) &&
+                x.op_count==2 && x.operands[0].type==X86_OP_REG &&
+                x.operands[1].type==X86_OP_REG && x.operands[0].reg==x.operands[1].reg;
+            /* any read of arg register before its first write => used */
+            for (int k = 0; k < x.op_count && k < 8; ++k) {
+                const cs_x86_op& op = x.operands[k];
+                if (op.type == X86_OP_REG) {
+                    Reg r; int w; map_reg(op.reg, r, w);
+                    int pidx = (r==R_RCX)?0:(r==R_RDX)?1:(r==R_R8)?2:(r==R_R9)?3:-1;
+                    /* Exclude operand-0 only when it is WRITE-ONLY (`mov r9d,x` — its
+                     * prior value is discarded) or a self-zero. A READ-MODIFY-WRITE
+                     * dst (`or r9d,[mem]`, `add`, `and`) READS the incoming value, so
+                     * it IS a param use — missing it dropped arg4 of every 4-arg
+                     * callee that consumes r9 via `or r9d,[g]` (fun_00015920, called
+                     * with 3 of 4 args). */
+                    bool is_dst0 = (k == 0 && (op.access & CS_AC_WRITE) &&
+                                    (!(op.access & CS_AC_READ) || self_zero_gp));
+                    if (pidx >= 0 && !seen_write[pidx] && !is_dst0)
+                        used_arg[pidx] = true;
+                    if (pidx >= 0 && (op.access & CS_AC_WRITE)) seen_write[pidx] = true;
+                    /* XMM float/double argument: xmm0-3 read before written. A
+                     * REPLACING op (movss/cvt*) on the dst discards its prior value
+                     * (capstone READ is upper-bits preservation only), so it is not a
+                     * param use; a read-modify-write (mulsd/addsd/...) dst read IS. */
+                    int xp = (r>=R_XMM0 && r<=R_XMM3) ? (int)(r - R_XMM0) : -1;
+                    if (xp >= 0) {
+                        bool fp_dst = self_xor_fp ||
+                            (k == 0 && (op.access & CS_AC_WRITE) && Decompiler::fp_def_only(c.id));
+                        if ((op.access & CS_AC_READ) && !xmm_seen_write[xp] && !fp_dst) {
+                            xmm_used[xp] = true;
+                            /* MAX-wins width: a param used by ANY double-width scalar op
+                             * (sqrtsd/addsd/movsd) is a double — first-wins wrongly locked
+                             * `float` when a movss/cvt read preceded the real double op. */
+                            int fw = fp_scalar_width(c.id); if (fw > xmm_w[xp]) xmm_w[xp] = fw;
+                        }
+                        if (op.access & CS_AC_WRITE) xmm_seen_write[xp] = true;
+                    }
+                    if (r == R_RAX && (op.access & CS_AC_WRITE)) {
+                        if (w >= 8) writes_rax = true; else writes_eax = true;
+                        last_rax_w = w; last_rax_idx = (long)i;
+                        last_rax_from_call = false;
+                        /* a LONE `mov rax, argreg` never rewritten = the return-the-
+                         * param idiom (memcpy/memmove/strcpy return dst); a 2nd rax
+                         * write disqualifies it. */
+                        ++rax_write_count;
+                        if (rax_write_count == 1 && c.id == X86_INS_MOV && x.op_count == 2 &&
+                            x.operands[1].type == X86_OP_REG) {
+                            Reg sr; int sw2; map_reg(x.operands[1].reg, sr, sw2);
+                            rax_param_copy = (sr==R_RCX)?0:(sr==R_RDX)?1:(sr==R_R8)?2:(sr==R_R9)?3:-1;
+                        } else rax_param_copy = -1;
+                    }
+                    /* the CALL result in rax consumed at 64-bit width (`test rax,rax`,
+                     * `mov r64,rax`, `cmp rax,..`) proves the callee returned a 64-bit
+                     * value (pointer/long long), even if its own sig came out `int` —
+                     * so a `call f; test rax,rax; ...; ret` wrapper isn't truncated to
+                     * int (the fun_0005dc00 allocator chain). */
+                    else if (r == R_RAX && (op.access & CS_AC_READ) && w >= 8 &&
+                             last_rax_from_call && last_rax_idx >= 0 && last_rax_idx < (long)i) {
+                        last_rax_w = 8;
+                    }
+                    if (r == R_XMM0 && (op.access & CS_AC_WRITE)) {
+                        last_xmm0_idx = (long)i;
+                        /* prefer the tracked xmm0 width (captures a `movaps xmm0,xmmN`
+                         * copy of a double value), else this op's own FP width. */
+                        int fw = xmm_fw[0] ? xmm_fw[0] : fp_scalar_width(c.id);
+                        if (fw) last_xmm0_fw = fw;
+                        /* a PACKED 128-bit move into xmm0 carrying NO scalar-FP width is
+                         * a memcpy/memmove vector copy (`movdqu xmm0,[rdx]`), not a float
+                         * return — a pointer-returning routine (`mov rax,rcx; ...; ret`)
+                         * whose xmm0 is only copy scratch must not be typed float. */
+                        last_xmm0_packed = (fw == 0) &&
+                            (c.id==X86_INS_MOVDQU || c.id==X86_INS_MOVDQA ||
+                             c.id==X86_INS_MOVUPS || c.id==X86_INS_MOVAPS ||
+                             c.id==X86_INS_MOVUPD || c.id==X86_INS_MOVAPD);
+                    }
+                }
+                if (op.type == X86_OP_MEM) {
+                    const x86_op_mem& m = op.mem;
+                    Reg bi[2] = {R_NONE, R_NONE}; int t;
+                    if (m.base != X86_REG_INVALID) map_reg(m.base, bi[0], t);
+                    if (m.index != X86_REG_INVALID) map_reg(m.index, bi[1], t);
+                    for (Reg r : bi) {
+                        int pidx=(r==R_RCX)?0:(r==R_RDX)?1:(r==R_R8)?2:(r==R_R9)?3:-1;
+                        if (pidx >= 0 && !seen_write[pidx]) used_arg[pidx] = true;
+                    }
+                    /* stack-passed argument (5th+): read from the caller's arg area
+                     * at [rsp + frame + 0x28 + 8*(k-5)] under /Od. A slot only
+                     * counts as an INCOMING arg if it is read BEFORE the callee
+                     * writes it; a slot the callee writes first is its own spill
+                     * or local (e.g. `movaps [rsp+0x30], xmm6` saving a callee-
+                     * saved register), and must not inflate the param count — that
+                     * is what produced phantom trailing args (v1,v13,v12) in every
+                     * caller. Keyed on the raw disp so a spill's store and reload
+                     * match regardless of frame-offset/push accuracy. */
+                    if (bi[0] == R_RSP && m.index == X86_REG_INVALID) {
+                        int64_t rel = (int64_t)m.disp - fs;
+                        bool is_w = (op.access & CS_AC_WRITE) != 0;
+                        bool is_r = (op.access & CS_AC_READ)  != 0;
+                        if (rel >= 0x28 && (rel % 8) == 0) {
+                            int k = (int)(rel / 8);
+                            if (is_r && !stk_written.count(m.disp) &&
+                                k >= 5 && k <= 32 && k > max_stack_arg)
+                                max_stack_arg = k;
+                        }
+                        if (is_w) stk_written.insert(m.disp);
+                    }
+                }
+            }
+            /* a CALL clobbers volatile xmm0-5: a subsequent xmm0-3 read is the
+             * call's float RESULT, not an incoming param. */
+            if (c.id == X86_INS_CALL)
+                for (int p = 0; p < 4; ++p) xmm_seen_write[p] = true;
+            (void)fs; (void)sub_done;
+        }
+        cs_free(ci, count);
+
+        /* Prefer the prologue homing stores (the reliable /Od param signal):
+         * the highest contiguous homed arg index is the parameter count. Only
+         * when nothing is homed do we fall back to the read-before-write
+         * heuristic (which can over-count scratch uses of rdx/r8). */
+        bool any_home = homed_arg[0]||homed_arg[1]||homed_arg[2]||homed_arg[3];
+        int pc = 0;
+        if (any_home) {
+            /* The HIGHEST homed arg index sets the count: the Win64 ABI fills the
+             * arg registers left-to-right, so a homed arg-N implies args 0..N all
+             * exist even when a LOWER one was used directly from its register with
+             * no home store (an /O2 callee that spills rdx to its home slot but
+             * dereferences rcx in place: `mov [rsp+0x10],edx; ... [rcx+off]`). The
+             * old contiguous-from-0 scan stopped at the first un-homed slot and
+             * returned 0 params for such `f(rcx,rdx)` functions — so EVERY argument
+             * was dropped at each call site (fun_00012370 called `()`, fun_00015920
+             * called with 3 of 4 args). */
+            for (int p = 0; p < 4; ++p) if (homed_arg[p]) pc = p + 1;
+        } else {
+            /* HIGHEST read-before-write arg reg + 1 = param count. The Win64 ABI
+             * fills arg registers left-to-right, so a callee that reads arg N as a
+             * param means the caller passed args 0..N — even when a LOWER slot is
+             * unused (a DllMain-style `f(hinst, reason)` that ignores hinst/rcx but
+             * reads reason/edx: the old leading-gap `break` returned 0 params, so
+             * every call site dropped ALL args). Float (xmm) positions count too. */
+            int maxu = -1;
+            for (int p = 0; p < 4; ++p)
+                if (used_arg[p] || xmm_used[p]) maxu = p;
+            pc = maxu + 1;
+        }
+        /* Fold in XMM float/double params: a position is a float arg when xmm[p] is
+         * read before write and the integer reg at that position is NOT a param. The
+         * highest float position extends the count (ABI assigns positions by index),
+         * so a homed `f(int a1, double a2)` recovers 2 params with a2 from xmm1. */
+        unsigned char fmask = 0, dmask = 0, tmask = 0;
+        for (int p = 0; p < 4; ++p)
+            if (xmm_used[p] && !used_arg[p] && !homed_arg[p]) {
+                fmask |= (unsigned char)(1u << p);
+                if (xmm_w[p] == 8) dmask |= (unsigned char)(1u << p);            /* movsd => double */
+                if (xmm_w[p] == 4 || xmm_w[p] == 8) tmask |= (unsigned char)(1u << p); /* width known */
+            }
+        for (int p = 3; p >= 0; --p)
+            if (fmask & (1u << p)) { if (p + 1 > pc) pc = p + 1; break; }
+        sig.float_mask = fmask;
+        sig.double_mask = dmask;
+        sig.float_typed_mask = tmask;
+        if (max_stack_arg > pc) pc = max_stack_arg;   /* args 5+ passed on stack */
+        sig.param_count = pc;
+        if (!has_ret) sig.ret_kind = 0;
+        /* a STRONG float return (`cvt/fp-op xmm0; ret` on some path) beats an
+         * incidental rax from a tail `call err(); ret` (a noreturn error path whose
+         * rax is never a real return) — fun_00068420 is a float fmod-like helper
+         * mis-typed `int` because its __invalid_parameter tail set rax_live. */
+        else if (xmm0_live_at_ret && saw_fp_ret_tail) sig.ret_kind = (ret_xmm0_w >= 8) ? 4 : 3;
+        else if (rax_live_at_ret) sig.ret_kind = (ret_rax_w >= 8) ? 2 : 1;
+        else if (xmm0_live_at_ret) sig.ret_kind = (ret_xmm0_w >= 8) ? 4 : 3; /* float/double */
+        else if (tail_ret_inherit) sig.ret_kind = tail_ret_inherit;  /* tail-call thunk returns its target's value */
+        else if (rax_param_copy >= 0) sig.ret_kind = 2;  /* lone `mov rax,argreg` = returns that pointer (memcpy dst) */
+        else sig.ret_kind = 0;                       /* void */
+        /* byte (bool/char) return: a ret leaves only al meaningful and the value
+         * is a small int (kind 1, not ll/float). Fixes `xor al,al; ret` rendering
+         * as `return (X & -256)` instead of `return 0`. */
+        /* Byte return only when NO ret path leaves a full eax/rax value: a function
+         * with any `mov eax,imm` / `xor eax,eax` / wide return is `int` even if some
+         * other path uses `setcc al` (an int-returning predicate). Requiring no wide
+         * ret path stops `int seg_intersect(){...}` rendering as `unsigned char`. */
+        if (rax_live_at_ret && sig.ret_kind == 1 && saw_byte_ret && !saw_wide_ret)
+            sig.ret_byte = true;
+        sig.ret_only_from_call = ret_only_from_call;
+        sig.saw_real_value_ret = saw_real_value_ret;
+        sig.saw_prior_call = saw_prior_call;
+        sig.ret_call_target = ret_call_target;
+        tab[f.rva] = sig;
+        if (tail_target) {
+            tail_of[f.rva] = tail_target;
+            /* A tail thunk that never wrote an arg register forwards rcx/rdx/r8/r9
+             * to the target UNCHANGED, so its true arity is the target's — recorded
+             * for the fixpoint below (the inline inheritance at the JMP handler only
+             * fires when the target was already analyzed; a thunk at a HIGHER rva
+             * than its target, or a chain, needs the order-independent pass). A
+             * function that rearranges args (`mov rcx,rdx; jmp t`) wrote an arg reg
+             * and is excluded — its arity comes from its own body. */
+            if (!seen_write[0] && !seen_write[1] && !seen_write[2] && !seen_write[3])
+                fwd_thunk_of[f.rva] = tail_target;
+        }
+        (void)writes_eax; (void)writes_rax; (void)saw_call_result;
+    }
+    cs_close(&h);
+
+    /* Resolve tail-call return kinds: a function ending in `jmp <callee>` returns
+     * whatever the callee returns. Iterate to a fixed point over the tail chain. */
+    for (int iter = 0; iter < 4; ++iter) {
+        for (auto& kv : tail_of) {
+            uint64_t fr = kv.first, callee = kv.second;
+            if (!tab.count(fr) || !tab.count(callee)) continue;
+            FuncSig& s = tab[fr];
+            if (s.ret_kind == 0 && tab[callee].ret_kind != 0) {
+                int ck = tab[callee].ret_kind;
+                bool ck_float = (ck == 3 || ck == 4);
+                /* A float (xmm0) tail-return is essentially always the meaningful
+                 * result, so forward it even after prior work (`mean=f(); return
+                 * sqrt(v)`). An integer/pointer tail-return after a discarded prior
+                 * call is a void sequencer's goto — do NOT invent a return value. */
+                if (!s.saw_prior_call || ck_float) s.ret_kind = ck;
+            }
+        }
+        /* Propagate ARITY along the pure-forwarding-thunk chain to a fixed point:
+         * fun_0001d010 = `jmp fun_0001c790` was declared void()/called with 0 args
+         * at every site because a jmp-only body reads no arg registers. A forwarding
+         * thunk's arity IS its target's. */
+        for (auto& kv : fwd_thunk_of) {
+            uint64_t fr = kv.first, callee = kv.second;
+            if (!tab.count(fr) || !tab.count(callee)) continue;
+            FuncSig& s = tab[fr];
+            if (tab[callee].param_count > s.param_count) {
+                s.param_count = tab[callee].param_count;
+                s.float_mask = tab[callee].float_mask;
+                s.double_mask = tab[callee].double_mask;
+                s.float_typed_mask = tab[callee].float_typed_mask;
+            }
+        }
+    }
+
+    /* Void fixpoint: a function whose ONLY return evidence is a raw SELF-recursive
+     * call result (`... = self(); return`), never a deliberate const/computed/
+     * loaded base case, is void — a pure self-recursion with no base value
+     * (quicksort_range, heapify). Restricted to self-recursion: the callee-void
+     * cascade was unsafe because `saw_real_value_ret` under-detects value returns
+     * that reach the ret through a far shared-epilogue load (distinct_bytes
+     * `return count`), and would wrongly void them. A genuine recursive int
+     * (factorial `return 1`, gcd `return a`) records a real value return here. */
+    for (auto& kv : tab) {
+        FuncSig& s = kv.second;
+        if (s.ret_kind == 0 || !s.ret_only_from_call || s.saw_real_value_ret)
+            continue;
+        if (s.ret_call_target == kv.first) s.ret_kind = 0;
+    }
+}
+
+} /* anonymous namespace */
+
+/* ====================================================================== */
+/*  Public entry point                                                     */
+/* ====================================================================== */
+
+extern "C" char* ds_decompile(ds_engine* e, uint64_t func_rva) {
+    if (!e) return nullptr;
+    const ds_func* f = nullptr;
+    for (size_t i = 0; i < e->func_len; ++i) {
+        if (e->funcs[i].rva == func_rva) { f = &e->funcs[i]; break; }
+    }
+    if (!f) return nullptr;
+
+    std::string result;
+    try {
+        std::map<uint64_t, FuncSig> sigtab;
+        build_sig_table(e, sigtab);
+        Decompiler dc(e, f, &sigtab);
+        result = dc.run();
+    } catch (...) {
+        std::string fname = (f->name[0] ? sani(std::string(f->name))
+                                        : "sub_" + std::to_string(func_rva));
+        result = "/* decompilation failed: exception */\nvoid " +
+                 fname + "(void) {\n}\n";
+    }
+    return dup_to_c(result);
+}
+
+#endif /* DS_USE_CAPSTONE */

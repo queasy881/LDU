@@ -1,0 +1,244 @@
+/* ============================================================================
+   main.css — DisasmStudio design system. STRICT MONOCHROME.
+
+   Only four base values exist (--bg/--panel/--border/--fg). Visual hierarchy and
+   "highlighting" come exclusively from a white-opacity ramp (shades of white on
+   black) + weight + inversion — never from hue.
+   ========================================================================== */
+
+:root {
+  /* ===== Platinum Mono =====================================================
+     Restrained, cool-toned dark. Near-monochrome hierarchy from a cool-gray
+     ramp; a single platinum accent appears ONLY on interaction (cursor,
+     selection, links, focus). Syntax tokens are low-chroma, all in-family. */
+  --bg:       #0A0B0D;   /* deepest base                   */
+  --panel:    #14161A;   /* raised surface                 */
+  --elevated: #1A1D23;   /* menus, palette, modals         */
+  --border:   #24272E;   /* hairline divider               */
+  --border-2: #30343C;   /* emphasis border (hover)        */
+  --fg:       #F4F6F8;   /* primary text                   */
+
+  /* cool-gray ramp (replaces the old white-opacity ramp; same var names) */
+  --fg-2: #C2C9D1;   /* secondary text                     */
+  --fg-3: #828A94;   /* tertiary (addresses)               */
+  --fg-4: #565E68;   /* faint (raw bytes, hints)           */
+  --fg-5: #353B43;   /* ghost (rules, disabled)            */
+
+  --hover:   rgba(255,255,255,0.040);
+  --hover-2: rgba(255,255,255,0.075);
+  --line:    rgba(255,255,255,0.065);
+
+  /* the single signature accent — platinum/ice, interaction only */
+  --accent:      #9FB4C4;
+  --accent-soft: #B7C7D3;
+  --accent-dim:  rgba(159,180,196,0.13);  /* selection fill        */
+  --accent-dim2: rgba(159,180,196,0.20);  /* selection hover       */
+  --accent-line: rgba(159,180,196,0.55);  /* cursor bar / underline*/
+  --accent-glow: rgba(159,180,196,0.28);
+
+  /* syntax tokens (low chroma, cohesive family) */
+  --syn-mn:    #FFFFFF;   /* mnemonic / keyword (carries weight)*/
+  --syn-reg:   #C8CFD6;   /* register                           */
+  --syn-imm:   #AAB2BB;   /* immediate / number                 */
+  --syn-ref:   #9FB4C4;   /* jump/call/data reference (accent)  */
+  --syn-str:   #AEC4CF;   /* string literal                     */
+  --syn-cmt:   #646A72;   /* comment (italic)                   */
+  --syn-type:  #AEC4CF;   /* C type                             */
+  --syn-kw:    #B7C7D3;   /* C keyword (if/return/while)        */
+  --syn-fn:    #E6EAEE;   /* function name                      */
+  --syn-addr:  #6A727B;   /* address column                     */
+  --syn-bytes: #3C424A;   /* raw bytes column                   */
+  --syn-punc:  #8A929B;   /* punctuation                        */
+  --syn-mark:  rgba(159,180,196,0.22);  /* occurrence highlight  */
+
+  --font-ui:   "Inter", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "Cascadia Mono", Consolas, ui-monospace, monospace;
+
+  --row-h: 19px;
+  --side-w: 300px;
+  --pad: 16px;
+  --radius: 4px;
+  --ease: cubic-bezier(.4, 0, .2, 1);
+}
+
+@font-face { font-family:"JetBrains Mono"; src:local("JetBrains Mono"),local("Cascadia Mono"),local("Consolas"); font-display:swap; }
+@font-face { font-family:"Inter"; src:local("Inter"),local("Segoe UI"); font-display:swap; }
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  height: 100%;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  overflow: hidden;
+  user-select: none;            /* chrome is not selectable...               */
+}
+
+/* ...but anything tagged .selectable (the code views) IS selectable, with a
+   native text caret. This is what makes the disassembly + pseudocode behave
+   like a real editor instead of swallowing every drag into a row-select. */
+.selectable, .selectable * {
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
+}
+
+::selection { background: var(--accent); color: #0A0B0D; }
+.selectable ::selection, .selectable::selection { background: var(--accent-glow); color: var(--fg); }
+
+a { color: inherit; text-decoration: none; }
+
+[hidden] { display: none !important; }
+
+/* ---- scrollbars: thin, monochrome ---------------------------------------- */
+* { scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.18) transparent; }
+::-webkit-scrollbar { width: 11px; height: 11px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: rgba(255,255,255,0.16);
+  border: 3px solid var(--bg);
+  border-radius: 6px;
+}
+::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.30); }
+::-webkit-scrollbar-corner { background: transparent; }
+
+/* ---- typography helpers -------------------------------------------------- */
+.mono { font-family: var(--font-mono); }
+.dim  { color: var(--fg-2); }
+.faint{ color: var(--fg-3); }
+.eyebrow {
+  font-size: 10.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--fg-3);
+  font-weight: 600;
+}
+
+/* ---- buttons ------------------------------------------------------------- */
+.btn {
+  font-family: var(--font-ui);
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--fg);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 7px 15px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background .12s, color .12s, border-color .12s;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.btn:hover { background: var(--hover-2); color: var(--fg); border-color: var(--border-2); }
+.btn:active { transform: translateY(1px); }
+.btn:disabled { color: var(--fg-4); border-color: var(--border); background: transparent; cursor: default; transform: none; }
+
+.btn-primary { background: var(--accent); color: #0A0B0D; border-color: var(--accent); font-weight: 600; }
+.btn-primary:hover { background: var(--accent-soft); border-color: var(--accent-soft); box-shadow: 0 0 0 3px var(--accent-dim); }
+.btn-primary:disabled { background: var(--fg-5); border-color: transparent; color: var(--fg-4); }
+
+.btn-ghost { border-color: transparent; color: var(--fg-2); padding: 6px 10px; }
+.btn-ghost:hover { background: var(--hover-2); color: var(--fg); border-color: transparent; }
+
+.btn-sm { padding: 4px 10px; font-size: 11.5px; }
+
+/* icon-ish square button (back arrows, toggles) */
+.btn-icon {
+  border-color: transparent; color: var(--fg-2);
+  padding: 5px 9px; font-family: var(--font-mono);
+}
+.btn-icon:hover { background: var(--hover-2); color: var(--fg); border-color: transparent; }
+
+/* ---- inputs -------------------------------------------------------------- */
+.input {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 11px;
+  width: 100%;
+  outline: none;
+  transition: border-color .12s, background .12s;
+}
+.input::placeholder { color: var(--fg-4); }
+.input:focus { border-color: var(--accent-line); background: var(--bg); box-shadow: 0 0 0 3px var(--accent-dim); }
+
+/* ---- badge / chip -------------------------------------------------------- */
+.badge {
+  display: inline-flex; align-items: center;
+  font-family: var(--font-mono);
+  font-size: 10.5px; line-height: 1;
+  letter-spacing: 0.03em;
+  color: var(--fg-2);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 3px 6px;
+}
+
+/* ---- panel header (sidebar sections) ------------------------------------- */
+.pane-head {
+  display: flex; align-items: center; justify-content: space-between;
+  height: 30px; padding: 0 12px;
+  border-bottom: 1px solid var(--border);
+  background: linear-gradient(var(--hover), transparent);
+  flex: 0 0 auto;
+}
+.pane-title { font-size: 10.5px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--fg-2); font-weight: 600; }
+.pane-count { font-family: var(--font-mono); font-size: 11px; color: var(--fg-3); }
+
+/* ---- empty state --------------------------------------------------------- */
+.empty-state {
+  color: var(--fg-3);
+  font-size: 12.5px;
+  text-align: center;
+  padding: 28px 18px;
+  line-height: 1.6;
+}
+
+/* ---- generic selectable list row ----------------------------------------- */
+.lrow {
+  display: flex; align-items: center; gap: 10px;
+  padding: 7px 12px;
+  cursor: pointer;
+  border-left: 2px solid transparent;
+}
+.lrow:hover { background: var(--hover); }
+.lrow.sel { background: var(--accent-dim); color: var(--fg); border-left-color: var(--accent); }
+.lrow.sel .dim, .lrow.sel .faint { color: var(--fg-2); }
+
+/* ---- generic modal overlay ----------------------------------------------- */
+.overlay {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,0.72);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 100;
+}
+.modal {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  min-width: 360px; max-width: 70vw;
+  box-shadow: 0 18px 60px rgba(0,0,0,0.6);
+}
+.modal-head {
+  padding: 14px 18px; border-bottom: 1px solid var(--border);
+  font-size: 12px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--fg-2); font-weight: 600;
+}
+.modal-body { padding: 16px 18px; }
+
+kbd {
+  font-family: var(--font-mono); font-size: 11px;
+  background: var(--bg); border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: 4px; padding: 1px 6px; color: var(--fg);
+  min-width: 20px; display: inline-block; text-align: center;
+}

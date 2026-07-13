@@ -1,0 +1,40 @@
+array_ops.cpp
+   Creating library array_ops.lib and object array_ops.exp
+bitops2.cpp
+   Creating library bitops2.lib and object bitops2.exp
+board.cpp
+   Creating library board.lib and object board.exp
+checksums.cpp
+   Creating library checksums.lib and object checksums.exp
+cipher.cpp
+   Creating library cipher.lib and object cipher.exp
+control_flow.cpp
+   Creating library control_flow.lib and object control_flow.exp
+encoding.cpp
+   Creating library encoding.lib and object encoding.exp
+fixedpt.cpp
+   Creating library fixedpt.lib and object fixedpt.exp
+geometry.cpp
+   Creating library geometry.lib and object geometry.exp
+heaps.cpp
+   Creating library heaps.lib and object heaps.exp
+linklist.cpp
+   Creating library linklist.lib and object linklist.exp
+math_ops.cpp
+   Creating library math_ops.lib and object math_ops.exp
+matrix.cpp
+   Creating library matrix.lib and object matrix.exp
+parsing.cpp
+   Creating library parsing.lib and object parsing.exp
+ringbuf.cpp
+   Creating library ringbuf.lib and object ringbuf.exp
+sorting2.cpp
+   Creating library sorting2.lib and object sorting2.exp
+stats.cpp
+   Creating library stats.lib and object stats.exp
+string_ops.cpp
+   Creating library string_ops.lib and object string_ops.exp
+struct_ops.cpp
+   Creating library struct_ops.lib and object struct_ops.exp
+validate.cpp
+   Creating library validate.lib and object validate.exp

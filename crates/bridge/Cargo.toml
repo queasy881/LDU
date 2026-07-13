@@ -1,0 +1,15 @@
+[package]
+name = "bridge"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+authors = ["DisasmStudio"]
+description = "Safe Rust wrapper over the DisasmStudio C engine (disasm.h ABI)."
+
+[lib]
+name = "bridge"
+path = "src/lib.rs"
+
+[build-dependencies]
+cmake = "0.1"
+bindgen = "0.70"

@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>DisasmStudio</title>
+  <link rel="stylesheet" href="css/main.css" />
+  <link rel="stylesheet" href="css/launcher.css" />
+</head>
+<body>
+  <div id="launcher">
+    <div class="lc-inner">
+
+      <header class="lc-brand">
+        <div class="lc-kicker mono">binary disassembler</div>
+        <h1 class="lc-logo">DisasmStudio</h1>
+      </header>
+
+      <div class="lc-actions">
+        <button id="lc-new" class="btn btn-primary btn-lg">New Project</button>
+        <button id="lc-open" class="btn btn-lg">Open Project</button>
+      </div>
+
+      <form id="lc-newform" class="lc-newform" hidden>
+        <input id="lc-name" class="input" placeholder="project name" spellcheck="false" autocomplete="off" maxlength="80" />
+        <button id="lc-create" type="submit" class="btn btn-primary btn-sm">Create</button>
+        <button id="lc-cancel" type="button" class="btn btn-ghost btn-sm">Cancel</button>
+      </form>
+      <div id="lc-error" class="lc-error" hidden></div>
+
+      <section class="lc-recent">
+        <div class="lc-recent-head">
+          <span class="eyebrow">Recent Projects</span>
+          <button id="lc-refresh" class="btn-icon" title="Refresh">&#8635;</button>
+        </div>
+        <div id="lc-list" class="lc-list"></div>
+        <div id="lc-empty" class="empty-state" hidden>No projects yet — create one to begin.</div>
+      </section>
+
+      <footer class="lc-foot mono">PE · ELF&nbsp;&nbsp;·&nbsp;&nbsp;x86 · x64 · ARM · ARM64</footer>
+    </div>
+  </div>
+
+  <script defer src="js/ipc.js"></script>
+  <script defer src="js/util.js"></script>
+  <script defer src="js/core.js"></script>
+  <script defer src="js/launcher.js"></script>
+</body>
+</html>

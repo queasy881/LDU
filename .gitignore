@@ -1,0 +1,22 @@
+/target
+# reserved Windows device-name junk files (git cannot index them)
+NUL
+**/NUL
+CON
+AUX
+PRN
+**/*.rs.bk
+*.pdb
+*.obj
+*.exe
+*.dll
+*.dat
+.disasmstudio/
+/_demo/
+/engine/build/
+Cargo.lock
+
+# _qa is full of generated test-output dirs (dlltest/w3/fltout/verify/pairs/work/
+# decomp/*audit/*out ...). Ignore it all; the real source (corpus, harness, gate
+# scripts, selfdll, rtti) is force-added in the commit.
+/_qa/
