@@ -9476,6 +9476,42 @@ struct Decompiler {
                 return true;
             }
         }
+        /* G5 GLOBAL-ADDRESS array base: `*(T*)((char*)0xADDR + idx*esize)` -> `((T*)0xADDR)[idx]`
+         * (a global table indexed by a variable). The access width IS the element width (the
+         * scale must equal esize), so this is width-sound with no elem-width tracking. The base
+         * is rendered as the RAW address hex — NOT the `qword_X` named-global (which #defines to
+         * a DEREFERENCED value, so `((T*)qword_X)` would double-deref). */
+        {
+            auto peel = [](ExprP x){ while (x && x->kind == EK::Cast) x = x->a; return x; };
+            ExprP pa = peel(addr->a), pb = peel(addr->b);
+            ExprP gaddr, goff;
+            if (pa && pa->kind == EK::Const && (uint64_t)pa->cval > 0x10000 && !pa->is_float) { gaddr = pa; goff = addr->b; }
+            else if (pb && pb->kind == EK::Const && (uint64_t)pb->cval > 0x10000 && !pb->is_float) { gaddr = pb; goff = addr->a; }
+            if (gaddr) {
+                ExprP gidx;
+                if (esize == 1) gidx = strip_index_cast(goff);
+                else {
+                    ExprP o = strip_index_cast(goff);
+                    if (o && o->kind == EK::Const && o->cval >= 0 && esize > 0 && o->cval % esize == 0)
+                        gidx = mkConst(o->cval / esize, 4);
+                    else if (o && o->kind == EK::Binary && o->op == "*") {
+                        if (isConst(o->b) && o->b->cval == esize) gidx = strip_index_cast(o->a);
+                        else if (isConst(o->a) && o->a->cval == esize) gidx = strip_index_cast(o->b);
+                    } else if (o && o->kind == EK::Binary && o->op == "<<" && isConst(o->b) &&
+                               o->b->cval >= 0 && o->b->cval < 12 && (1LL << o->b->cval) == esize)
+                        gidx = strip_index_cast(o->a);
+                }
+                if (gidx && !expr_is_pointer(gidx)) {
+                    std::string ety = mem->is_float ? (esize >= 8 ? "double" : "float")
+                                                    : typ_str(esize, mem->is_unsigned, false);
+                    std::string istr = (gidx->is_float || (gidx->kind == EK::Var &&
+                                        var_is_float.count(gidx->name) && var_is_float[gidx->name]))
+                                       ? "(long long)" + rsub(gidx, 14) : rsub(gidx, 15);
+                    out = "((" + ety + "*)" + hex((uint64_t)gaddr->cval) + ")[" + istr + "]";
+                    return true;
+                }
+            }
+        }
         ExprP base = addr->a, off = addr->b;
         /* the base may be on either side of the + */
         bool ba = is_ptr_base(base), bo = is_ptr_base(off);
