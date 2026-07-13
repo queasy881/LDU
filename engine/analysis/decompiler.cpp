@@ -3305,6 +3305,15 @@ struct Decompiler {
             if (base && base->kind == EK::Var && (is_ptr_param_name(base->name) || struct_var.count(base->name))) {
                 param = base->name; off = idx->cval; return true;
             }
+            /* G3: nested constant offset `(base + c1) + c2` — a `lea [p+c1]` whose temp
+             * copy_propagate inlined into a later `[reg+c2]` access WITHOUT re-folding, so the
+             * re-association fold (@~7724) never saw it. Resolve the inner base recursively and
+             * ACCUMULATE the byte offset, so the access lands on the true field `(c1+c2)` and is
+             * recovered/rendered `p->field_(c1+c2)` instead of the raw `&p->field_c1 + c2`. */
+            if (base && base->kind == EK::Binary) {
+                std::string ip; int64_t ioff;
+                if (struct_base_offset(base, ip, ioff)) { param = ip; off = ioff + idx->cval; return true; }
+            }
         }
         return false;
     }

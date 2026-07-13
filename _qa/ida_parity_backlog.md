@@ -63,8 +63,8 @@ Legend: [ ] todo  [~] in progress  [x] done+gated  risk=none|low|med|high
 - [x] G1  const byte-offset on typed pointer -> `p[n]` (616)
 - [x] G2  one variable-indexed access disqualifies whole param struct (22 fns)  [>=4 fixed fields keeps struct]
 - [ ] G3  pad-hole / `&field+delta` offsets render raw amid fields (372)
-- [~] G4  pointer-valued qword fields typed as pointers (376)  [high risk - was reverted before]
-       IMPLEMENTED (gating): enabled scan_field_ptr (DS_NO_FIELDPTR) so a qword field whose VALUE is
+- [x] G4  pointer-valued qword fields typed as pointers (352 fields / 238 fns)  [DONE+GATED 983150d; was reverted before]
+       IMPLEMENTED: enabled scan_field_ptr (DS_NO_FIELDPTR) so a qword field whose VALUE is
        used as an address base becomes `void*`. Driven by an 8-agent audit workflow (g4-field-pointer-
        audit) that mapped every render position a field-value flows through. 4 edits: (a) scan_field_ptr
        driver in recover_struct_layouts; (b) expr_is_pointer EK::Mem arm (closes 5 arith/subscript gaps);
@@ -73,7 +73,7 @@ Legend: [ ] todo  [~] in progress  [x] done+gated  risk=none|low|med|high
        byte-identical, every use bit-reinterpreted not value-converted. corpus 616/0 (linklist/struct_ops/
        encoding void* fields all behaviorally validated: `!a1->field_0`, `*(uchar*)((char*)a1->field_0+i)`).
        NullWare gate pending (watch FIX 1 return-inference ripple @~14727; surgical fallback documented).
-- [ ] G5  missed `p[i]` on typed/global pointer bases (102)
+- [x] G5  missed `p[i]` on typed/global pointer bases (102)  [global-address subset DONE+GATED cc1c315: ((T*)0xADDR)[idx]]
 
 ## BATCH H — naming (risk=none/low)
 - [x] H1  final display-only per-function renumber (v1..) unify v#/t#/s# (250 files)
