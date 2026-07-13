@@ -3565,12 +3565,24 @@ struct Decompiler {
             collect_struct_access(b.switch_var, fw, fu, ff);
             collect_struct_access(b.tail_call, fw, fu, ff);
         }
-        /* NOTE: struct-field pointer typing (declaring a used-as-address qword field
-         * `void*`) is DISABLED — the renderer does not yet byte-cast a void* field in
-         * every arithmetic position (ptr+ptr / int-ptr surfaced 111 C2110/C2113s). It
-         * needs a render pass that treats any is_struct_ptr_field operand uniformly;
-         * until then scan_field_ptr stays unrun so every field keeps its width type
-         * and the output stays compile-clean. */
+        /* G4: type a qword field whose LOADED VALUE is used as an address base as `void*`.
+         * scan_field_ptr populates struct_field_ptr[p]; the fptr build below (`w==8 && !ff &&
+         * pptr.count(o)`) then marks the field, struct_typedef_str emits `void*`, and
+         * is_struct_ptr_field activates the uniform byte-cast render machinery (the nested-
+         * struct feature added it to rptr/typed_ptr/render_addr; a G4 audit closed the
+         * remaining void*-specific gaps: expr_is_pointer Mem arm, the float-const-offset
+         * arith branches above, and the float-store-into-field reinterpret). scan_field_ptr
+         * uses struct_base_offset which never reads param_structs, so running it in this first
+         * pass (before param_structs is built) is correct. Gated DS_NO_FIELDPTR for A/B bisect. */
+        if (!std::getenv("DS_NO_FIELDPTR")) {
+            for (auto& b : blocks) {
+                for (auto& s : b.stmts) { scan_field_ptr(s.lhs); scan_field_ptr(s.rhs); }
+                scan_field_ptr(b.cond);
+                scan_field_ptr(b.ret_value);
+                scan_field_ptr(b.switch_var);
+                scan_field_ptr(b.tail_call);
+            }
+        }
         /* G2: a variable-indexed param is normally an array. But if it ALSO has >=4
          * distinct fixed-offset fields it is really a STRUCT (a constructor/initializer),
          * and Hex-Rays recovers those fields — the one variable access just stays byte-
@@ -9028,10 +9040,11 @@ struct Decompiler {
                      * is C2111; render the integer bits (e->cval holds them). Gated to
                      * a pointer base so a genuine `float + floatconst` is untouched. */
                     if (e->b && e->b->kind == EK::Const && e->b->is_float && ptr_base(e->a))
-                        return rsub(e->a, pp) + " " + op + " " +
-                               std::to_string((long long)e->b->cval);
+                        return (is_struct_ptr_field(e->a) ? "(char*)" + rsub(e->a, 14) : rsub(e->a, pp))
+                               + " " + op + " " + std::to_string((long long)e->b->cval);
                     if (op == "+" && e->a && e->a->kind == EK::Const && e->a->is_float && ptr_base(e->b))
-                        return rsub(e->b, pp) + " + " + std::to_string((long long)e->a->cval);
+                        return (is_struct_ptr_field(e->b) ? "(char*)" + rsub(e->b, 14) : rsub(e->b, pp))
+                               + " + " + std::to_string((long long)e->a->cval);
                     auto typed_ptr = [&](const ExprP& x) -> bool {
                         if (is_struct_ptr_field(x)) return true;   /* void* field: byte-cast for arithmetic */
                         if (!x || x->kind != EK::Var) return false;
@@ -10930,6 +10943,15 @@ struct Decompiler {
                         std::string want = "(struct " + tag + "*)";
                         if (!isnull && r.compare(0, want.size(), want) != 0)
                             r = want + wrapstr(r);
+                    } else if (s.lhs->kind == EK::Mem && is_struct_ptr_field(s.lhs) && s.rhs->is_float) {
+                        /* G4: a FLOAT value stored into a `void*` field is a bit store
+                         * (`movss/movsd [field],xmm`), NOT a value cast (float->void* = C2440).
+                         * collect_struct_access records `ff` from the FIRST access at an offset,
+                         * so a pointer-use load seen before a same-offset float store leaves the
+                         * field typed void* with a float store surviving. Reinterpret the field
+                         * lvalue to keep the 8-byte pattern (mirrors the Var-dest idiom above). */
+                        int fw = (s.rhs->width >= 8) ? 8 : 4;
+                        l = std::string("*(") + (fw == 8 ? "double" : "float") + "*)&(" + l + ")";
                     } else if (s.lhs->kind == EK::Mem && rhs_ptr && !s.lhs->is_float) {
                         /* a pointer value stored into a scalar memory slot: make the
                          * ptr->int reinterpret explicit (else C4047). A width-8 slot is
@@ -14422,6 +14444,10 @@ struct Decompiler {
             return expr_is_pointer(e->a, elem_w, elem_u) ||
                    expr_is_pointer(e->b, elem_w, elem_u);
         if (e->kind == EK::Cast) return expr_is_pointer(e->a, elem_w, elem_u);
+        /* G4: a load of a `void*` struct field is a pointer value (mirrors renders_as_pointer's
+         * EK::Mem arm). elem_w stays unset — a void* field has no element type, so element-scaled
+         * subscripting never fires on it (is_ptr_base rejects Mem regardless). */
+        if (e->kind == EK::Mem) return is_struct_ptr_field(e);
         return false;
     }
 

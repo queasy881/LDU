@@ -189,7 +189,12 @@ void scan_rtti_itanium(ds_engine* e) {
                     uint64_t v0;
                     if (!read_u64(e, vfun_rva, v0) || v0 < e->base || !ds_rva_is_exec(e, v0 - e->base)) continue;
 
-                    if (!already_seeded(e, vfun_rva)) {       /* name the vtable at &slot[2] */
+                    /* Name `<Class>__vftable` ONLY on the PRIMARY vtable (offset-to-top 0):
+                     * that is the vtable an object stores at +0, which is what class_for_vtable
+                     * matches to recognize a constructor. A secondary (MI base-subobject) vtable
+                     * has a negative offset-to-top and lives at a sub-object offset, so naming it
+                     * `<Class>__vftable` would be wrong; its virtuals are still named below. */
+                    if (sotop == 0 && !already_seeded(e, vfun_rva)) {   /* name the vtable at &slot[2] */
                         char vt[112]; std::snprintf(vt, sizeof vt, "%s__vftable", cls.c_str());
                         ds_engine_add_symbol(e, vfun_rva, vt);
                     }
