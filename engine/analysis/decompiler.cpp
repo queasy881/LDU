@@ -852,19 +852,26 @@ struct Decompiler {
         return "sub_" + hex(rva).substr(2);
     }
 
-    /* CLASS RECONSTRUCTION: if `addr` (an RVA or VA) is a recovered RTTI vtable — the
-     * scanner seeds `<Class>__vftable` at the vtable rva — return the class name. Used to
-     * recognize that a struct whose field_0 holds a vtable address IS that C++ class, so
-     * the struct emits as `struct <Class> { ... }` (Hex-Rays "class" reconstruction). */
-    std::string class_for_vtable(uint64_t addr) {
+    /* CLASS RECONSTRUCTION: if `addr` (an RVA or VA) is a recovered RTTI vtable — the scanner
+     * seeds `<Class>__vftable` (RTTI kind class) or `<Class>__vfstruct` (kind struct) at the
+     * vtable rva — return the class name and, via `*is_struct`, the RTTI KIND so the type emits
+     * with the correct `class`/`struct` keyword (Hex-Rays "class" reconstruction). */
+    std::string class_for_vtable(uint64_t addr, bool* is_struct = nullptr) {
         if (!e) return "";
-        static const std::string suf = "__vftable";
+        static const std::string sufc = "__vftable", sufs = "__vfstruct";
+        auto ends_with = [](const std::string& n, const std::string& suf) {
+            return n.size() > suf.size() && n.compare(n.size()-suf.size(), suf.size(), suf) == 0;
+        };
         for (uint64_t r : { addr, (addr >= e->base ? addr - e->base : addr) }) {
             for (size_t i = 0; i < e->symbol_len; ++i) {
                 if (e->symbols[i].rva != r || !e->symbols[i].name[0]) continue;
                 std::string n = e->symbols[i].name;
-                if (n.size() > suf.size() && n.compare(n.size()-suf.size(), suf.size(), suf) == 0)
-                    return sani(n.substr(0, n.size() - suf.size()));
+                /* return the RAW qualified name (keeps `::`/`<>`); the caller sani()s it for the C
+                 * tag and keeps the raw form for the `namespace X { ... }` block. */
+                if (ends_with(n, sufs)) { if (is_struct) *is_struct = true;
+                    return n.substr(0, n.size() - sufs.size()); }
+                if (ends_with(n, sufc)) { if (is_struct) *is_struct = false;
+                    return n.substr(0, n.size() - sufc.size()); }
             }
         }
         return "";
@@ -2511,9 +2518,12 @@ struct Decompiler {
      * as `T*` so `base[i]` subscripts compile; otherwise pointers fall back to
      * the 64-bit-int model (`long long`). */
     std::string decl_type(const std::string& nm) {
-        /* a recovered struct param renders `struct s_aN* aN` */
+        /* a recovered struct param renders `struct s_aN* aN` (or `class <Class>* aN` for an
+         * RTTI class type, matching its `class`/`struct` definition keyword). */
         { auto si = param_structs.find(nm);
-          if (si != param_structs.end()) return "struct " + si->second.tag + "*"; }
+          if (si != param_structs.end())
+              return std::string(si->second.is_class && !si->second.cls_kw_struct ? "class " : "struct ")
+                     + si->second.tag + "*"; }
         /* A GP var holding a packed 2-float struct (Vec2 by value) is the raw 8-byte
          * bit pattern; the lanes are read via `*(float*)&v`, so it must stay a plain
          * `long long` — never a float or pointer type (its lane reinterprets would
@@ -3206,6 +3216,8 @@ struct Decompiler {
         std::map<int64_t,std::string> fptr_tag; /* offset -> nested struct tag (field is `struct T*`) */
         int64_t stride = 0;                  /* >0: array-element struct, padded to this size */
         bool is_class = false;               /* tag is an RTTI class name -> guard the typedef */
+        bool cls_kw_struct = false;          /* RTTI kind is `struct` (U/T tag) rather than `class` (V) */
+        std::string qual_name;               /* RAW qualified RTTI name (game::Entity) for the namespace block */
     };
     std::map<std::string, ParamStruct> param_structs;   /* param name -> layout */
     std::map<std::string, std::set<int64_t>> struct_field_ptr;  /* param -> offsets whose value is used as an address */
@@ -3609,7 +3621,9 @@ struct Decompiler {
          * stored constant back to the class via the `<Class>__vftable` symbol rtti.cpp seeded.
          * The base var need not be a recovered param/struct_var yet (a ctor's object is a
          * fresh `operator new` temp), so extract the base name directly. */
-        std::map<std::string,std::string> struct_class;
+        std::map<std::string,std::string> struct_class;      /* base -> sani'd C tag (game__Entity) */
+        std::map<std::string,std::string> struct_class_qual; /* base -> RAW qualified name (game::Entity) */
+        std::map<std::string,bool> struct_class_kw;          /* base -> RTTI kind is-struct (else class) */
         auto vtable_base = [](const ExprP& lhs, std::string& base) -> bool {
             if (!lhs || lhs->kind != EK::Mem || !lhs->a) return false;
             ExprP a = lhs->a;
@@ -3627,17 +3641,23 @@ struct Decompiler {
                 if (!lhs || !rhs) return;
                 ExprP r = rhs; while (r && r->kind == EK::Cast) r = r->a;
                 if (!r || r->kind != EK::Const) return;
-                std::string cls = class_for_vtable((uint64_t)r->cval);
-                if (cls.empty()) return;
+                bool is_struct = false;
+                std::string cls_raw = class_for_vtable((uint64_t)r->cval, &is_struct);   /* raw qualified */
+                if (cls_raw.empty()) return;
                 std::string base;
-                if (vtable_base(lhs, base)) struct_class[base] = cls;
+                if (vtable_base(lhs, base)) {
+                    struct_class[base] = sani(cls_raw); struct_class_qual[base] = cls_raw;
+                    struct_class_kw[base] = is_struct;
+                }
             };
             for (auto& b : blocks) for (auto& s : b.stmts)
                 if (s.kind == SK::Assign) scan_vt(s.lhs, s.rhs);
         }
         auto mktag = [&](const std::string& p, ParamStruct& L) {
             auto it = struct_class.find(p);
-            if (it != struct_class.end()) { L.tag = it->second; L.is_class = true; }
+            if (it != struct_class.end()) { L.tag = it->second; L.is_class = true;
+                                            L.cls_kw_struct = struct_class_kw.count(p) && struct_class_kw[p];
+                                            if (struct_class_qual.count(p)) L.qual_name = struct_class_qual[p]; }
             else                            L.tag = "s_" + self_fname + "_" + p;
         };
         for (auto& kv : fw) {
@@ -3823,29 +3843,103 @@ struct Decompiler {
          * unique, so they are never guarded.) */
         std::string guard;
         if (L.is_class) { guard = "__DS_CLS_" + L.tag; }
-        std::string s;
-        if (!guard.empty()) s += "#ifndef " + guard + "\n#define " + guard + "\n";
-        s += "#pragma pack(push, 1)\nstruct " + L.tag + " {\n";
-        int64_t pos = 0;
+        /* RTTI recovery emits the ORIGINAL keyword: `class` for a V-tagged type, `struct` for a
+         * U/T-tagged one. `class` is C++-only, so a `#ifndef __cplusplus #define class struct` shim
+         * (emitted once per TU by the caller) keeps the /TC recompile valid — members are all-public
+         * so class/struct are identical. */
+        std::string kw = (L.is_class && !L.cls_kw_struct) ? "class" : "struct";
+        /* build the field-body interior ONCE (padding + fields; field_0 of a class -> `void* __vftable`). */
+        std::string body; int64_t pos = 0;
         for (auto& kv : L.fw) {
             int64_t off = kv.first; int w = kv.second;
-            if (off > pos) s += "    char _pad_" + hex(pos).substr(2) + "[" +
-                                std::to_string((long long)(off - pos)) + "];\n";
+            if (off > pos) body += "    char _pad_" + hex(pos).substr(2) + "[" +
+                                   std::to_string((long long)(off - pos)) + "];\n";
+            if (L.is_class && off == 0 && w == 8) { body += "    void* __vftable;\n"; pos = w; continue; }
             std::string ty;
-            if (L.fptr_tag.count(off)) ty = "struct " + L.fptr_tag.at(off) + "*";   /* nested struct ptr */
+            if (L.fptr_tag.count(off)) ty = "struct " + L.fptr_tag.at(off) + "*";
             else if (L.fptr.count(off) && L.fptr.at(off)) ty = "void*";
-            else ty = L.ff.at(off) ? (w >= 8 ? "double" : "float")
-                                   : typ_str(w, L.fu.at(off), false);
-            s += "    " + ty + " field_" + hex(off).substr(2) + ";\n";
+            else ty = L.ff.at(off) ? (w >= 8 ? "double" : "float") : typ_str(w, L.fu.at(off), false);
+            body += "    " + ty + " field_" + hex(off).substr(2) + ";\n";
             pos = off + w;
         }
-        /* array-element struct: pad to the stride so sizeof == stride and `elem[i]`
-         * addresses `base + i*stride`. */
         if (L.stride > pos)
-            s += "    char _pad_end[" + std::to_string((long long)(L.stride - pos)) + "];\n";
-        s += "};\n#pragma pack(pop)\n";
+            body += "    char _pad_end[" + std::to_string((long long)(L.stride - pos)) + "];\n";
+
+        std::string s;
+        if (!guard.empty()) s += "#ifndef " + guard + "\n#define " + guard + "\n";
+        auto flat = [&]{ return "#pragma pack(push, 1)\n" + kw + " " + L.tag + " {\n" + body + "};\n#pragma pack(pop)\n"; };
+        /* NAMESPACE: a namespaced RTTI name (game::Entity) dual-emits — a REAL
+         * `namespace game { class Entity {...}; }` block under #ifdef __cplusplus (for reading / a
+         * /TP recompile), and the flat `<kw> <tag> {...}` under #else which is what the /TC gate
+         * compiles. References use the flat <tag> in both. (Nested a::b::Foo -> nested blocks.) */
+        size_t nssep = L.is_class ? L.qual_name.rfind("::") : std::string::npos;
+        if (nssep != std::string::npos) {
+            std::string nspath = L.qual_name.substr(0, nssep);   /* "game" or "a::b" */
+            std::string shortid = sani(L.qual_name.substr(nssep + 2));   /* "Entity" / "Pool_int_" */
+            std::string opens, closes, qual; size_t st = 0;
+            while (st <= nspath.size()) {
+                size_t e2 = nspath.find("::", st);
+                std::string comp = nspath.substr(st, e2 == std::string::npos ? std::string::npos : e2 - st);
+                if (!comp.empty()) { opens += "namespace " + comp + " { "; closes = "} " + closes; qual += comp + "::"; }
+                if (e2 == std::string::npos) break;
+                st = e2 + 2;
+            }
+            s += "#ifdef __cplusplus\n" + opens + "\n#pragma pack(push, 1)\n" + kw + " " + shortid +
+                 " {\n" + body + "};\n#pragma pack(pop)\n" + closes + "\ntypedef " + qual + shortid +
+                 " " + L.tag + ";\n#else\n" + flat() + "#endif\n";
+        } else {
+            s += flat();
+        }
         if (!guard.empty()) s += "#endif\n";
         return s;
+    }
+    /* Member name for a recovered struct field: an RTTI class's field_0 IS its vtable pointer
+     * (see struct_typedef_str), so it prints `__vftable`; every other field is `field_<hex>`. */
+    std::string fld(const ParamStruct& L, int64_t off) {
+        if (L.is_class && off == 0) return "__vftable";
+        return "field_" + hex(off).substr(2);
+    }
+    bool used_opnew = false;                    /* an operator_new call was recovered -> emit its proto */
+    std::set<std::string> referenced_vtables;   /* <Class>__vftable symbols referenced -> extern decls */
+    /* OPERATOR NEW recovery: a function whose result is used as the object that a constructor
+     * stores a known vtable into (`obj = fun_X(size); obj->__vftable = &<vtable>`) IS an allocator
+     * (MSVC `operator new` / a pool allocator). Rename every such callee to `operator_new` and give
+     * it the honest `void* operator_new(size_t)` prototype instead of `long long fun_X()`. Runs after
+     * recover_struct_layouts (needs class_for_vtable + the recovered field_0 store). Gated DS_NO_OPNEW. */
+    void recover_operator_new() {
+        if (std::getenv("DS_NO_OPNEW")) return;
+        std::set<std::string> allocs;
+        for (auto& b : blocks) for (auto& s : b.stmts) {
+            if (s.kind != SK::Assign || !s.lhs || s.lhs->kind != EK::Mem || !s.lhs->a || !s.rhs) continue;
+            ExprP rc = s.rhs; while (rc && rc->kind == EK::Cast) rc = rc->a;
+            if (!rc || rc->kind != EK::Const) continue;
+            if (class_for_vtable((uint64_t)rc->cval).empty()) continue;   /* rhs is a known vtable */
+            std::string bp; int64_t boff;
+            if (!(struct_base_offset(s.lhs->a, bp, boff) && boff == 0)) continue;   /* stored at field_0 */
+            for (auto& b2 : blocks) for (auto& s2 : b2.stmts)   /* find bp's definition: bp = Call(f) */
+                if (s2.kind == SK::Assign && s2.lhs && s2.lhs->kind == EK::Var &&
+                    s2.lhs->name == bp && s2.rhs) {
+                    ExprP rr = s2.rhs; while (rr && rr->kind == EK::Cast) rr = rr->a;
+                    if (rr && rr->kind == EK::Call && rr->callee.rfind("fun_", 0) == 0)
+                        allocs.insert(rr->callee);
+                }
+        }
+        if (allocs.empty()) return;
+        std::function<void(ExprP&)> ren = [&](ExprP& e) {
+            if (!e) return;
+            if (e->kind == EK::Call && allocs.count(e->callee)) e->callee = "operator_new";
+            ren(e->a); ren(e->b); ren(e->c);
+            for (auto& a : e->args) ren(a);
+        };
+        for (auto& b : blocks) {
+            for (auto& s : b.stmts) { ren(s.lhs); ren(s.rhs); }
+            ren(b.cond); ren(b.ret_value); ren(b.ret_raw); ren(b.switch_var); ren(b.tail_call);
+        }
+        /* the forward-decl set is keyed by the pre-rename names — retarget it so the emitted
+         * prototype is `void* operator_new(size_t)` and the stale `fun_X` decl is dropped. */
+        for (auto& a : allocs) extern_callees.erase(a);
+        extern_callees["operator_new"] = 2;
+        used_opnew = true;
     }
     /* Render `*(T*)((char*)p + K)` as `p->field_K` when p is a recovered struct pointer
      * and K/width match a field; else return false (caller uses the raw form). */
@@ -3911,20 +4005,20 @@ struct Decompiler {
             named_globals[p] = "(*(long long*)0x" + p.substr(6) + ")";
             auto lit = global_struct_local.find(p);
             if (lit != global_struct_local.end())          /* read-only: use the cached local */
-                out = lit->second + "->field_" + hex(off).substr(2);
+                out = lit->second + "->" + fld(it->second, off);
             else
-                out = "((struct " + it->second.tag + "*)" + disp(p) + ")->field_" + hex(off).substr(2);
+                out = "((struct " + it->second.tag + "*)" + disp(p) + ")->" + fld(it->second, off);
         } else if (struct_var.count(p)) {                  /* pointer temp / stack local */
             /* A POINTER temp is declared `struct <tag>*` (decl_type puts every param_structs
              * name there), so the inline `(struct <tag>*)` cast is redundant — emit a bare
              * arrow. A STACK BUFFER (`char sN[20]`, in array_locals) is NOT a struct pointer,
              * so it still needs the cast to decay+reinterpret the array as the struct ptr. */
-            if (!array_locals.count(p) && decl_type(p) == "struct " + it->second.tag + "*")
-                out = disp(p) + "->field_" + hex(off).substr(2);
+            if (!array_locals.count(p))                    /* decl_type is always the struct ptr here */
+                out = disp(p) + "->" + fld(it->second, off);
             else
-                out = "((struct " + it->second.tag + "*)" + disp(p) + ")->field_" + hex(off).substr(2);
+                out = "((struct " + it->second.tag + "*)" + disp(p) + ")->" + fld(it->second, off);
         } else
-            out = disp(p) + "->field_" + hex(off).substr(2);
+            out = disp(p) + "->" + fld(it->second, off);
         return true;
     }
     /* Address-of a recognized struct field: a bare `(char*)p + K` (used AS a pointer,
@@ -3953,16 +4047,16 @@ struct Decompiler {
             named_globals[p] = "(*(long long*)0x" + p.substr(6) + ")";
             auto lit = global_struct_local.find(p);
             if (lit != global_struct_local.end())
-                out = "&" + lit->second + "->field_" + hex(off).substr(2);
+                out = "&" + lit->second + "->" + fld(it->second, off);
             else
-                out = "&((struct " + it->second.tag + "*)" + disp(p) + ")->field_" + hex(off).substr(2);
+                out = "&((struct " + it->second.tag + "*)" + disp(p) + ")->" + fld(it->second, off);
         } else if (struct_var.count(p)) {         /* pointer temp -> bare arrow; stack buffer -> keep cast */
-            if (!array_locals.count(p) && decl_type(p) == "struct " + it->second.tag + "*")
-                out = "&" + disp(p) + "->field_" + hex(off).substr(2);
+            if (!array_locals.count(p))                    /* decl_type is always the struct ptr here */
+                out = "&" + disp(p) + "->" + fld(it->second, off);
             else
-                out = "&((struct " + it->second.tag + "*)" + disp(p) + ")->field_" + hex(off).substr(2);
+                out = "&((struct " + it->second.tag + "*)" + disp(p) + ")->" + fld(it->second, off);
         } else
-            out = "&" + disp(p) + "->field_" + hex(off).substr(2);
+            out = "&" + disp(p) + "->" + fld(it->second, off);
         return true;
     }
 
@@ -9628,6 +9722,24 @@ struct Decompiler {
                 off_s = "(long long)" + rsub(off, 14, true);
             else
                 off_s = rsub(off, 12, true);
+            /* A10: the `(char*)` on the BASE is only needed when the base is a TYPED pointer
+             * that would scale the offset. For an INTEGER base (a named global `qword_X`, a
+             * `__readgsqword`, a `long long` var, or a hex address literal) the add is already
+             * byte arithmetic and the enclosing `*(T*)(...)` reinterprets the result — so the
+             * cast is pure noise (`*(int*)(qword_174148 + 0x1450)`, exactly Hex-Rays). Drop it,
+             * but ONLY when base or off is provably >=64-bit so a 32-bit literal+offset sum never
+             * narrows (keep the `(char*)` form otherwise). */
+            std::function<bool(const ExprP&)> wide64 = [&](const ExprP& x) -> bool {
+                if (!x) return false;
+                if (x->kind == EK::Const) return (uint64_t)x->cval > 0x7fffffffULL;
+                if (x->kind == EK::Cast)
+                    return x->op == "(long long)" || x->op == "(unsigned long long)" || wide64(x->a);
+                if (x->kind == EK::Var) { std::string dt = decl_type(x->name);
+                    return dt == "long long" || dt == "unsigned long long"; }
+                return x->width >= 8 && !x->is_float;   /* Mem/Call width-8 integer */
+            };
+            if (!is_ptr(base) && (wide64(base) || wide64(off)))
+                return rsub(base, 12) + " " + e->op + " " + off_s;
             return "(char*)" + rsub(base, 14, true) + " " + e->op + " " + off_s;
         }
         /* plain base / bare address: the enclosing `*(T*)(...)` already reinterprets
@@ -10967,6 +11079,23 @@ struct Decompiler {
                          * clean (long long); a width-4 `*(int*)` slot narrows (that
                          * residual C4244 is a genuine truncation, in the left-alone set). */
                         r = "(long long)" + wrapstr(r);
+                    }
+                }
+                /* VTABLE POINTER STORE: a constructor storing a known vtable into a class's
+                 * __vftable (field_0) — resolve the raw address to the seeded symbol so it reads
+                 * `obj->__vftable = &<Class>__vftable;` instead of a magic number. Scoped to an
+                 * is_class field_0 store so it never misfires on a coincidental constant. */
+                {
+                    ExprP rc = s.rhs; while (rc && rc->kind == EK::Cast) rc = rc->a;
+                    std::string bp; int64_t boff;
+                    if (rc && rc->kind == EK::Const && s.lhs && s.lhs->kind == EK::Mem && s.lhs->a &&
+                        struct_base_offset(s.lhs->a, bp, boff) && boff == 0 &&
+                        param_structs.count(bp) && param_structs[bp].is_class) {
+                        std::string vraw = class_for_vtable((uint64_t)rc->cval);
+                        if (!vraw.empty()) {
+                            std::string sym = sani(vraw) + "__vftable";
+                            r = "&" + sym; referenced_vtables.insert(sym);
+                        }
                     }
                 }
                 dst += ind() + l + " = " + r + ";\n";
@@ -13540,42 +13669,48 @@ struct Decompiler {
     void fold_return_temps() {
         if (std::getenv("DS_NO_RETFOLD")) return;
         std::set<std::string> addr; collect_addr_taken(addr);
-        auto peel = [](ExprP e){ while (e && e->kind == EK::Cast) e = e->a; return e; };
         for (auto& b : blocks) {
             if (b.stmts.empty() || !b.ret_value) continue;
-            ExprP leaf = peel(b.ret_value);
-            if (!leaf || leaf->kind != EK::Var) continue;
-            const std::string v = leaf->name;
-            if (addr.count(v) || array_locals.count(v)) continue;
-            if (v.size()==2 && v[0]=='a' && v[1]>='1' && v[1]<='4') continue;   /* never a param */
-            if (total_writes(v) != 1) continue;
-            /* used ONLY in this block's ret_value/ret_raw (nowhere else at all) */
-            int here = count_var_reads(b.ret_value, v) + count_var_reads(b.ret_raw, v);
-            if (total_reads(v) != here) continue;
-            /* locate v's single def stmt in this block; anything reading v in a stmt
-             * before we find the def means it is used in a statement -> keep it. */
-            int di = -1;
-            for (int i = 0; i < (int)b.stmts.size(); ++i) {
-                Stmt& s = b.stmts[i];
-                if (count_var_reads(s.rhs, v) + count_lhs_addr_reads(s.lhs, v)) { di = -1; break; }
-                if (s.kind == SK::Assign && s.lhs && s.lhs->kind == EK::Var && s.lhs->name == v) { di = i; break; }
+            /* D2/D3: fold ANY single-use in-block temp read EXACTLY ONCE in the return, so
+             * `v = f(...); return (signed char)(v != 0);` -> `return (signed char)(f(...) != 0);`
+             * (not just the bare-leaf `return v;` the old code handled). All the soundness gates
+             * are preserved; two extra guards keep it correct for call temps. */
+            for (int di = 0; di < (int)b.stmts.size(); ++di) {
+                Stmt& def = b.stmts[di];
+                if (def.kind != SK::Assign || !def.lhs || def.lhs->kind != EK::Var || !def.rhs) continue;
+                const std::string v = def.lhs->name;
+                if (addr.count(v) || array_locals.count(v)) continue;
+                if (v.size()==2 && v[0]=='a' && v[1]>='1' && v[1]<='4') continue;   /* never a param */
+                if (total_writes(v) != 1) continue;
+                int here = count_var_reads(b.ret_value, v) + count_var_reads(b.ret_raw, v);
+                if (total_reads(v) != here) continue;             /* used ONLY in the return */
+                if (count_var_reads(b.ret_value, v) != 1) continue;   /* (a) never duplicate a call */
+                bool used_before = false;                          /* no earlier stmt reads v (else it's a real use) */
+                for (int i = 0; i < di; ++i)
+                    if (count_var_reads(b.stmts[i].rhs, v) + count_lhs_addr_reads(b.stmts[i].lhs, v)) { used_before = true; break; }
+                if (used_before) continue;
+                /* reorder hazard for stmts after the def (the return evaluates after all stmts) */
+                bool rmem = reads_mem(def.rhs), rcall = has_impure_call(def.rhs); bool hz = false;
+                for (int j = di + 1; j < (int)b.stmts.size() && !hz; ++j) {
+                    Stmt& s = b.stmts[j];
+                    if (s.kind != SK::Assign) { hz = true; break; }
+                    if ((rmem || rcall) && (has_call(s.rhs) || (s.lhs && s.lhs->kind == EK::Mem))) hz = true;
+                    else if (rcall && reads_mem(s.rhs)) hz = true;
+                    else if (s.lhs && s.lhs->kind == EK::Var && reads_named_var(def.rhs, s.lhs->name)) hz = true;
+                }
+                if (hz) continue;
+                /* (b) chained-call guard: if the def is an impure call, the return may hold at most
+                 * ONE impure call and v must NEST in its args (so f() evaluates before it) — a sibling
+                 * call (`f() + g()`) has unspecified order and must not be reordered. */
+                if (rcall) {
+                    int rc = count_impure_calls(b.ret_value);
+                    if (rc > 0 && (rc != 1 || reads_var_outside_call_args(b.ret_value, v))) continue;
+                }
+                subst_var(b.ret_value, v, def.rhs); b.ret_value = fold(b.ret_value);
+                b.ret_raw = clone(b.ret_value);   /* mirror kept consistent; never emitted */
+                b.stmts.erase(b.stmts.begin() + di);
+                break;                            /* erase invalidates di; one return per block */
             }
-            if (di < 0 || !b.stmts[di].rhs) continue;
-            Stmt& def = b.stmts[di];
-            /* reorder hazard for a non-last def (the terminal evaluates after all stmts) */
-            bool rmem = reads_mem(def.rhs), rcall = has_impure_call(def.rhs); bool hz = false;
-            for (int j = di + 1; j < (int)b.stmts.size() && !hz; ++j) {
-                Stmt& s = b.stmts[j];
-                if (s.kind != SK::Assign) { hz = true; break; }
-                if ((rmem || rcall) && (has_call(s.rhs) || (s.lhs && s.lhs->kind == EK::Mem))) hz = true;
-                else if (rcall && reads_mem(s.rhs)) hz = true;
-                else if (s.lhs && s.lhs->kind == EK::Var && reads_named_var(def.rhs, s.lhs->name)) hz = true;
-            }
-            if (hz) continue;
-            ExprP e = def.rhs;
-            subst_var(b.ret_value, v, e); b.ret_value = fold(b.ret_value);
-            b.ret_raw = clone(b.ret_value);   /* mirror kept consistent; never emitted */
-            b.stmts.erase(b.stmts.begin() + di);
         }
     }
 
@@ -15437,6 +15572,7 @@ struct Decompiler {
         /* recover per-function struct layouts for pointer params (conservative, with
          * raw fallback) so `*(int*)((char*)a1 + 0x140)` renders `a1->field_140`. */
         recover_struct_layouts();
+        recover_operator_new();          /* alloc-then-vtable-store callee -> operator_new / void*(size_t) */
         assign_global_struct_locals();   /* cache read-only global struct bases in locals */
         coalesce_locals();   /* AFTER struct recovery so decl_type (including struct-ptr, float,
                               * pointer) is final: the candidate gate decl_type(x)==decl_type(y)
@@ -15452,6 +15588,31 @@ struct Decompiler {
         compute_autonames();  /* after for-loops (consumes induction_var_of_header) */
         narrow_temp_widths();        /* D1: long long -> int for provably-32-bit-value temps */
         compute_display_renumber();  /* v#/t# -> contiguous v1,v2,... (Hex-Rays naming) */
+        /* H2: per-function struct tags were minted `s_<fn>_t1272` at struct-build time, BEFORE
+         * the display renumber turned the var into `v97` — so the tag references a temp id that
+         * appears nowhere in the body. Re-mint each temp-keyed tag from the var's DISPLAY name so
+         * `struct s_<fn>_v97 *v97` reads consistently and is as diff-stable as the vars. Every emit
+         * site reads L.tag/fptr_tag, so mutating the stored strings keeps forward-decl, struct-def,
+         * decl_type and field casts in lockstep. Class (RTTI) tags and param/global/nested/`sN`
+         * tags have no autoname entry and are left untouched; a name collision declines the rename. */
+        if (!std::getenv("DS_NO_RENUM")) {
+            std::set<std::string> taken;
+            for (auto& kv : param_structs)
+                if (kv.second.is_class || !autoname.count(kv.first)) taken.insert(kv.second.tag);
+            std::map<std::string,std::string> remap;
+            for (auto& kv : param_structs) {
+                if (kv.second.is_class || !autoname.count(kv.first)) continue;
+                std::string nt = "s_" + self_fname + "_" + autoname[kv.first];
+                if (nt == kv.second.tag) { taken.insert(nt); continue; }
+                if (taken.count(nt)) continue;              /* would collide -> keep raw tag */
+                taken.insert(nt); remap[kv.second.tag] = nt; kv.second.tag = nt;
+            }
+            for (auto& kv : param_structs)                  /* re-point nested `struct T*` field refs */
+                for (auto& ft : kv.second.fptr_tag) {
+                    auto r = remap.find(ft.second);
+                    if (r != remap.end()) ft.second = r->second;
+                }
+        }
         late_peephole();      /* final value-identical readability folds (nested casts, x+-K, cmp-normalize) */
 
         /* ---- emit body ---- */
@@ -15888,9 +16049,23 @@ struct Decompiler {
         /* recovered struct layouts for pointer params: one packed typedef each, emitted
          * before the body so `struct s_aN* aN` and `aN->field_N` resolve. */
         /* forward-declare every tag first so a `struct <nested>*` field resolves regardless
-         * of definition order (nested-pointer field retyping). */
-        for (auto& kv : param_structs) protos += "struct " + kv.second.tag + ";\n";
+         * of definition order (nested-pointer field retyping). RTTI class types use the `class`
+         * keyword (matched in fwd-decl + def to avoid a class/struct mismatch); the shim makes
+         * `class` compile as `struct` under /TC and is a no-op under C++. */
+        bool any_class_kw = false;
+        for (auto& kv : param_structs)
+            if (kv.second.is_class && !kv.second.cls_kw_struct) { any_class_kw = true; break; }
+        if (any_class_kw)
+            protos += "#ifndef __DS_CLASSKW\n#define __DS_CLASSKW\n#ifndef __cplusplus\n"
+                      "#define class struct\n#endif\n#endif\n";
+        for (auto& kv : param_structs) {
+            const char* kw = (kv.second.is_class && !kv.second.cls_kw_struct) ? "class " : "struct ";
+            protos += kw + kv.second.tag + ";\n";
+        }
         for (auto& kv : param_structs) protos += struct_typedef_str(kv.second);
+        /* extern decls for the vtable symbols referenced by `obj->__vftable = &<Class>__vftable`
+         * (populated during body emit). The /TC gate compiles (no link), so extern is fine. */
+        for (auto& v : referenced_vtables) protos += "extern void* " + v + ";\n";
         /* named absolute-address globals (qword_174148 etc.): one #define each,
          * semantics-preserving, so the body reads `qword_174148` not the repeated
          * `*(long long*)0x174148`. */
@@ -15951,6 +16126,8 @@ struct Decompiler {
             if (c == fname) continue;
             if (seen_proto.count(c)) continue;
             seen_proto.insert(c);
+            /* recovered operator new (recover_operator_new): the honest allocator signature. */
+            if (c == "operator_new") { protos += "void* operator_new(unsigned long long);\n"; continue; }
             /* return type must match the callee's definition (same sig table) so
              * the recompiled TU has consistent prototypes. K&R "()" arg list
              * stays compatible with any definition arity. */

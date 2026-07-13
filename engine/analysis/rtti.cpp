@@ -61,22 +61,96 @@ bool already_seeded(const ds_engine* e, uint64_t rva) {
     return false;
 }
 
-/* ".?AVFoo@ns@@" -> "ns::Foo". The decorated form lists qualifiers innermost
- * first, so reverse and join with "::". Tag at name[3]: V=class U=struct W=enum
- * T=union. Empty if the shape is unexpected. */
-std::string demangle(const std::string& dec) {
+/* MSVC RTTI <class-type> name demangler with NAMESPACE + TEMPLATE support.
+ * The decorated name is ".?A<tag><qualified-name>@@": tag V=class U=struct W=enum T=union;
+ * the qualified name is innermost-first, '@'-separated, '@@'-terminated. A TEMPLATE component
+ * is `?$<name>@<type-args>@` (each arg a builtin type code or a nested class ref), so
+ * ".?AV?$Box@H@mytools@@" -> "mytools::Box<int>". Recursive-descent; on an unhandled shape it
+ * sets ok=false and the caller falls back to the flat @-split. */
+struct MsvcName {
+    const std::string& s; size_t i; bool ok = true;
+    MsvcName(const std::string& str, size_t st) : s(str), i(st) {}
+    char peek() const { return i < s.size() ? s[i] : '\0'; }
+    std::string ident() {                        /* chars up to '@', consuming the '@' */
+        std::string id;
+        while (i < s.size() && s[i] != '@') id += s[i++];
+        if (i < s.size()) i++;
+        return id;
+    }
+    std::string builtin() {                      /* one template type-arg if a simple builtin, else "" */
+        char c = peek();
+        if (c == '_') {
+            char d = (i + 1 < s.size()) ? s[i + 1] : '\0';
+            const char* r = (d=='J')?"__int64":(d=='K')?"unsigned __int64":(d=='N')?"bool":(d=='W')?"wchar_t":nullptr;
+            if (r) { i += 2; return r; }
+            return "";
+        }
+        const char* r = nullptr;
+        switch (c) {
+            case 'D': r="char"; break; case 'C': r="signed char"; break; case 'E': r="unsigned char"; break;
+            case 'F': r="short"; break; case 'G': r="unsigned short"; break;
+            case 'H': r="int"; break; case 'I': r="unsigned int"; break;
+            case 'J': r="long"; break; case 'K': r="unsigned long"; break;
+            case 'M': r="float"; break; case 'N': r="double"; break; case 'O': r="long double"; break;
+            case 'X': r="void"; break;
+        }
+        if (r) { i++; return r; }
+        return "";
+    }
+    std::string type_arg() {                     /* a template argument */
+        std::string b = builtin();
+        if (!b.empty()) return b;
+        char c = peek();
+        if (c == 'V' || c == 'U' || c == 'T') { i++; return qname(); }   /* class/struct/union arg */
+        if (c == 'W') { i++; if (peek()=='4') i++; return qname(); }     /* enum: W4<name> */
+        ok = false; return "?";                  /* pointer/ref/const-qualified/other: degrade */
+    }
+    std::string qname() {                        /* qualified name up to '@@' */
+        std::vector<std::string> comps;
+        while (i < s.size() && ok) {
+            if (peek() == '@') { i++; break; }   /* the second '@' of '@@' -> name end */
+            if (peek() == '?' && i + 1 < s.size() && s[i + 1] == '$') {   /* template component */
+                i += 2;
+                std::string tn = ident();        /* template name (up to '@') */
+                std::string args; bool first = true;
+                while (i < s.size() && peek() != '@' && ok) {
+                    if (!first) args += ", "; first = false;
+                    args += type_arg();
+                }
+                if (i < s.size()) i++;            /* consume the '@' closing the arg list */
+                comps.push_back(tn + "<" + args + ">");
+            } else {
+                comps.push_back(ident());
+            }
+        }
+        std::string out;                          /* innermost-first -> reverse, join with :: */
+        for (size_t k = comps.size(); k-- > 0; ) {
+            if (comps[k].empty()) continue;
+            if (!out.empty()) out += "::";
+            out += comps[k];
+        }
+        return out;
+    }
+};
+
+std::string demangle(const std::string& dec, bool* is_struct = nullptr) {
     if (dec.rfind(".?A", 0) != 0 || dec.size() < 5) return "";
-    std::string body = dec.substr(4);            /* after ".?A" + tag char */
+    if (is_struct) *is_struct = (dec[3] == 'U' || dec[3] == 'T');   /* U=struct T=union vs V=class */
+    MsvcName p(dec, 4);
+    std::string out = p.qname();
+    if (p.ok && !out.empty()) return out;
+    /* fallback: flat @-split (handles shapes the parser declines, e.g. exotic std:: templates) */
+    std::string body = dec.substr(4);
     size_t at = body.rfind("@@");
     if (at != std::string::npos) body = body.substr(0, at);
     std::vector<std::string> parts; std::string cur;
     for (char c : body) { if (c == '@') { parts.push_back(cur); cur.clear(); } else cur.push_back(c); }
     parts.push_back(cur);
-    std::string out;
-    for (size_t i = parts.size(); i-- > 0; ) {
-        if (parts[i].empty()) continue;
+    out.clear();
+    for (size_t k = parts.size(); k-- > 0; ) {
+        if (parts[k].empty()) continue;
         if (!out.empty()) out += "::";
-        out += parts[i];
+        out += parts[k];
     }
     return out;
 }
@@ -107,30 +181,71 @@ std::string c_safe(const std::string& s) {
  * Anchored on the mangled type-name string (a very specific byte pattern), then walk the
  * two pointer back-links via a VA->positions index built once over read-only data. */
 
-/* minimal Itanium demangler for the _ZTS payload (a <class-type> mangling):
- *   simple  <len><name>            -> "name"
- *   nested  N <len><name> ... E    -> "a::b::c"
- * Only <source-name> components (decimal length + identifier bytes). Rejects templates/
- * operators/substitutions (returns "") so we never mis-name. Must consume the whole string. */
-std::string itanium_demangle(const std::string& s) {
-    size_t i = 0; bool nested = false;
-    if (i < s.size() && s[i] == 'N') { nested = true; ++i; }
-    std::vector<std::string> parts;
-    while (i < s.size()) {
-        if (nested && s[i] == 'E') { ++i; break; }
-        if (s[i] < '1' || s[i] > '9') return "";
-        size_t len = 0;
-        while (i < s.size() && s[i] >= '0' && s[i] <= '9') { len = len * 10 + (size_t)(s[i] - '0'); ++i; }
-        if (len == 0 || i + len > s.size()) return "";
-        std::string comp = s.substr(i, len);
-        for (char c : comp)
-            if (!((c>='A'&&c<='Z')||(c>='a'&&c<='z')||(c>='0'&&c<='9')||c=='_')) return "";
-        parts.push_back(comp); i += len;
-        if (!nested) break;               /* simple form is exactly one component */
+/* Itanium demangler for the _ZTS payload (a <class-type> mangling), with NAMESPACE + TEMPLATE
+ * support (outermost-first, unlike MSVC):
+ *   simple    <len><name>                  -> "name"
+ *   nested    N <comp> ... E                -> "a::b::c"
+ *   template  <len><name> I <args> E        -> "name<int, ...>"   (each arg a builtin or a name)
+ * Only <source-name> components + builtin/name template args; declines (ok=false -> "") on any
+ * other production (pointers, substitutions, cv-qualifiers) so we never mis-name. */
+struct ItaniumName {
+    const std::string& s; size_t i = 0; bool ok = true;
+    ItaniumName(const std::string& str) : s(str) {}
+    char peek() const { return i < s.size() ? s[i] : '\0'; }
+    std::string builtin() {                       /* one <builtin-type> code, or "" */
+        static const struct { char c; const char* n; } B[] = {
+            {'v',"void"},{'b',"bool"},{'c',"char"},{'a',"signed char"},{'h',"unsigned char"},
+            {'s',"short"},{'t',"unsigned short"},{'i',"int"},{'j',"unsigned int"},{'l',"long"},
+            {'m',"unsigned long"},{'x',"long long"},{'y',"unsigned long long"},{'f',"float"},
+            {'d',"double"},{'e',"long double"},{'w',"wchar_t"} };
+        for (auto& b : B) if (peek() == b.c) { ++i; return b.n; }
+        return "";
     }
-    if (i != s.size() || parts.empty()) return "";
-    std::string out;
-    for (size_t k = 0; k < parts.size(); ++k) { if (k) out += "::"; out += parts[k]; }
+    std::string source_name() {                   /* <len><chars>, optionally `I<args>E` */
+        if (peek() < '1' || peek() > '9') { ok = false; return ""; }
+        size_t len = 0;
+        while (i < s.size() && s[i] >= '0' && s[i] <= '9') { len = len*10 + (size_t)(s[i]-'0'); ++i; }
+        if (len == 0 || i + len > s.size()) { ok = false; return ""; }
+        std::string nm = s.substr(i, len);
+        for (char c : nm)
+            if (!((c>='A'&&c<='Z')||(c>='a'&&c<='z')||(c>='0'&&c<='9')||c=='_')) { ok = false; return ""; }
+        i += len;
+        if (peek() == 'I') {                       /* template-args */
+            ++i;
+            std::string args; bool first = true;
+            while (i < s.size() && peek() != 'E' && ok) {
+                if (!first) args += ", "; first = false;
+                args += type_arg();
+            }
+            if (peek() == 'E') ++i; else ok = false;
+            nm += "<" + args + ">";
+        }
+        return nm;
+    }
+    std::string type_arg() {                       /* a template argument */
+        std::string b = builtin();
+        if (!b.empty()) return b;
+        if (peek() == 'N') return nested();
+        if (peek() >= '1' && peek() <= '9') return source_name();
+        ok = false; return "?";                    /* pointer/ref/qualified/subst: degrade */
+    }
+    std::string nested() {                          /* N <comp>... E  (outermost-first) */
+        if (peek() != 'N') { ok = false; return ""; }
+        ++i;
+        std::vector<std::string> parts;
+        while (i < s.size() && peek() != 'E' && ok) parts.push_back(source_name());
+        if (peek() == 'E') ++i; else ok = false;
+        std::string out;
+        for (size_t k = 0; k < parts.size(); ++k) { if (k) out += "::"; out += parts[k]; }
+        return out;
+    }
+    std::string parse() { return peek() == 'N' ? nested() : source_name(); }
+};
+
+std::string itanium_demangle(const std::string& s) {
+    ItaniumName p(s);
+    std::string out = p.parse();
+    if (!p.ok || out.empty() || p.i != s.size()) return "";
     return out;
 }
 
@@ -164,8 +279,9 @@ void scan_rtti_itanium(ds_engine* e) {
             if (!((c0 >= '1' && c0 <= '9') || c0 == 'N')) continue;
             std::string str = read_rtti_name(e, p);           /* NUL-terminated printable, or "" */
             if (str.size() < 2) continue;
-            std::string cls = c_safe(itanium_demangle(str));
-            if (cls.empty()) continue;
+            std::string cls_raw = itanium_demangle(str);       /* RAW: "game::Pool<int>" (namespaces/templates) */
+            if (cls_raw.empty()) continue;
+            std::string cls = c_safe(cls_raw);                  /* identifier form for vtbl-slot fn names */
 
             std::vector<uint64_t> ti_name_slots; find_refs(e->base + p, ti_name_slots);
             for (uint64_t ns : ti_name_slots) {               /* _ZTI whose +8 name-slot -> this string */
@@ -194,8 +310,8 @@ void scan_rtti_itanium(ds_engine* e) {
                      * matches to recognize a constructor. A secondary (MI base-subobject) vtable
                      * has a negative offset-to-top and lives at a sub-object offset, so naming it
                      * `<Class>__vftable` would be wrong; its virtuals are still named below. */
-                    if (sotop == 0 && !already_seeded(e, vfun_rva)) {   /* name the vtable at &slot[2] */
-                        char vt[112]; std::snprintf(vt, sizeof vt, "%s__vftable", cls.c_str());
+                    if (sotop == 0 && !already_seeded(e, vfun_rva)) {   /* name the vtable at &slot[2] (RAW name) */
+                        char vt[160]; std::snprintf(vt, sizeof vt, "%s__vftable", cls_raw.c_str());
                         ds_engine_add_symbol(e, vfun_rva, vt);
                     }
                     for (int i = 0; i < 4096; ++i) {
@@ -242,15 +358,18 @@ extern "C" void ds_engine_scan_rtti(ds_engine* e) {
             uint64_t v0;                                       /* slot 0 must be code */
             if (!read_u64(e, pos, v0) || v0 < e->base || !ds_rva_is_exec(e, v0 - e->base)) continue;
             if (!read_u32(e, col + 0x04, offc)) offc = 0;      /* subobject displacement */
-            std::string cls = c_safe(demangle(dec));
-            if (cls.empty()) continue;
-            /* Name the VTABLE itself (at `pos`, where slot 0 is — this is exactly the
-             * address an object stores at +0). So a ctor's `*obj = <vtable>` renders as
-             * `obj->__vftbl = &<Class>__vftable`, and struct recovery can recognize that a
-             * struct whose field_0 holds a `*__vftable` address IS this class. Only for the
-             * primary (offc==0) vtable so the tag is the class name. */
+            bool is_struct = false;
+            std::string cls_raw = demangle(dec, &is_struct);   /* RAW: "game::Entity", "game::Pool<int>" */
+            if (cls_raw.empty()) continue;
+            std::string cls = c_safe(cls_raw);                 /* identifier form for vtbl-slot fn names */
+            /* Name the VTABLE itself (at `pos`, where slot 0 is — the address an object stores at +0),
+             * with the RAW qualified name so the decompiler can recover `namespace X { class Y {...} }`.
+             * The decompiler sani()s it for the C tag and keeps the raw form for the namespace block.
+             * Only the primary (offc==0) vtable; the suffix carries the RTTI KIND (V=class -> __vftable,
+             * U/T=struct -> __vfstruct) for the correct `class`/`struct` keyword. */
             if (offc == 0 && !already_seeded(e, pos)) {
-                char vt[112]; std::snprintf(vt, sizeof vt, "%s__vftable", cls.c_str());
+                char vt[160]; std::snprintf(vt, sizeof vt, "%s%s", cls_raw.c_str(),
+                                            is_struct ? "__vfstruct" : "__vftable");
                 ds_engine_add_symbol(e, pos, vt);
             }
             for (int i = 0; i < 4096; ++i) {
