@@ -119,6 +119,27 @@ impl BinaryMeta {
         let cap = total.min(u64::from(u32::MAX) * 4) as usize;
         let mut image = vec![0u8; cap];
 
+        // Map the PE headers at RVA 0 (a real loader maps them). This exposes the
+        // DataDirectory so the engine can locate .pdata / .reloc / exception tables
+        // for unwind, EH/SEH, and relocation-based pointer typing. The header region
+        // is [0, first_section_rva); it never overlaps a section, and segments are
+        // copied afterwards so any overlap would be won by the section. PE only —
+        // ELF's first PT_LOAD already covers its header at rva 0.
+        if matches!(self.format, Format::Pe32 | Format::Pe32Plus) {
+            let hdr_end = self
+                .segments
+                .iter()
+                .map(|s| s.rva)
+                .filter(|&r| r > 0)
+                .min()
+                .unwrap_or(0)
+                .min(image.len() as u64)
+                .min(bytes.len() as u64) as usize;
+            if hdr_end > 0 {
+                image[0..hdr_end].copy_from_slice(&bytes[0..hdr_end]);
+            }
+        }
+
         for seg in &self.segments {
             let foff = seg.file_off as usize;
             let fsize = seg.file_size as usize;

@@ -44,6 +44,8 @@
 #include <map>
 #include <unordered_map>
 #include <set>
+#include <unordered_set>
+#include <mutex>
 #include <algorithm>
 #include <memory>
 #include <functional>
@@ -311,6 +313,112 @@ ExprP mkTernary(ExprP cond, ExprP t, ExprP f, int w) {
 ExprP mkText(const std::string& t, int w = 8) {
     auto e = std::make_shared<Expr>(); e->kind = EK::Str; e->text = t;
     e->width = w; return e;
+}
+
+/* ===================================================================== */
+/*  Whole-program PE tables (parsed ONCE per engine, shared read-only).    */
+/*  reloc64 : RVAs of IMAGE_REL_BASED_DIR64 base-relocation slots — every   */
+/*    such 8-byte image word holds an absolute pointer (fixed up at load),  */
+/*    so a read-only global at one of these RVAs is a POINTER, not an int.  */
+/*  pdata   : x64 exception directory RUNTIME_FUNCTION[] — authoritative    */
+/*    [begin,end) per function + the UNWIND_INFO rva; sorted by begin.      */
+/*  Sections are found by name (.reloc/.pdata); the data directory (headers */
+/*  mapped at rva 0 by binary-parser build_image) is the stripped-name      */
+/*  fallback. Thread-safe: dumptool shares one immutable engine across N    */
+/*  worker threads, so we compute under a lock and hand back an immutable   */
+/*  shared_ptr that concurrent readers can use lock-free.                   */
+/* ===================================================================== */
+struct PeTables {
+    std::unordered_set<uint64_t> reloc64;
+    struct RF { uint32_t begin = 0, end = 0, unwind = 0; };
+    std::vector<RF> pdata;                     /* sorted by begin */
+    bool has_reloc = false, has_pdata = false;
+};
+
+static bool pe_rd_u16(const ds_engine* e, uint64_t rva, uint16_t& o) {
+    if (!e || !e->image || rva + 2 > e->image_size) return false;
+    o = (uint16_t)(e->image[rva] | (e->image[rva + 1] << 8)); return true;
+}
+static bool pe_rd_u32(const ds_engine* e, uint64_t rva, uint32_t& o) {
+    if (!e || !e->image || rva + 4 > e->image_size) return false;
+    o = 0; for (int i = 0; i < 4; i++) o |= (uint32_t)e->image[rva + i] << (8 * i);
+    return true;
+}
+static const ds_segment* pe_seg_named(const ds_engine* e, const char* nm) {
+    if (!e) return nullptr;
+    for (size_t i = 0; i < e->segment_len; i++)
+        if (std::strncmp(e->segments[i].name, nm, sizeof e->segments[i].name) == 0)
+            return &e->segments[i];
+    return nullptr;
+}
+/* Data directory [idx] (rva,size) from the PE headers mapped at rva 0. */
+static bool pe_data_dir(const ds_engine* e, int idx, uint32_t& rva, uint32_t& sz) {
+    uint16_t mz; if (!pe_rd_u16(e, 0, mz) || mz != 0x5A4D) return false;      /* 'MZ' */
+    uint32_t lfanew; if (!pe_rd_u32(e, 0x3C, lfanew)) return false;
+    uint32_t sig; if (!pe_rd_u32(e, lfanew, sig) || sig != 0x00004550) return false; /* PE\0\0 */
+    uint64_t opt = (uint64_t)lfanew + 4 + 20;                                 /* skip COFF header */
+    uint16_t magic; if (!pe_rd_u16(e, opt, magic)) return false;
+    uint64_t dirs;
+    if (magic == 0x20B) dirs = opt + 112;        /* PE32+ */
+    else if (magic == 0x10B) dirs = opt + 96;    /* PE32  */
+    else return false;
+    uint64_t off = dirs + (uint64_t)idx * 8;
+    return pe_rd_u32(e, off, rva) && pe_rd_u32(e, off + 4, sz);
+}
+
+static std::shared_ptr<const PeTables> compute_pe_tables(const ds_engine* e) {
+    auto t = std::make_shared<PeTables>();
+    if (!e || !e->image) return t;
+    /* ---- base relocations (.reloc / data dir 5) ---- */
+    uint64_t rr = 0, rsz = 0;
+    if (const ds_segment* s = pe_seg_named(e, ".reloc")) { rr = s->rva; rsz = s->size; }
+    else { uint32_t a, z; if (pe_data_dir(e, 5, a, z) && a) { rr = a; rsz = z; } }
+    if (rr && rsz) {
+        uint64_t p = rr, end = rr + rsz;
+        while (p + 8 <= end) {
+            uint32_t page, bsz;
+            if (!pe_rd_u32(e, p, page) || !pe_rd_u32(e, p + 4, bsz)) break;
+            if (bsz < 8 || p + bsz > end) break;
+            uint64_t n = (bsz - 8) / 2, q = p + 8;
+            for (uint64_t i = 0; i < n; i++) {
+                uint16_t ent; if (!pe_rd_u16(e, q + i * 2, ent)) break;
+                if ((ent >> 12) == 10)                       /* IMAGE_REL_BASED_DIR64 */
+                    t->reloc64.insert((uint64_t)page + (ent & 0x0FFF));
+            }
+            p += bsz;
+        }
+        t->has_reloc = !t->reloc64.empty();
+    }
+    /* ---- exception directory RUNTIME_FUNCTION[] (.pdata / data dir 3) ---- */
+    uint64_t pr = 0, psz = 0;
+    if (const ds_segment* s = pe_seg_named(e, ".pdata")) { pr = s->rva; psz = s->size; }
+    else { uint32_t a, z; if (pe_data_dir(e, 3, a, z) && a) { pr = a; psz = z; } }
+    if (pr && psz) {
+        uint64_t n = psz / 12;
+        for (uint64_t i = 0; i < n; i++) {
+            uint64_t base = pr + i * 12; uint32_t b, en, u;
+            if (!pe_rd_u32(e, base, b) || !pe_rd_u32(e, base + 4, en) || !pe_rd_u32(e, base + 8, u)) break;
+            if (b == 0 && en == 0 && u == 0) break;          /* zero terminator */
+            if (en <= b) continue;
+            PeTables::RF rf; rf.begin = b; rf.end = en; rf.unwind = u;
+            t->pdata.push_back(rf);
+        }
+        std::sort(t->pdata.begin(), t->pdata.end(),
+                  [](const PeTables::RF& x, const PeTables::RF& y) { return x.begin < y.begin; });
+        t->has_pdata = !t->pdata.empty();
+    }
+    return t;
+}
+
+static std::shared_ptr<const PeTables> get_pe_tables(const ds_engine* e) {
+    static std::mutex m;
+    static std::map<const ds_engine*, std::shared_ptr<const PeTables>> cache;
+    std::lock_guard<std::mutex> lk(m);
+    auto it = cache.find(e);
+    if (it != cache.end()) return it->second;
+    auto t = compute_pe_tables(e);
+    cache[e] = t;
+    return t;
 }
 
 bool isConst(const ExprP& e) { return e && e->kind == EK::Const; }
@@ -764,9 +872,12 @@ struct Decompiler {
     int  temp_seq = 0;
     std::map<int, std::string> temp_name;             /* (blk<<5|reg) -> tN unused */
 
+    /* whole-program PE tables (reloc pointer slots + .pdata), parsed once/engine */
+    std::shared_ptr<const PeTables> petab;
+
     Decompiler(ds_engine* eng, const ds_func* fn,
                const std::map<uint64_t, FuncSig>* st)
-        : e(eng), f(fn), sigtab(st) {}
+        : e(eng), f(fn), sigtab(st) { petab = get_pe_tables(eng); }
     ~Decompiler() { if (handle_ok) cs_close(&handle); }
 
     /* ---- image reads (bounds-checked) ---- */
@@ -876,6 +987,57 @@ struct Decompiler {
         }
         return "";
     }
+
+    /* class TAG (sani'd) -> its vtable RVA, by matching the `<Class>__vftable` /
+     * `<Class>__vfstruct` symbol rtti.cpp seeded. Used to resolve virtual calls. */
+    uint64_t vtable_rva_for_tag(const std::string& tag) {
+        if (!e || tag.empty()) return 0;
+        static const char* sufs[] = { "__vftable", "__vfstruct" };
+        for (size_t i = 0; i < e->symbol_len; ++i) {
+            const char* nm = e->symbols[i].name;
+            if (!nm || !nm[0]) continue;
+            std::string n = nm;
+            for (const char* suf : sufs) {
+                size_t sl = std::strlen(suf);
+                if (n.size() > sl && n.compare(n.size() - sl, sl, suf) == 0 &&
+                    sani(n.substr(0, n.size() - sl)) == tag) {
+                    uint64_t r = e->symbols[i].rva;
+                    return (r >= e->base) ? r - e->base : r;
+                }
+            }
+        }
+        return 0;
+    }
+
+    /* Resolve a virtual-call target `*(long long*)(*obj + off)` to the concrete method
+     * NAME via obj's recovered class vtable: obj->__vftable is `&Class__vftable`, so the
+     * slot at `off` is `*(vtable_rva + off)` = the method RVA. Turns
+     * `((long long(*)())(*(long long*)(*a1)))(a1)` into `Circle_area(a1)`. Gated
+     * DS_NO_VCALL. Returns "" when it is not a recognizable class virtual dispatch. */
+    std::string resolve_virtual_call(const ExprP& target) {
+        if (std::getenv("DS_NO_VCALL")) return "";
+        if (!target || target->kind != EK::Mem || !target->a) return "";
+        ExprP inner = target->a; int64_t off = 0;
+        if (inner->kind == EK::Binary && inner->op == "+" && inner->b &&
+            inner->b->kind == EK::Const) { off = inner->b->cval; inner = inner->a; }
+        while (inner && inner->kind == EK::Cast) inner = inner->a;
+        if (!inner || inner->kind != EK::Mem || !inner->a) return "";   /* the vtable-ptr load */
+        ExprP obj = inner->a;
+        while (obj && obj->kind == EK::Cast) obj = obj->a;
+        if (!obj || obj->kind != EK::Var) return "";
+        auto it = param_structs.find(obj->name);
+        if (it == param_structs.end() || !it->second.is_class) return "";   /* obj is a class ptr */
+        uint64_t vt = vtable_rva_for_tag(it->second.tag);
+        if (!vt) return "";
+        int64_t mrva;
+        if (!read_i64(vt + (uint64_t)off, mrva)) return "";
+        uint64_t mr = ((uint64_t)mrva >= e->base) ? (uint64_t)mrva - e->base : (uint64_t)mrva;
+        std::string nm = name_for_rva(mr);
+        if (nm.empty() || nm.rfind("sub_", 0) == 0 || nm.rfind("fun_", 0) == 0) return "";
+        virtual_callees.insert(nm);   /* needs an extern decl in the proto block */
+        return nm;
+    }
+    std::set<std::string> virtual_callees;   /* resolved vmethod names referenced -> extern decls */
 
     /* A `xrefs: called by NAME (N sites)` header comment for THIS function, built
      * from the whole-program call graph (e->refs, populated once by build_xrefs).
@@ -3024,6 +3186,20 @@ struct Decompiler {
             if (width <= 1) { uint8_t b; if (read_u8(abs, b)) { cv = (int8_t)b; ok = true; } }
             else if (width <= 4) { int32_t v; if (read_i32(abs, v)) { cv = v; ok = true; } }
             else { int64_t v; if (read_i64(abs, v)) { cv = v; ok = true; } }
+            /* reloc-typed read-only pointer global: an 8-byte read-only slot the
+             * PE base-reloc table marks IMAGE_REL_BASED_DIR64 holds a real absolute
+             * pointer, not an integer. When it points at a read-only C string,
+             * inline the string literal (Hex-Rays shows the string, not the raw
+             * VA). Authoritative (reloc-gated) so no false positives. DS_NO_RELOC. */
+            if (ok && width == 8 && petab && petab->reloc64.count(abs) &&
+                !getenv("DS_NO_RELOC")) {
+                uint64_t tgt = (uint64_t)cv;
+                if (tgt >= e->base && tgt - e->base < e->image_size) {
+                    std::string s;
+                    if (read_cstring(tgt - e->base, s))
+                        return mkText("\"" + s + "\"", 8);
+                }
+            }
             if (ok) return mkConst(cv, width, false);
             /* could not read: emit a deref of the absolute address */
             return mkMem(mkConst((int64_t)abs, 8), width);
@@ -4097,6 +4273,14 @@ struct Decompiler {
         const x86_op_mem& m = op.mem;
         if (m.base == X86_REG_RIP && m.index == X86_REG_INVALID) {
             uint64_t abs = cur_insn_addr + cur_insn_size + (uint64_t)m.disp;
+            /* `lea reg,[rip+str]` of a read-only C string -> the string literal.
+             * A lea result IS a pointer, so this is the known-pointer context the
+             * bare-constant string guard requires (no arithmetic-constant risk):
+             * `return "foo";` instead of `return 0xe2f0;`. DS_NO_LEASTR. */
+            if (!getenv("DS_NO_LEASTR")) {
+                std::string s;
+                if (read_cstring(abs, s)) return mkText("\"" + s + "\"", 8);
+            }
             return mkConst((int64_t)abs, 8, true);
         }
         Reg base = R_NONE, index = R_NONE; int t;
@@ -9476,7 +9660,9 @@ struct Decompiler {
                 /* Indirect call: render the target from the live child so the text
                  * reflects any copy-prop/inlining done after lift (the callee string
                  * is a stale snapshot from construction time). */
-                std::string head = (e->indirect && e->a)
+                std::string vm = (e->indirect && e->a) ? resolve_virtual_call(e->a) : "";
+                std::string head = !vm.empty() ? vm
+                    : (e->indirect && e->a)
                     ? "((long long(*)())(" + render(e->a) + "))"
                     : e->callee;
                 std::string s = head + "(";
@@ -16805,6 +16991,10 @@ struct Decompiler {
         /* extern decls for the vtable symbols referenced by `obj->__vftable = &<Class>__vftable`
          * (populated during body emit). The /TC gate compiles (no link), so extern is fine. */
         for (auto& v : referenced_vtables) protos += "extern void* " + v + ";\n";
+        /* resolved virtual methods called by name need a proto (the /TC gate compiles
+         * each function alone). K&R `()` so any arg count compiles. */
+        for (auto& v : virtual_callees)
+            if (!extern_callees.count(v)) protos += "long long " + v + "();\n";
         /* named absolute-address globals (qword_174148 etc.): one #define each,
          * semantics-preserving, so the body reads `qword_174148` not the repeated
          * `*(long long*)0x174148`. */
