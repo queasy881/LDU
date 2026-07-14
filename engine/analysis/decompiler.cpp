@@ -2972,6 +2972,68 @@ struct Decompiler {
         return false;
     }
 
+    /* Does GP register `dr` (just written by `movd r,xmm`) get consumed by an
+     * integer BIT op (and/or/xor/shl/shr/sar) before being overwritten? Marks the
+     * `movd r,xmm` as a float-BITS reinterpret (`*(int*)&f`), not a value cast —
+     * exponent/mantissa tests, and the Dekker split `movd r,xmm; and r,mask`. */
+    bool gpr_bits_int_op(size_t i, Reg dr) {
+        for (size_t j = i + 1; j < insns.size() && j < i + 6; ++j) {
+            const cs_x86& xj = insns[j].x86;
+            bool uses = false, writes_only = false;
+            for (int k = 0; k < xj.op_count; ++k) {
+                if (xj.operands[k].type != X86_OP_REG) continue;
+                Reg r; int w; map_reg(xj.operands[k].reg, r, w);
+                if (r == dr) uses = true;
+            }
+            if (!uses) continue;
+            switch (insns[j].id) {
+                case X86_INS_AND: case X86_INS_OR: case X86_INS_XOR:
+                case X86_INS_SHL: case X86_INS_SHR: case X86_INS_SAR:
+                case X86_INS_SHLD: case X86_INS_SHRD:
+                    return true;
+                default: (void)writes_only; return false;   /* first use is not a bit op */
+            }
+        }
+        return false;
+    }
+
+    /* Does xmm `dr` (just written by `movd xmm,r`) get consumed FIRST by a scalar
+     * FLOAT op — i.e. the GP bits it received are a float value (`*(float*)&t`),
+     * the write side of the Dekker split. A packed/integer/other first use => no. */
+    bool xmm_bits_scalar_float(size_t i, Reg dr) {
+        for (size_t j = i + 1; j < insns.size() && j < i + 8; ++j) {
+            const cs_x86& xj = insns[j].x86;
+            bool uses = false;
+            for (int k = 0; k < xj.op_count; ++k) {
+                if (xj.operands[k].type != X86_OP_REG) continue;
+                Reg r; int w; map_reg(xj.operands[k].reg, r, w);
+                if (r == dr) uses = true;
+            }
+            if (!uses) continue;
+            switch (insns[j].id) {
+                case X86_INS_ADDSS: case X86_INS_SUBSS: case X86_INS_MULSS:
+                case X86_INS_DIVSS: case X86_INS_COMISS: case X86_INS_UCOMISS:
+                case X86_INS_MAXSS: case X86_INS_MINSS: case X86_INS_SQRTSS:
+                case X86_INS_CVTSS2SD: case X86_INS_CVTSS2SI: case X86_INS_CVTTSS2SI:
+                case X86_INS_ADDSD: case X86_INS_SUBSD: case X86_INS_MULSD:
+                case X86_INS_DIVSD: case X86_INS_COMISD: case X86_INS_UCOMISD:
+                case X86_INS_MAXSD: case X86_INS_MINSD: case X86_INS_SQRTSD:
+                case X86_INS_VADDSS: case X86_INS_VSUBSS: case X86_INS_VMULSS:
+                case X86_INS_VDIVSS: case X86_INS_VCOMISS: case X86_INS_VUCOMISS:
+                case X86_INS_VMAXSS: case X86_INS_VMINSS: case X86_INS_VSQRTSS:
+                case X86_INS_VCVTSS2SD:
+                case X86_INS_VADDSD: case X86_INS_VSUBSD: case X86_INS_VMULSD:
+                case X86_INS_VDIVSD: case X86_INS_VFMADD213SS: case X86_INS_VFNMADD213SS:
+                case X86_INS_VFMSUB213SS: case X86_INS_VFNMSUB213SS:
+                case X86_INS_VFMADD231SS: case X86_INS_VFNMADD231SS:
+                case X86_INS_VFMADD132SS: case X86_INS_VFNMADD132SS:
+                    return true;
+                default: return false;   /* first use is packed / integer / move */
+            }
+        }
+        return false;
+    }
+
     /* pending flag source from cmp/test/arith for the following jcc/setcc */
     struct FlagSrc {
         bool valid = false;
@@ -6259,6 +6321,57 @@ struct Decompiler {
                             !expr_has_in_backstop(xmm_i[sr][0]) && !expr_has_in_backstop(xmm_i[sr][1])) {
                             ExprP g[2] = { clone(xmm_i[sr][0]), clone(xmm_i[sr][1]) };
                             if (emit_simd8_store_ilanes(b, OP(0), g, in.addr)) break;
+                        }
+                    }
+                    /* ---- float<->int bit REINTERPRET for movd/movq reg<->xmm (the
+                     * scalar-reinterpret block above can miss it under stale packed-lane
+                     * tracking; these register-aware lookaheads recover the Dekker
+                     * hi/lo split `movd r,xmm; and r,mask; movd xmm,r`). ---- */
+                    if (nop >= 2 && OP(0).type == X86_OP_REG && OP(1).type == X86_OP_REG) {
+                        Reg dr0, sr0; int dw0, sw0;
+                        map_reg(OP(0).reg, dr0, dw0); map_reg(OP(1).reg, sr0, sw0);
+                        size_t ix = (size_t)(&in - insns.data());
+                        int rw = (id == X86_INS_MOVQ || id == X86_INS_VMOVQ) ? 8 : 4;
+                        /* READ  `movd r_gpr, xmm(float)` whose bits feed an int bit-op:
+                         *   -> `*(int*)&f`, not a value-truncating `(int)f`. */
+                        if (!is_xmm(dr0) && is_xmm(sr0) && !xmm_i_real[sr0]) {
+                            ExprP sv = rvalue(OP(1));
+                            /* `*(unsigned int*)&v & mask` is the correct bit view for ANY
+                             * type (an int reads back its own value; a float reads its
+                             * IEEE bits), so no source-type check is needed — the
+                             * !xmm_i_real guard (not a real packed-int lane) plus the
+                             * bit-op lookahead already scope this to the float-bits
+                             * idioms (isnan/ilogb/frexp + the Dekker hi/lo split). var
+                             * typing (var_is_float) isn't populated yet at lift time. */
+                            if (sv && gpr_bits_int_op(ix, dr0)) {
+                                ExprP lv = sv;
+                                if (sv->kind != EK::Var) {
+                                    std::string tn = "t" + std::to_string(++temp_seq);
+                                    spill_temps.insert(tn); var_width[tn] = rw < 8 ? 4 : 8; var_is_float[tn] = true;
+                                    Stmt st; st.kind = SK::Assign; st.lhs = mkVar(tn, var_width[tn]);
+                                    st.lhs->is_float = true; st.rhs = sv; b.stmts.push_back(std::move(st));
+                                    lv = mkVar(tn, var_width[tn]); lv->is_float = true;
+                                }
+                                force_float_vars.insert(lv->name);
+                                do_dst(b, OP(0), mkMem(mkAddrOf(clone(lv)), rw, true), in.addr);  /* *(unsigned int*)&f */
+                                break;
+                            }
+                        }
+                        /* WRITE `movd xmm, r_gpr` whose int bits are consumed by a scalar
+                         *   float op: `*(float*)&t`, not a raw int the op value-converts. */
+                        if (is_xmm(dr0) && !is_xmm(sr0)) {
+                            ExprP iv = rvalue(OP(1));
+                            if (iv && !iv->is_float && xmm_bits_scalar_float(ix, dr0)) {
+                                std::string tn = "t" + std::to_string(++temp_seq);
+                                spill_temps.insert(tn); var_width[tn] = rw;   /* integer temp */
+                                Stmt st; st.kind = SK::Assign; st.lhs = mkVar(tn, rw); st.rhs = iv;
+                                b.stmts.push_back(std::move(st));
+                                ExprP reint = mkMem(mkAddrOf(mkVar(tn, rw)), rw, false);  /* *(float*)&t */
+                                reint->is_float = true;
+                                do_dst(b, OP(0), reint, in.addr);
+                                if (rw < 8) { regfile_hi[dr0] = mkConst(0, 8); xmm_packed_var.erase(dr0); }
+                                break;
+                            }
                         }
                     }
                     do_dst(b, OP(0), rvalue(OP(1)), in.addr);
