@@ -12268,15 +12268,25 @@ struct Decompiler {
         int stop_rpo = (stop >= 0 && (size_t)stop < rpo_num.size()) ? rpo_num[stop] : (1<<30);
         if (rpo_num[entry] >= stop_rpo) { if(DBG) fprintf(stderr,"[FLAG]  bail entry-past-stop\n"); return false; }
         if (loop_of_header.count(entry)) { if(DBG) fprintf(stderr,"[FLAG]  bail entry-is-loop\n"); return false; }
-        /* Region R = ladder scope: reachable from entry, RPO-before stop. A loop header
-         * is opaque — its body is emitted whole via emit_loop, so we jump to its follow
-         * rather than traverse it; fl_bodyhdr maps each body block to its loop header. */
+        /* Region exit = entry's immediate post-dominator when it is a tighter single exit
+         * than the passed stop: this makes [entry, rexit) a proper SESE region (entry
+         * dominates it, rexit post-dominates it) with no multi-entry / multi-exit escapes.
+         * The tail [rexit, stop) is emitted normally afterwards. */
+        int rexit = stop;
+        if (entry < (int)ipdom.size() && ipdom[entry] >= 0 && (size_t)ipdom[entry] < rpo_num.size() &&
+            rpo_num[ipdom[entry]] > rpo_num[entry] && rpo_num[ipdom[entry]] <= stop_rpo)
+            rexit = ipdom[entry];
+        int rexit_rpo = (rexit >= 0 && (size_t)rexit < rpo_num.size()) ? rpo_num[rexit] : (1<<30);
+        /* Region R = ladder scope: blocks DOMINATED by entry, RPO-before rexit. A loop
+         * header is opaque — its body is emitted whole via emit_loop, so we jump to its
+         * follow rather than traverse it; fl_bodyhdr maps each body block to its header. */
         std::set<int> R, loop_bodies; std::map<int,int> loop_node_follow, body_hdr;
         { std::vector<int> wk{entry};
           while (!wk.empty()) {
               int c = wk.back(); wk.pop_back();
-              if (c < 0 || c == stop) continue;
-              if ((size_t)c >= rpo_num.size() || rpo_num[c] >= stop_rpo) continue;
+              if (c < 0 || c == rexit) continue;
+              if ((size_t)c >= rpo_num.size() || rpo_num[c] >= rexit_rpo) continue;
+              if (c != entry && !dominates(entry, c)) continue;   /* single-entry: dominated only */
               if (!R.insert(c).second) continue;
               if (R.size() > 48) { if(DBG) fprintf(stderr,"[FLAG]  bail R>48\n"); return false; }
               if (loop_of_header.count(c) && c != entry) {
@@ -12301,9 +12311,15 @@ struct Decompiler {
             for (int p : blocks[x].pred)
                 if (!R.count(p) && !loop_bodies.count(p)) { if(DBG) fprintf(stderr,"[FLAG]  bail multi-entry x=%d pred=%d\n",x,p); return false; }
         }
+        /* Only lift when R genuinely contains a cross-join (a join that post-dominates no
+         * branch). Otherwise the region is cleanly structurable and flagging its clean
+         * joins would only add noise; the real goto (if any) is in the tail. */
+        { bool has_cross = false;
+          for (int x : R) if (cross_joins.count(x)) { has_cross = true; break; }
+          if (!has_cross) { if(DBG) fprintf(stderr,"[FLAG]  bail no-cross-join\n"); return false; } }
         /* publish region context */
         fl_R = R; fl_loopbodies = loop_bodies; fl_loopfollow = loop_node_follow;
-        fl_bodyhdr = body_hdr; fl_stop = stop; fl_loophdr = loop_header; fl_bail = false;
+        fl_bodyhdr = body_hdr; fl_stop = rexit; fl_loophdr = loop_header; fl_bail = false;
         /* joins = non-entry blocks with >=2 ladder-preds -> these get lifted to flags. */
         fl_joins.clear();
         std::vector<int> jorder;
@@ -12351,7 +12367,14 @@ struct Decompiler {
         for (int x : R) structured.insert(x);
         for (int x : loop_bodies) structured.insert(x);
         dst += body;
-        if (DBG) fprintf(stderr,"[FLAG]  OK entry=%d R=%zu joins=%zu loops=%zu\n", entry, R.size(), fl_joins.size(), loop_node_follow.size());
+        /* emit the tail [rexit, stop) with normal structuring (in_flag_region off so a
+         * nested proper region in the tail gets its own lift). */
+        if (rexit >= 0 && rexit != stop && !structured.count(rexit)) {
+            bool sv = in_flag_region; in_flag_region = false;
+            emit_region(rexit, stop, dst, loop_header);
+            in_flag_region = sv;
+        }
+        if (DBG) fprintf(stderr,"[FLAG]  OK entry=%d R=%zu joins=%zu loops=%zu rexit=%d\n", entry, R.size(), fl_joins.size(), loop_node_follow.size(), rexit);
         return true;
     }
 
