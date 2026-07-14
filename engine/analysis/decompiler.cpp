@@ -328,16 +328,46 @@ ExprP mkText(const std::string& t, int w = 8) {
 /*  worker threads, so we compute under a lock and hand back an immutable   */
 /*  shared_ptr that concurrent readers can use lock-free.                   */
 /* ===================================================================== */
+/* Recovered exception-handling structure for one function (from .pdata/.xdata). */
+struct SehScope { uint32_t begin = 0, end = 0, filter = 0, target = 0; }; /* filter==0 => __finally */
+struct CppCatch { std::string type; uint32_t handler = 0; };
+struct CppTry { int low = 0, high = 0; std::vector<CppCatch> catches; };
+struct EHInfo {
+    std::vector<SehScope> seh;   /* __C_specific_handler scope table -> __try/__except/__finally */
+    std::vector<CppTry>   cpp;   /* __CxxFrameHandler3 (v3) FuncInfo -> try/catch */
+    bool any() const { return !seh.empty() || !cpp.empty(); }
+};
+
 struct PeTables {
     std::unordered_set<uint64_t> reloc64;
     struct RF { uint32_t begin = 0, end = 0, unwind = 0; };
     std::vector<RF> pdata;                     /* sorted by begin */
+    std::map<uint64_t, EHInfo> eh;             /* fn begin rva -> recovered EH */
     bool has_reloc = false, has_pdata = false;
 };
 
+static bool pe_rd_u8(const ds_engine* e, uint64_t rva, uint8_t& o) {
+    if (!e || !e->image || rva + 1 > e->image_size) return false;
+    o = e->image[rva]; return true;
+}
 static bool pe_rd_u16(const ds_engine* e, uint64_t rva, uint16_t& o) {
     if (!e || !e->image || rva + 2 > e->image_size) return false;
     o = (uint16_t)(e->image[rva] | (e->image[rva + 1] << 8)); return true;
+}
+/* Turn an MSVC RTTI TypeDescriptor mangled name into a readable C++ type:
+ * ".?AVexception@std@@" -> "std::exception", ".?AUFoo@@" -> "Foo". Best-effort. */
+static std::string pe_demangle_type(const std::string& raw) {
+    std::string s = raw;
+    if (s.rfind(".?A", 0) == 0) s = s.substr(4);       /* drop .?AV / .?AU / .?AW tag */
+    if (s.size() >= 2 && s.compare(s.size() - 2, 2, "@@") == 0) s = s.substr(0, s.size() - 2);
+    /* segments are innermost-first, separated by '@' -> reverse into A::B::C */
+    std::vector<std::string> parts; std::string cur;
+    for (char c : s) { if (c == '@') { if (!cur.empty()) parts.push_back(cur); cur.clear(); } else cur += c; }
+    if (!cur.empty()) parts.push_back(cur);
+    if (parts.empty()) return raw;
+    std::string out;
+    for (size_t i = parts.size(); i-- > 0; ) { out += parts[i]; if (i) out += "::"; }
+    return out;
 }
 static bool pe_rd_u32(const ds_engine* e, uint64_t rva, uint32_t& o) {
     if (!e || !e->image || rva + 4 > e->image_size) return false;
@@ -406,6 +436,72 @@ static std::shared_ptr<const PeTables> compute_pe_tables(const ds_engine* e) {
         std::sort(t->pdata.begin(), t->pdata.end(),
                   [](const PeTables::RF& x, const PeTables::RF& y) { return x.begin < y.begin; });
         t->has_pdata = !t->pdata.empty();
+    }
+    /* ---- exception handling (.xdata UNWIND_INFO -> SEH scope tables / C++ FuncInfo) ---- */
+    for (const auto& rf : t->pdata) {
+        uint8_t vf, cnt;
+        if (!pe_rd_u8(e, rf.unwind, vf) || !pe_rd_u8(e, rf.unwind + 2, cnt)) continue;
+        uint8_t flags = vf >> 3;
+        if (flags & 0x4) continue;                 /* chained fragment */
+        if (!(flags & 0x3)) continue;              /* no exception/unwind handler */
+        uint64_t hs = rf.unwind + 4 + (uint64_t)((cnt + 1) & ~1) * 2;   /* aligned unwind-code array */
+        uint64_t data = hs + 4;                    /* skip the 4-byte handler RVA */
+        EHInfo info;
+        /* (A) __C_specific_handler SCOPE_TABLE: u32 Count, then Count*{Begin,End,Handler,Target}.
+         * Validated: sane count and every [Begin,End) inside the function -> real SEH. */
+        uint32_t scount;
+        if (pe_rd_u32(e, data, scount) && scount >= 1 && scount <= 64) {
+            bool ok = true;
+            std::vector<SehScope> scopes;
+            for (uint32_t k = 0; k < scount && ok; ++k) {
+                uint64_t rec = data + 4 + (uint64_t)k * 16;
+                SehScope s;
+                if (!pe_rd_u32(e, rec, s.begin) || !pe_rd_u32(e, rec + 4, s.end) ||
+                    !pe_rd_u32(e, rec + 8, s.filter) || !pe_rd_u32(e, rec + 12, s.target)) { ok = false; break; }
+                if (!(s.begin >= rf.begin && s.end <= rf.end && s.begin < s.end)) { ok = false; break; }
+                scopes.push_back(s);
+            }
+            if (ok && !scopes.empty()) info.seh = std::move(scopes);
+        }
+        /* (B) __CxxFrameHandler3 (v3) FuncInfo: magic 0x1993052x -> try/catch. v4 is a
+         * different compressed encoding and is intentionally left for a later pass. */
+        if (info.seh.empty()) {
+            uint32_t fi;
+            if (pe_rd_u32(e, data, fi) && fi) {
+                uint32_t magic;
+                if (pe_rd_u32(e, fi, magic) &&
+                    (magic == 0x19930520u || magic == 0x19930521u || magic == 0x19930522u)) {
+                    uint32_t nTry = 0, pTry = 0;
+                    pe_rd_u32(e, fi + 12, nTry); pe_rd_u32(e, fi + 16, pTry);
+                    for (uint32_t ti = 0; ti < nTry && ti < 64 && pTry; ++ti) {
+                        uint64_t to = (uint64_t)pTry + (uint64_t)ti * 20;
+                        uint32_t tl, th, ch, nc, pha;
+                        if (!pe_rd_u32(e, to, tl) || !pe_rd_u32(e, to + 4, th) ||
+                            !pe_rd_u32(e, to + 8, ch) || !pe_rd_u32(e, to + 12, nc) ||
+                            !pe_rd_u32(e, to + 16, pha)) break;
+                        CppTry ct; ct.low = (int)tl; ct.high = (int)th;
+                        for (uint32_t ci = 0; ci < nc && ci < 32 && pha; ++ci) {
+                            uint64_t ho = (uint64_t)pha + (uint64_t)ci * 20;   /* x64 HandlerType = 20 bytes */
+                            uint32_t adj, pType, hadr;
+                            if (!pe_rd_u32(e, ho, adj) || !pe_rd_u32(e, ho + 4, pType) ||
+                                !pe_rd_u32(e, ho + 12, hadr)) break;
+                            CppCatch cc; cc.handler = hadr;
+                            if (pType) {                                       /* TypeDescriptor.name @ +16 */
+                                std::string nm;
+                                for (int j = 0; j < 512; ++j) {
+                                    uint8_t b; if (!pe_rd_u8(e, (uint64_t)pType + 16 + j, b) || !b) break;
+                                    nm += (char)b;
+                                }
+                                cc.type = pe_demangle_type(nm);
+                            }
+                            ct.catches.push_back(std::move(cc));
+                        }
+                        info.cpp.push_back(std::move(ct));
+                    }
+                }
+            }
+        }
+        if (info.any()) t->eh[rf.begin] = std::move(info);
     }
     return t;
 }
@@ -9195,6 +9291,42 @@ struct Decompiler {
         if (read_cstring((uint64_t)e->cval, s)) return "\"" + s + "\"";
         return "";
     }
+
+    /* APIs whose integer args are plain counts/millisecond delays and so read
+     * better in decimal than hex (`Sleep(500)` not `Sleep(0x1f4)`). */
+    static bool api_prefers_decimal_args(const std::string& c) {
+        return c == "Sleep" || c == "SleepEx" || c == "j_Sleep" || c == "j_SleepEx";
+    }
+    /* Render one call argument. For a decimal-preferred API, a small non-negative
+     * integer constant (peeling any widening cast) is emitted in decimal; anything
+     * else falls back to the normal string-literal / expression rendering. */
+    std::string call_arg_text(const ExprP& arg, bool dec_api) {
+        if (dec_api && arg) {
+            ExprP c = arg;
+            while (c && c->kind == EK::Cast && c->a) c = c->a;   /* peel widening casts */
+            if (c && c->kind == EK::Const && !c->is_float &&
+                c->cval >= 0 && c->cval <= 3600000) {            /* plausible ms; skip INFINITE etc. */
+                char b[24]; std::snprintf(b, sizeof b, "%lld", (long long)c->cval);
+                return b;
+            }
+        }
+        /* Drop a redundant width-preserving integer cast on an argument already of
+         * that width: `f((unsigned int)a2)` -> `f(a2)` when a2 is a 32-bit var. In
+         * call-arg position the value is passed by bits and the callee reads its own
+         * width, so a signedness-only `(int)`/`(unsigned int)` cast on an already-
+         * 32-bit value is pure noise (no truncation happens — w<=4 gate). This is
+         * the majority of the (unsigned int)/(int) cast clutter. DS_NO_ARGCASTCLEAN. */
+        ExprP a = arg;
+        if (a && a->kind == EK::Cast && a->a && a->a->kind == EK::Var &&
+            (a->op == "(unsigned int)" || a->op == "(int)") &&
+            !getenv("DS_NO_ARGCASTCLEAN")) {
+            auto it = var_width.find(a->a->name);
+            int w = (it != var_width.end()) ? it->second : 4;
+            if (w > 0 && w <= 4) a = a->a;
+        }
+        std::string sl = try_string_lit(a);
+        return sl.empty() ? render(a) : sl;
+    }
     std::string render_const(const ExprP& e) {
         if (e->is_float) return fmt_float_lit(e->cval, e->width < 8);
         int64_t v = e->cval;
@@ -9719,21 +9851,20 @@ struct Decompiler {
                  * proto arity — pad missing trailing args with 0, drop phantom extras —
                  * exactly as the self-call clamp does, so the typed proto stays
                  * compile-clean (fixes C2197/C2198 across the float-signature callees). */
+                bool dec_api = !e->indirect && api_prefers_decimal_args(e->callee);
                 int tp_pc = 0;
                 if (!e->indirect && callee_typed_proto_arity(e->callee, tp_pc)) {
                     for (int i = 0; i < tp_pc; ++i) {
                         if (i) s += ", ";
                         if (i >= (int)e->args.size()) { s += "0"; continue; }
-                        std::string sl = try_string_lit(e->args[i]);
-                        s += sl.empty() ? render(e->args[i]) : sl;
+                        s += call_arg_text(e->args[i], dec_api);
                     }
                     s += ")";
                     return s;
                 }
                 for (size_t i = 0; i < e->args.size(); ++i) {
                     if (i) s += ", ";
-                    std::string sl = try_string_lit(e->args[i]);   /* call arg = pointer context */
-                    s += sl.empty() ? render(e->args[i]) : sl;
+                    s += call_arg_text(e->args[i], dec_api);   /* call arg = pointer context */
                 }
                 s += ")";
                 return s;
@@ -11380,7 +11511,30 @@ struct Decompiler {
         switch (s.kind) {
             case SK::Assign: {
                 std::string l = render(s.lhs);
-                std::string r = render(s.rhs);
+                /* Strip a redundant same-width integer cast on the RHS: a store to
+                 * an integer variable truncates the value to the variable's width,
+                 * so `v = (unsigned int)X;` is bit-identical to `v = X;` when v is a
+                 * 32-bit int and X is an integer. Only fires for a plain integer
+                 * dest of EXACTLY the cast width and an integer source (never a
+                 * ptr/float reinterpret) — precisely the case where none of the
+                 * pointer/float reconciliation below applies. DS_NO_ASGNCASTCLEAN. */
+                ExprP arhs = s.rhs;
+                if (arhs && arhs->kind == EK::Cast && arhs->a &&
+                    !arhs->is_float && !arhs->a->is_float &&
+                    s.lhs && s.lhs->kind == EK::Var && !std::getenv("DS_NO_ASGNCASTCLEAN") &&
+                    (arhs->op == "(int)" || arhs->op == "(unsigned int)" ||
+                     arhs->op == "(short)" || arhs->op == "(unsigned short)" ||
+                     arhs->op == "(char)" || arhs->op == "(unsigned char)" ||
+                     arhs->op == "(signed char)" ||
+                     arhs->op == "(long long)" || arhs->op == "(unsigned long long)")) {
+                    std::string dt = decl_type(s.lhs->name);
+                    auto wit = var_width.find(s.lhs->name);
+                    int lw = (wit != var_width.end()) ? wit->second : 0;
+                    bool lhs_int = !dt.empty() && dt.back() != '*' && dt != "float" && dt != "double";
+                    if (lhs_int && lw > 0 && lw == arhs->width && !renders_as_pointer(arhs->a))
+                        arhs = arhs->a;
+                }
+                std::string r = render(arhs);
                 if (l == r) break;     /* drop self-assign */
                 if (s.lhs && s.rhs) {
                     auto wrapstr = [&](const std::string& x) {
@@ -17136,11 +17290,43 @@ struct Decompiler {
                            "  size=" + std::to_string((unsigned long long)f->size) + " */\n";
         full += build_xref_comment();
         if (!protos.empty()) full += protos;
-        full += head + decls;
+        full += head + eh_annotation() + decls;
         if (!decls.empty()) full += "\n";
         full += body;
         full += "}\n";
         return full;
+    }
+
+    /* Recovered exception-handling structure (from .pdata/.xdata), emitted as a
+     * comment block inside the function so it is compile-safe. SEH __try/__except/
+     * __finally comes from __C_specific_handler scope tables; C++ try/catch (with
+     * catch types) from __CxxFrameHandler3 FuncInfo. DS_NO_EHANNOT. */
+    std::string eh_annotation() {
+        if (!petab || !f || std::getenv("DS_NO_EHANNOT")) return "";
+        auto it = petab->eh.find(f->rva);
+        if (it == petab->eh.end()) return "";
+        const EHInfo& eh = it->second;
+        std::string s;
+        for (const auto& sc : eh.seh) {
+            std::string tr = hex(sc.begin) + ".." + hex(sc.end);
+            if (sc.target == 0)
+                s += "    /* SEH: __try { " + tr + " } __finally { " + hex(sc.filter) + " } */\n";
+            else {
+                std::string filt = (sc.filter == 1) ? std::string("EXCEPTION_EXECUTE_HANDLER")
+                                 : (sc.filter == 0) ? std::string("0")
+                                 : (name_for_rva(sc.filter) + "()");
+                s += "    /* SEH: __try { " + tr + " } __except( " + filt + " ) { " + hex(sc.target) + " } */\n";
+            }
+        }
+        for (const auto& tb : eh.cpp) {
+            s += "    /* C++ EH: try { ... }";
+            if (tb.catches.empty()) s += " catch(...)";
+            for (const auto& c : tb.catches)
+                s += " catch( " + (c.type.empty() ? std::string("...") : c.type) +
+                     " @" + hex(c.handler) + " )";
+            s += " */\n";
+        }
+        return s;
     }
 
     std::string stub(const std::string& why) {
