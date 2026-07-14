@@ -23,7 +23,17 @@ LANDED THIS SESSION (uncommitted until gate, corpus 616/0 already GREEN):
   the "fired too deep -> bail structured" (10568 bails) + many multi-entry bails. `emit_if_else` split
   into wrapper + `emit_if_else_body`; `in_flag_region` guards re-entry.
 PROGRESSION (all committed, corpus 616/0, 1445/1445 cl-clean): loop-sink 292 GOTO -> flag structurer
-212 -> +wrapper 175 -> +SESE 157 (1c15c06) -> +whole-fn fallback 123, state-machines 11->9. Targets 262->~90.
+212 -> +wrapper 175 -> +SESE 157 (1c15c06) -> +whole-fn fallback 123 (beafea9) -> +relative soup-cap 115
+(4ba9593). state-machines 11->9. NullWare GOTO 292->115 = -61%. kernel32.dll: 242->210 reducible gotos
+(GENERALIZES, not overfit; census _qa/kernel32_irred.csv). NEXT LEVER (user's "fix stuff u missed"):
+MULTI-EXIT LOOPS (emit_loop gotos the secondary exit -> the whole-fn fallback bails "chain" on ~half the
+kernel32 residual + NullWare 0x79d64). Fix = extend flag_dispatch_multiexit_loops (pre-emission CFG
+transform, already does 2-exit loops + N-way forward regions via node-split) to N-EXIT loops; RISKY
+(subtle, prior knob-loosening regressed) -> validate with a selfdll/corpus multi-exit-loop behavioral test
+FIRST. Big-complex parsers (kernel32 0x7a8a8 = 15 `goto shared_tail` in a loop) are the high-fan-in tail
+Hex-Rays also gotos. READABILITY KNOB the user should tune: DS_NO_FNFLAG reverts the whole-fn fallback to
+the CLEAN scoped-only result (GOTO 157, no flag-soup); default keeps the fallback (GOTO 115, flaggier on
+genuinely-tangled fns) honoring the "0 gotos" priority.
 - **SESE flag region** (committed): emit_flagged_region uses rexit=ipdom[entry] (proper single-entry
   single-exit region, dominated blocks only), emits tail [rexit,stop) normally; only fires when R
   contains a genuine cross-join.
