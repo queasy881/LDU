@@ -932,6 +932,14 @@ struct Decompiler {
         return false;
     }
 
+    /* Is `rva` the exact start of a recovered function? (function-pointer lea) */
+    bool is_func_start(uint64_t rva) {
+        if (!e) return false;
+        for (size_t i = 0; i < e->func_len; ++i)
+            if (e->funcs[i].rva == rva) return true;
+        return false;
+    }
+
     /* Is `rva` in a WRITABLE segment (.data/.bss)? Such a location is a mutable
      * global — its image bytes are only the INITIAL value, so a load must be a
      * variable reference, not an inlined constant. */
@@ -4280,6 +4288,19 @@ struct Decompiler {
             if (!getenv("DS_NO_LEASTR")) {
                 std::string s;
                 if (read_cstring(abs, s)) return mkText("\"" + s + "\"", 8);
+            }
+            /* `lea reg,[rip+func]` taking the address of code -> the function's name
+             * (a function pointer: callbacks, thread procs, vtable init). Executable
+             * target => a function; if the engine did not recover it (address-taken
+             * only, never called) name_for_rva still yields a clean `sub_<rva>`, like
+             * IDA recovering it from the lea xref. Registered in extern_callees for a
+             * proto; a func name decays to its pointer in C. DS_NO_FNPTR. */
+            if (!getenv("DS_NO_FNPTR") && ds_rva_is_exec(e, abs)) {
+                std::string nm = name_for_rva(abs);
+                if (!nm.empty() && !(f && f->name[0] && nm == f->name)) {
+                    if (!extern_callees.count(nm)) extern_callees[nm] = 2;
+                    return mkText(nm, 8);
+                }
             }
             return mkConst((int64_t)abs, 8, true);
         }
