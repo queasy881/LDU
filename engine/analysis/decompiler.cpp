@@ -14215,6 +14215,113 @@ struct Decompiler {
         }
     }
 
+    /* Inline a temp whose def is DEAD after its block and whose single use is in that
+     * same block after the def. Because the temp is not read in any block reachable
+     * from here, its value can't escape — safe even when the temp is a REUSED
+     * (multi-def) stack slot that inline_local_loads / fold_return_temps refuse (both
+     * gate on single-def). Cleans the common zero-init-and-store shape
+     * `v = 0; *(a1) = v; return a1;`  ->  `*(a1) = 0; return a1;` (the store block
+     * jumps to a shared return epilogue, so it doesn't literally `ends_ret`; the
+     * dead-after analysis catches it). Gated DS_NO_TERMFOLD. */
+    void fold_dead_block_temps() {
+        if (std::getenv("DS_NO_TERMFOLD")) return;
+        if (blocks.size() > 300) return;                 /* keep the O(N*E) closure bounded (big fns = low yield) */
+        bool DBG = std::getenv("DS_DBG_TERMFOLD") && f;
+        std::set<std::string> addr; collect_addr_taken(addr);
+        auto is_tmp = [&](const std::string& n){
+            if (n.size() < 2 || (n[0] != 'v' && n[0] != 't')) return false;
+            for (size_t i = 1; i < n.size(); ++i) if (n[i] < '0' || n[i] > '9') return false;
+            return !array_locals.count(n);
+        };
+        /* node_reads[i] = var names READ in block i (Mem-lhs contributes its address,
+         * a plain Var lhs is a WRITE not a read). */
+        std::vector<std::set<std::string>> node_reads(blocks.size());
+        for (size_t i = 0; i < blocks.size(); ++i) {
+            std::function<void(const ExprP&)> cv = [&](const ExprP& e){
+                if (!e) return; if (e->kind == EK::Var) node_reads[i].insert(e->name);
+                cv(e->a); cv(e->b); cv(e->c); for (auto& a : e->args) cv(a); };
+            Block& bl = blocks[i];
+            for (auto& s : bl.stmts) { cv(s.rhs); if (s.lhs && s.lhs->kind == EK::Mem) cv(s.lhs); }
+            cv(bl.cond); cv(bl.ret_value); cv(bl.ret_raw); cv(bl.switch_var); cv(bl.tail_call);
+        }
+        auto succs = [&](int i, std::vector<int>& out){
+            Block& bl = blocks[i];
+            if (bl.taken >= 0) out.push_back(bl.taken);
+            if (bl.fall >= 0) out.push_back(bl.fall);
+            if (bl.default_succ >= 0) out.push_back(bl.default_succ);
+            for (int c : bl.case_succ) if (c >= 0) out.push_back(c);
+        };
+        /* reach_reads[i] = var names read in any block transitively reachable from i's
+         * successors (NOT including i itself). Fixpoint over the succ graph. */
+        std::vector<std::set<std::string>> reach_reads(blocks.size());
+        bool ch = true; int gg = 0;
+        while (ch && gg++ < (int)blocks.size() + 4) {
+            ch = false;
+            for (size_t i = 0; i < blocks.size(); ++i) {
+                std::vector<int> sc; succs((int)i, sc);
+                size_t before = reach_reads[i].size();
+                for (int s : sc) if (s >= 0 && s < (int)blocks.size()) {
+                    reach_reads[i].insert(node_reads[s].begin(), node_reads[s].end());
+                    reach_reads[i].insert(reach_reads[s].begin(), reach_reads[s].end());
+                }
+                if (reach_reads[i].size() != before) ch = true;
+            }
+        }
+        for (size_t bidx = 0; bidx < blocks.size(); ++bidx) {
+            Block& b = blocks[bidx];
+            bool changed = true; int guard = 0;
+            while (changed && guard++ < 400) {
+                changed = false;
+                for (int di = 0; di < (int)b.stmts.size(); ++di) {
+                    Stmt& def = b.stmts[di];
+                    if (def.kind != SK::Assign || !def.lhs || def.lhs->kind != EK::Var || !def.rhs) continue;
+                    const std::string v = def.lhs->name;
+                    if (!is_tmp(v)) { continue; }
+                    if (addr.count(v)) { if(DBG) fprintf(stderr,"[TF] skip %s addr-taken\n",v.c_str()); continue; }
+                    if (reach_reads[bidx].count(v)) { if(DBG) fprintf(stderr,"[TF] skip %s live-after blk%zu (succ reads it)\n",v.c_str(),bidx); continue; }
+                    if (has_impure_call(def.rhs) || node_count(def.rhs) > 16) { if(DBG) fprintf(stderr,"[TF] skip %s call/big\n",v.c_str()); continue; }
+                    /* next redef of v after di (bounds the def's live range in-block) */
+                    int nextw = (int)b.stmts.size();
+                    for (int j = di + 1; j < (int)b.stmts.size(); ++j)
+                        if (b.stmts[j].kind == SK::Assign && b.stmts[j].lhs &&
+                            b.stmts[j].lhs->kind == EK::Var && b.stmts[j].lhs->name == v) { nextw = j; break; }
+                    /* reads of v in (di, nextw): stmt uses + (if no redef before end) terminal fields */
+                    std::vector<int> rd;
+                    for (int j = di + 1; j < nextw; ++j)
+                        if (count_var_reads(b.stmts[j].rhs, v) + count_lhs_addr_reads(b.stmts[j].lhs, v)) rd.push_back(j);
+                    bool termread = (nextw == (int)b.stmts.size()) &&
+                        (count_var_reads(b.cond, v) + count_var_reads(b.ret_value, v) + count_var_reads(b.ret_raw, v)
+                         + count_var_reads(b.switch_var, v) + count_var_reads(b.tail_call, v)) > 0;
+                    if ((int)rd.size() + (termread ? 1 : 0) != 1) { if(DBG) fprintf(stderr,"[TF] skip %s nuses=%d\n",v.c_str(),(int)rd.size()+(termread?1:0)); continue; }   /* exactly one use of THIS def */
+                    int usepos = rd.empty() ? (int)b.stmts.size() : rd[0];
+                    /* input stability + reorder hazard between def and use */
+                    std::set<std::string> ins;
+                    std::function<void(const ExprP&)> col = [&](const ExprP& e){
+                        if (!e) return; if (e->kind == EK::Var) ins.insert(e->name);
+                        col(e->a); col(e->b); col(e->c); for (auto& a : e->args) col(a); };
+                    col(def.rhs);
+                    bool rmem = reads_mem(def.rhs); bool hz = false;
+                    for (int j = di + 1; j < usepos && !hz; ++j) {
+                        Stmt& s = b.stmts[j];
+                        if (s.kind == SK::Assign && s.lhs && s.lhs->kind == EK::Var && ins.count(s.lhs->name)) hz = true;
+                        else if (rmem && has_call(s.rhs)) hz = true;
+                        else if (rmem && s.lhs && s.lhs->kind == EK::Mem) hz = true;
+                    }
+                    if (hz) continue;
+                    ExprP val = def.rhs;
+                    if (usepos < (int)b.stmts.size()) {
+                        subst_var(b.stmts[usepos].rhs, v, val); subst_var(b.stmts[usepos].lhs, v, val);
+                    } else {
+                        subst_var(b.cond, v, val); subst_var(b.ret_value, v, val); subst_var(b.ret_raw, v, val);
+                        subst_var(b.switch_var, v, val); subst_var(b.tail_call, v, val);
+                    }
+                    b.stmts.erase(b.stmts.begin() + di);
+                    changed = true; break;
+                }
+            }
+        }
+    }
+
     void subst_var(ExprP& e, const std::string& nm, const ExprP& val) {
         if (!e) return;
         /* Replace the expression ITSELF when it is the target variable. The old
@@ -16081,6 +16188,7 @@ struct Decompiler {
         inline_invariant_temps();   /* slash the residual temp cloud (SSA-invariant recompute) */
         inline_local_loads();       /* + same-block field/array loads with no aliasing store between */
         fold_return_temps();         /* `v = e; return v;` -> `return e;` (Hex-Rays return shape) */
+        fold_dead_block_temps();     /* inline a reused temp confined to a returning block (`v=0;*(a1)=v;return` -> `*(a1)=0`) */
 
         /* post-typing idiom rewrites (unsigned range-check -> x>=lo && x<=hi, etc.).
          * Pure expression rewrite; no CFG/goto impact. Default-on; DS_NO_IDIOM disables. */
