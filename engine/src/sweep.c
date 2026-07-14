@@ -18,6 +18,7 @@
 
 #include <string.h>
 #include <stdlib.h>
+#include <stdio.h>
 
 /* Decode one instruction through capstone when a handle is available, otherwise
  * via the built-in decoder. `dec` is the capstone handle (or NULL). */
@@ -189,9 +190,56 @@ static void sweep_run(struct ds_engine* e, uint64_t start, int is64,
     }
 }
 
+/* little-endian u32 over the flat RVA image (bounds-checked) */
+static int sweep_rd_u32(const struct ds_engine* e, uint64_t rva, uint32_t* out) {
+    if (rva + 4 > e->image_size) return 0;
+    *out = (uint32_t)e->image[rva] | ((uint32_t)e->image[rva+1] << 8) |
+           ((uint32_t)e->image[rva+2] << 16) | ((uint32_t)e->image[rva+3] << 24);
+    return 1;
+}
+
+/* Seed function entries from the x64 exception directory (.pdata). Each
+ * RUNTIME_FUNCTION.BeginAddress is an AUTHORITATIVE function (or funclet) start —
+ * IDA's primary function source — so this recovers functions that are neither
+ * directly called nor address-taken (reached only via .pdata / indirect paths),
+ * e.g. a DllMain-dispatched worker with a full cookie prologue. CHAINED entries
+ * (UNW_FLAG_CHAININFO) are code FRAGMENTS of an existing function, not new
+ * functions, so they are skipped (seeding one would split a real function).
+ * Gated by DS_NO_PDATASEED. */
+static void seed_pdata_entries(struct ds_engine* e) {
+    if (!e || !e->image || getenv("DS_NO_PDATASEED")) return;
+    if (e->arch != DS_ARCH_X64) return;                 /* .pdata layout is x64-specific */
+    uint64_t pr = 0, psz = 0;
+    for (size_t i = 0; i < e->segment_len; ++i)
+        if (strncmp(e->segments[i].name, ".pdata", sizeof e->segments[i].name) == 0) {
+            pr = e->segments[i].rva; psz = e->segments[i].size; break;
+        }
+    if (!pr || !psz) return;
+    size_t n = (size_t)(psz / 12), added = 0;
+    for (size_t i = 0; i < n; ++i) {
+        uint64_t base = pr + (uint64_t)i * 12;
+        uint32_t begin, end, unwind;
+        if (!sweep_rd_u32(e, base, &begin) || !sweep_rd_u32(e, base + 4, &end) ||
+            !sweep_rd_u32(e, base + 8, &unwind)) break;
+        if (begin == 0 && end == 0 && unwind == 0) break;   /* zero terminator */
+        if (end <= begin) continue;
+        if (!ds_rva_is_exec(e, begin)) continue;
+        /* UNWIND_INFO byte0 = Version(3):Flags(5); Flags bit 2 = UNW_FLAG_CHAININFO */
+        if (unwind + 1 <= e->image_size) {
+            uint8_t vf = e->image[unwind];
+            if ((vf >> 3) & 0x4) continue;                  /* chained fragment: skip */
+        }
+        ds_engine_add_entry(e, begin);
+        added++;
+    }
+    if (getenv("DS_DBG_PDATASEED"))
+        fprintf(stderr, "[pdataseed] seeded %zu .pdata function entries\n", added);
+}
+
 int ds_engine_disassemble(ds_engine* e) {
     if (!e) return 1;
     if (e->image_size == 0) return 0; /* nothing to do, not an error */
+    seed_pdata_entries(e);
 
     int is64 = (e->arch == DS_ARCH_X64);
     /* ARM/ARM64 are not decoded by this built-in backend; produce an empty (but

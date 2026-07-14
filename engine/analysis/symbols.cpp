@@ -179,7 +179,11 @@ void recover_heuristic_names(ds_engine* e) {
 extern "C" int ds_engine_resolve_symbols(ds_engine* e) {
     if (!e) return 1;
 
-    const char* entry_name = e->is_dll ? "DllMain" : "start";
+    /* The PE AddressOfEntryPoint of a DLL is the CRT bootstrap (_DllMainCRTStartup),
+     * NOT the user's DllMain — that runs later, dispatched by the CRT. Naming the
+     * entry "DllMain" mislabels the wrapper and hides the real user callback, so use
+     * the accurate IDA-style "DllEntryPoint" (an EXE entry stays "start"). */
+    const char* entry_name = e->is_dll ? "DllEntryPoint" : "start";
 
     for (size_t i = 0; i < e->func_len; ++i) {
         ds_func* f = &e->funcs[i];

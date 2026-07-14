@@ -167,7 +167,7 @@ fn dump_engine() {
     // Sanity assertions on the controlled DLL.
     let funcs = engine.functions();
     let names: Vec<&str> = funcs.iter().map(|f| f.name.as_str()).collect();
-    for want in ["add", "sub", "fib", "sum_array", "classify", "do_api", "grand_total", "DllMain"] {
+    for want in ["add", "sub", "fib", "sum_array", "classify", "do_api", "grand_total", "DllEntryPoint"] {
         assert!(names.contains(&want), "missing recovered export/function: {want}");
     }
     assert!(n > 100, "too few instructions: {n}");

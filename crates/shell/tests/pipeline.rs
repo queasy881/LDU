@@ -101,7 +101,9 @@ fn full_pipeline_recovers_real_names() {
     let fallback = funcs.iter().filter(|f| f.name.starts_with("fun_")).count();
     let named = total - fallback;
     let thunks = funcs.iter().filter(|f| f.name.starts_with("j_")).count();
-    let has_dllmain = funcs.iter().any(|f| f.name == "DllMain" || f.name == "start");
+    let has_dllmain = funcs
+        .iter()
+        .any(|f| f.name == "DllEntryPoint" || f.name == "start");
     eprintln!(
         "names: {named}/{total} resolved ({fallback} fallback fun_, {thunks} import thunks j_)",
     );
@@ -121,7 +123,7 @@ fn full_pipeline_recovers_real_names() {
     );
     assert!(
         has_dllmain,
-        "entry point was not named DllMain/start"
+        "entry point was not named DllEntryPoint/start"
     );
 
     // --- real disassembly ---------------------------------------------------
