@@ -12325,8 +12325,12 @@ struct Decompiler {
         std::vector<int> jorder;
         for (int x : R) if (x != entry && ladder_preds(x) >= 2) fl_joins.insert(x);
         if (fl_joins.empty()) { if(DBG) fprintf(stderr,"[FLAG]  bail no-joins\n"); return false; }
-        for (int x : R) if (fl_joins.count(x)) jorder.push_back(x);
-        std::sort(jorder.begin(), jorder.end(), [&](int a, int b2){ return rpo_num[a] < rpo_num[b2]; });
+        { std::map<uint64_t,int> best;   /* two joins sharing an addr would alias one flag name -> bail (rare CFG artifact) */
+          for (int x : R) if (fl_joins.count(x)) {
+              if (!best.emplace(blocks[x].addr, x).second) { if(DBG) fprintf(stderr,"[FLAG]  bail addr-collision\n"); return false; }
+          }
+          for (auto& kv : best) jorder.push_back(kv.second);
+          std::sort(jorder.begin(), jorder.end(), [&](int a, int b2){ return rpo_num[a] < rpo_num[b2]; }); }
 
         /* Emit into a scratch buffer; a late bail leaves dst untouched. */
         std::string body;
@@ -12375,6 +12379,74 @@ struct Decompiler {
             in_flag_region = sv;
         }
         if (DBG) fprintf(stderr,"[FLAG]  OK entry=%d R=%zu joins=%zu loops=%zu rexit=%d\n", entry, R.size(), fl_joins.size(), loop_node_follow.size(), rexit);
+        return true;
+    }
+
+    /* Whole-function reaching-flag fallback (used only when normal structuring left
+     * reducible gotos): re-emit the ENTIRE function as a flag chain. From the entry
+     * every block is dominated (single entry) and, with no region exit, every leaf is a
+     * return (no unrepresentable escape), so a reducible function is ALWAYS driven to
+     * zero gotos with zero duplication. Flags every >=2-pred join (topological), so it
+     * is soupier than the scoped per-region lift — hence a last resort. Bails on a
+     * switch or a multi-exit loop (whose emit_loop still gotos). */
+    bool emit_function_flagged(std::string& dst) {
+        bool DBG = std::getenv("DS_DBG_FLAG");
+        int entry = entry_block();
+        if (entry < 0 || (size_t)entry >= blocks.size()) return false;
+        if (loop_of_header.count(entry)) return false;
+        std::set<int> R, loop_bodies; std::map<int,int> loop_node_follow, body_hdr;
+        { std::vector<int> wk{entry};
+          while (!wk.empty()) {
+              int c = wk.back(); wk.pop_back();
+              if (c < 0) continue;
+              if (!R.insert(c).second) continue;
+              if (R.size() > 3000) return false;
+              if (loop_of_header.count(c) && c != entry) {
+                  const Loop& lp = loops[loop_of_header[c]];
+                  for (int bl : lp.body) if (bl != c) { loop_bodies.insert(bl); body_hdr[bl] = c; }
+                  int fx = loop_follow(c);
+                  loop_node_follow[c] = fx;
+                  if (fx >= 0) wk.push_back(fx);
+              } else {
+                  for (int s : blocks[c].succ) if (s >= 0) wk.push_back(s);
+              }
+          } }
+        for (int x : R) if (blocks[x].is_switch || blocks[x].is_switch_guard) { if(DBG) fprintf(stderr,"[FNFLAG] bail switch\n"); return false; }
+        fl_R = R; fl_loopbodies = loop_bodies; fl_loopfollow = loop_node_follow;
+        fl_bodyhdr = body_hdr; fl_stop = -1; fl_loophdr = -1; fl_bail = false;
+        fl_joins.clear();
+        std::vector<int> jorder;
+        for (int x : R) if (x != entry && ladder_preds(x) >= 2) fl_joins.insert(x);
+        { std::map<uint64_t,int> best;   /* two joins sharing an addr would alias one flag name -> bail (rare CFG artifact) */
+          for (int x : R) if (fl_joins.count(x)) {
+              if (!best.emplace(blocks[x].addr, x).second) { if(DBG) fprintf(stderr,"[FNFLAG] bail addr-collision\n"); return false; }
+          }
+          for (auto& kv : best) jorder.push_back(kv.second);
+          std::sort(jorder.begin(), jorder.end(), [&](int a, int b2){ return rpo_num[a] < rpo_num[b2]; }); }
+        indent_lvl = 1;
+        std::string body;
+        if (!jorder.empty()) {
+            std::string d = ind() + "char ";
+            bool first = true;
+            for (int x : jorder) { if (!first) d += ", "; d += flag_var(x) + " = 0"; first = false; }
+            d += ";\n"; body += d;
+        }
+        in_flag_region = true;
+        emit_flag_chain(entry, body);                 /* entry chain (emits entry's own stmts) */
+        for (int J : jorder) {
+            std::string sub;
+            indent_lvl++;
+            emit_flag_chain(J, sub);
+            indent_lvl--;
+            if (fl_bail) break;
+            body += ind() + "if (" + flag_var(J) + ") {\n" + sub + ind() + "}\n";
+        }
+        in_flag_region = false;
+        if (fl_bail) { if(DBG) fprintf(stderr,"[FNFLAG] bail chain\n"); return false; }
+        for (int x : R) structured.insert(x);
+        for (int x : loop_bodies) structured.insert(x);
+        dst += body;
+        if (DBG) fprintf(stderr,"[FNFLAG] OK R=%zu joins=%zu loops=%zu\n", R.size(), fl_joins.size(), loop_node_follow.size());
         return true;
     }
 
@@ -16126,6 +16198,39 @@ struct Decompiler {
             if (!std::getenv("DS_LEGACY_SM"))
                 tmp = strip_unreachable_after_terminator(tmp);
             body = tmp;
+            /* Whole-function reaching-flag fallback: if structuring still left reducible
+             * gotos, re-emit the entire function as a flag chain (reducible => provably
+             * driven to 0 gotos, no duplication). Kept last-resort (soupier than the
+             * scoped lift). Only when the CFG is reducible and it actually removes gotos. */
+            if (!std::getenv("DS_NO_FNFLAG") && body.find("goto ") != std::string::npos &&
+                cfg_is_reducible()) {
+                std::string save_body = body;
+                need_label.clear();
+                reset_emit();
+                std::string fb;
+                bool ok = false;
+                try { ok = emit_function_flagged(fb); } catch (...) { ok = false; }
+                if (!std::getenv("DS_LEGACY_SM") && ok) fb = strip_unreachable_after_terminator(fb);
+                /* Soup guard: the whole-function chain flags EVERY >=2-pred join, incl.
+                 * clean if/else merges that structure fine on their own. Accept it only
+                 * when it is not flagging many CLEAN joins beyond the genuine cross-joins
+                 * (a clean-ish function keeps its readable gotos instead of flag soup). */
+                int fb_flags = 0;
+                { size_t p = 0;
+                  while ((p = fb.find("__at_", p)) != std::string::npos) {
+                      size_t e = p + 5;
+                      while (e < fb.size() && isxdigit((unsigned char)fb[e])) ++e;
+                      if (fb.compare(e, 4, " = 0") == 0) ++fb_flags;   /* a declaration */
+                      p += 5;
+                  } }
+                int clean_flagged = fb_flags - (int)cross_joins.size();
+                if (ok && fb.find("goto ") == std::string::npos && labels_consistent(fb) &&
+                    !struct_bailed && clean_flagged <= 3) {
+                    body = fb;
+                } else {
+                    body = save_body;
+                }
+            }
             /* A tripped struct_guard means the structured body DROPPED a region
              * (emitted `/* structurer bailout *\/` and returned) — it is incomplete
              * and must NOT be accepted, however label-consistent the truncated text

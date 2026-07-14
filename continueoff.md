@@ -22,9 +22,22 @@ LANDED THIS SESSION (uncommitted until gate, corpus 616/0 already GREEN):
   fires emit_flagged_region at the OUTERMOST if dominating a cross-join (its true single entry) — fixes
   the "fired too deep -> bail structured" (10568 bails) + many multi-entry bails. `emit_if_else` split
   into wrapper + `emit_if_else_body`; `in_flag_region` guards re-entry.
-REMAINING: still-bailing buckets = entry-is-loop (44), multi-entry (140), unrepresentable-exit. Then
+PROGRESSION (all committed, corpus 616/0, 1445/1445 cl-clean): loop-sink 292 GOTO -> flag structurer
+212 -> +wrapper 175 -> +SESE 157 (1c15c06) -> +whole-fn fallback 123, state-machines 11->9. Targets 262->~90.
+- **SESE flag region** (committed): emit_flagged_region uses rexit=ipdom[entry] (proper single-entry
+  single-exit region, dominated blocks only), emits tail [rexit,stop) normally; only fires when R
+  contains a genuine cross-join.
+- **Whole-function flag fallback** (emit_function_flagged, UNCOMMITTED as of this note): if structuring
+  still leaves reducible gotos AND cfg_is_reducible(), re-emit the WHOLE function as a flag chain (from
+  entry every block is dominated -> single entry; stop=-1 -> all leaves are returns -> provably 0 gotos,
+  0 dup). SOUP-CAP: accept only if clean_flagged = (flags - cross_joins) <= 3, so it flags ~only genuine
+  cross-joins, not clean if/else merges. Env DS_NO_FNFLAG. Targets -> 85 (from 123). Bails on switch /
+  multi-exit-loop (emit_loop still gotos there) -> those keep gotos.
+REMAINING hard buckets: switch-containing fns, multi-exit loops, and cross-join loops. Then
 GENERALIZATION: `DS_REAL_BIN=C:\Windows\System32\kernel32.dll python _qa/irreducible.py`, fix its reducible
 gotos (don't overfit to NullWare). HARD CONSTRAINT: never tail-duplicate; flags/node-split only.
+READABILITY NOTE: the flag form (`char __at_<addr>` + guarded join blocks) is goto-free + no-dup but
+flaggier than Hex-Rays gotos for genuinely-tangled fns; the soup-cap keeps clean fns readable.
 Tooling: `_qa/irreducible.py` (census, `--targets`/`--csv`), `_qa/goto_ab.sh`, `python _qa/irreducible.py --targets` = the 129-fn reducible target list.
 
 
