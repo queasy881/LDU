@@ -8458,6 +8458,12 @@ struct Decompiler {
              * operands are pure register/memory value expressions. */
             if ((op=="&" || op=="|") && exprEqual(a, bb)) return a;
             if (op=="^" && exprEqual(a, bb)) return mkConst(0, e->width, e->is_unsigned);
+            /* idempotent LOGICAL connective: `X && X` -> `X`, `X || X` -> `X`. The
+             * ordered float-equality idiom `ucomiss; jp L; jne L` models BOTH the
+             * unordered(NaN) edge and the not-equal edge as the same `x == c`, so the
+             * combined condition is a duplicated `x==c && x==c`. Collapse it. Safe only
+             * when X is side-effect-free — a call would otherwise lose an evaluation. */
+            if ((op=="&&" || op=="||") && exprEqual(a, bb) && !has_call(a)) return a;
             /* a setcc/comparison value is already 0/1; the movzx that zero-extends
              * it lifts as `bool & 0xff`, and any odd mask is then a no-op. Drop it
              * (`(x != 0) & 0xff` -> `x != 0`); an even mask kills bit 0 -> 0. */
@@ -11530,6 +11536,15 @@ struct Decompiler {
                 } else continue;
                 if (nt == bi || nf == bi || nt == (int)A.id || nf == (int)A.id) continue;
                 A.cond = fold(comb);
+                /* Collapse a duplicated predicate `c || c` -> `c`: the ordered
+                 * float-equality idiom `ucomiss; jp L; jne L` yields two edges that
+                 * both model the SAME `x == k`, so the merged condition (and its De
+                 * Morgan negation `x==k && x==k`) is a redundant self-duplicate.
+                 * Side-effect-free predicate only. */
+                if (A.cond && (A.cond->op == "||" || A.cond->op == "&&") &&
+                    A.cond->a && A.cond->b && exprEqual(A.cond->a, A.cond->b) &&
+                    !has_call(A.cond->a))
+                    A.cond = A.cond->a;
                 A.taken = nt; A.fall = nf;
                 merged_blocks.insert(bi);
                 changed = true;
