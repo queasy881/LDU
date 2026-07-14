@@ -17225,10 +17225,35 @@ struct Decompiler {
             else ret_t = "long long";
         } else ret_t = typ_str(ret_width >= 8 ? 8 : 4, ret_is_unsigned, false);
 
+        /* Prune TRAILING unused parameters from the signature. ABI/register
+         * recovery over-counts args (a float-only `acosf(float)` gets phantom
+         * int64 a2/a3 from rcx/rdx + a float a4), so drop trailing params whose
+         * identifier never appears in the emitted body. Body-scan is the safety
+         * proof: if `aN` is absent, removing it cannot create an undeclared ref.
+         * Guarded: NOT for a self-recursive fn (its self-call arity clamp pads to
+         * num_params, so a shorter proto would be C2197), and NOT for a loop-
+         * carried homed param (used via a `vN = aN` decl init). DS_NO_PARAMPRUNE. */
+        int sig_params = num_params;
+        if (num_params > 0 && !std::getenv("DS_NO_PARAMPRUNE")) {
+            auto isid = [](char c){ return c=='_' || (c>='0'&&c<='9') || (c>='a'&&c<='z') || (c>='A'&&c<='Z'); };
+            bool self_rec = !self_fname.empty() && body.find(self_fname + "(") != std::string::npos;
+            auto used = [&](int p) -> bool {
+                std::string nm = "a" + std::to_string(p);
+                for (auto& kv : slot_init_param) if (kv.second == nm) return true;  /* loop-carried */
+                for (size_t pos = 0; (pos = body.find(nm, pos)) != std::string::npos; pos += nm.size()) {
+                    bool lb = (pos == 0) || !isid(body[pos-1]);
+                    bool rb = (pos+nm.size() >= body.size()) || !isid(body[pos+nm.size()]);
+                    if (lb && rb) return true;
+                }
+                return false;
+            };
+            if (!self_rec)
+                while (sig_params > 0 && !used(sig_params)) --sig_params;
+        }
         std::string params;
-        if (num_params == 0) params = "void";
+        if (sig_params == 0) params = "void";
         else {
-            for (int i = 0; i < num_params; ++i) {
+            for (int i = 0; i < sig_params; ++i) {
                 if (i) params += ", ";
                 std::string nm = "a" + std::to_string(i + 1);
                 std::string ty = decl_type(nm);
