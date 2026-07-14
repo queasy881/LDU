@@ -16224,8 +16224,12 @@ struct Decompiler {
                       p += 5;
                   } }
                 int clean_flagged = fb_flags - (int)cross_joins.size();
+                /* Accept when the extra (clean-join) flags don't dominate the genuine
+                 * cross-join flags — scales with the function's real tangledness so a
+                 * complex fn gets headroom while a mostly-clean one keeps its gotos. */
+                int soup_budget = (int)cross_joins.size() + 2;
                 if (ok && fb.find("goto ") == std::string::npos && labels_consistent(fb) &&
-                    !struct_bailed && clean_flagged <= 3) {
+                    !struct_bailed && clean_flagged <= soup_budget) {
                     body = fb;
                 } else {
                     body = save_body;
