@@ -5614,11 +5614,97 @@ struct Decompiler {
     bool used_cpuid = false;  /* __cpuid_e?x appears -> emit prototypes */
     bool used_segread = false; /* __readgsqword/__readfsqword appears -> emit prototypes */
 
+    /* Classify a VEX FMA opcode: element width (4/8), operand variant (132/213/231),
+     * whether the product is negated (fnmadd/fnmsub), whether the addend is
+     * subtracted (fmsub/fnmsub). Returns false for a non-FMA id. */
+    static bool fma_props(unsigned id, int& w, int& variant, bool& negp, bool& subc) {
+        switch (id) {
+            case X86_INS_VFMADD132SS:  w=4; variant=132; negp=false; subc=false; return true;
+            case X86_INS_VFMADD213SS:  w=4; variant=213; negp=false; subc=false; return true;
+            case X86_INS_VFMADD231SS:  w=4; variant=231; negp=false; subc=false; return true;
+            case X86_INS_VFMADD132SD:  w=8; variant=132; negp=false; subc=false; return true;
+            case X86_INS_VFMADD213SD:  w=8; variant=213; negp=false; subc=false; return true;
+            case X86_INS_VFMADD231SD:  w=8; variant=231; negp=false; subc=false; return true;
+            case X86_INS_VFNMADD132SS: w=4; variant=132; negp=true;  subc=false; return true;
+            case X86_INS_VFNMADD213SS: w=4; variant=213; negp=true;  subc=false; return true;
+            case X86_INS_VFNMADD231SS: w=4; variant=231; negp=true;  subc=false; return true;
+            case X86_INS_VFNMADD132SD: w=8; variant=132; negp=true;  subc=false; return true;
+            case X86_INS_VFNMADD213SD: w=8; variant=213; negp=true;  subc=false; return true;
+            case X86_INS_VFNMADD231SD: w=8; variant=231; negp=true;  subc=false; return true;
+            case X86_INS_VFMSUB132SS:  w=4; variant=132; negp=false; subc=true;  return true;
+            case X86_INS_VFMSUB213SS:  w=4; variant=213; negp=false; subc=true;  return true;
+            case X86_INS_VFMSUB231SS:  w=4; variant=231; negp=false; subc=true;  return true;
+            case X86_INS_VFMSUB132SD:  w=8; variant=132; negp=false; subc=true;  return true;
+            case X86_INS_VFMSUB213SD:  w=8; variant=213; negp=false; subc=true;  return true;
+            case X86_INS_VFMSUB231SD:  w=8; variant=231; negp=false; subc=true;  return true;
+            case X86_INS_VFNMSUB132SS: w=4; variant=132; negp=true;  subc=true;  return true;
+            case X86_INS_VFNMSUB213SS: w=4; variant=213; negp=true;  subc=true;  return true;
+            case X86_INS_VFNMSUB231SS: w=4; variant=231; negp=true;  subc=true;  return true;
+            case X86_INS_VFNMSUB132SD: w=8; variant=132; negp=true;  subc=true;  return true;
+            case X86_INS_VFNMSUB213SD: w=8; variant=213; negp=true;  subc=true;  return true;
+            case X86_INS_VFNMSUB231SD: w=8; variant=231; negp=true;  subc=true;  return true;
+            default: return false;
+        }
+    }
+
     void exec_insn(Block& b, const Insn& in) {
         const cs_x86& x = in.x86;
         unsigned id = in.id;
         int nop = x.op_count;
-        auto OP = [&](int i) -> const cs_x86_op& { return x.operands[i]; };
+        const cs_x86_op* ops = x.operands;      /* repointed for VEX normalization */
+        cs_x86_op vnops[4];
+        auto OP = [&](int i) -> const cs_x86_op& { return ops[i]; };
+
+        /* ---- AVX / VEX scalar-float normalization ---------------------------
+         * The VEX-encoded float ops are the non-destructive 3-operand forms of
+         * the SSE ops the lifter already models. For the ops that do NOT read the
+         * destination as a source (moves, sqrt, convert, compare) we can remap the
+         * id to the SSE opcode and, for the 3-operand forms, present a 2-operand
+         * {dst, src2} view — every existing SSE handler then applies unchanged, so
+         * AVX-built binaries (all of NullWare) recover their float math instead of
+         * dropping it (empty branches / `return 0`). Binary arith, xorps/andps and
+         * FMA — where dst != src1 carries data — get dedicated cases below. */
+        {
+            unsigned sse = 0; bool take_op2 = false;
+            switch (id) {
+                case X86_INS_VMOVAPS: sse = X86_INS_MOVAPS; break;
+                case X86_INS_VMOVUPS: sse = X86_INS_MOVUPS; break;
+                case X86_INS_VMOVAPD: sse = X86_INS_MOVAPD; break;
+                case X86_INS_VMOVUPD: sse = X86_INS_MOVUPD; break;
+                case X86_INS_VMOVDQA: sse = X86_INS_MOVDQA; break;
+                case X86_INS_VMOVDQU: sse = X86_INS_MOVDQU; break;
+                case X86_INS_VMOVD:   sse = X86_INS_MOVD;   break;
+                case X86_INS_VMOVQ:   sse = X86_INS_MOVQ;   break;
+                case X86_INS_VUCOMISS: sse = X86_INS_UCOMISS; break;
+                case X86_INS_VUCOMISD: sse = X86_INS_UCOMISD; break;
+                case X86_INS_VCOMISS:  sse = X86_INS_COMISS;  break;
+                case X86_INS_VCOMISD:  sse = X86_INS_COMISD;  break;
+                case X86_INS_VCVTTSS2SI: sse = X86_INS_CVTTSS2SI; break;
+                case X86_INS_VCVTTSD2SI: sse = X86_INS_CVTTSD2SI; break;
+                case X86_INS_VCVTSS2SI:  sse = X86_INS_CVTSS2SI;  break;
+                case X86_INS_VCVTSD2SI:  sse = X86_INS_CVTSD2SI;  break;
+                /* 3-operand, destination not a source: present {dst, src2}. */
+                case X86_INS_VSQRTSS:  sse = X86_INS_SQRTSS;  take_op2 = true; break;
+                case X86_INS_VSQRTSD:  sse = X86_INS_SQRTSD;  take_op2 = true; break;
+                case X86_INS_VCVTSS2SD: sse = X86_INS_CVTSS2SD; take_op2 = true; break;
+                case X86_INS_VCVTSD2SS: sse = X86_INS_CVTSD2SS; take_op2 = true; break;
+                case X86_INS_VCVTSI2SS: sse = X86_INS_CVTSI2SS; take_op2 = true; break;
+                case X86_INS_VCVTSI2SD: sse = X86_INS_CVTSI2SD; take_op2 = true; break;
+                case X86_INS_VMOVSS:
+                case X86_INS_VMOVSD:
+                    sse = (id == X86_INS_VMOVSD) ? X86_INS_MOVSD : X86_INS_MOVSS;
+                    if (nop >= 3) take_op2 = true;   /* reg-merge form: dst <- src2 low lane */
+                    break;
+                default: break;
+            }
+            if (sse) {
+                if (take_op2 && nop >= 3) {
+                    vnops[0] = x.operands[0]; vnops[1] = x.operands[2];
+                    ops = vnops; nop = 2;
+                }
+                id = sse;
+            }
+        }
 
         /* Skip prologue argument-homing stores. They write an arg register to its
          * shadow-space home BEFORE `sub rsp`, so normalise_slot (which assumes the
@@ -6512,6 +6598,121 @@ struct Decompiler {
                 ExprP c = mkCast(to_double ? "(double)" : "(float)", src, w, false);
                 c->is_float = true;
                 do_dst(b, OP(0), c, in.addr);
+                break;
+            }
+            /* ==== AVX/VEX scalar float: dst != src operands (data-carrying) ==== */
+            case X86_INS_VADDSS: case X86_INS_VADDSD: case X86_INS_VSUBSS:
+            case X86_INS_VSUBSD: case X86_INS_VMULSS: case X86_INS_VMULSD:
+            case X86_INS_VDIVSS: case X86_INS_VDIVSD: {
+                if (nop < 3) break;
+                const char* fop =
+                    (id==X86_INS_VADDSS||id==X86_INS_VADDSD) ? "+" :
+                    (id==X86_INS_VSUBSS||id==X86_INS_VSUBSD) ? "-" :
+                    (id==X86_INS_VMULSS||id==X86_INS_VMULSD) ? "*" : "/";
+                int w = (id==X86_INS_VADDSD||id==X86_INS_VSUBSD||
+                         id==X86_INS_VMULSD||id==X86_INS_VDIVSD) ? 8 : 4;
+                ExprP r = mkBinary(fop, fp_src(OP(1), w), fp_src(OP(2), w), w);
+                r->is_float = true;
+                do_dst(b, OP(0), r, in.addr);
+                break;
+            }
+            case X86_INS_VMAXSS: case X86_INS_VMAXSD:
+            case X86_INS_VMINSS: case X86_INS_VMINSD: {
+                if (nop < 3) break;
+                int w = (id==X86_INS_VMAXSD||id==X86_INS_VMINSD) ? 8 : 4;
+                bool ismax = (id==X86_INS_VMAXSS||id==X86_INS_VMAXSD);
+                ExprP d = as_float(fp_src(OP(1), w), w), s = as_float(fp_src(OP(2), w), w);
+                ExprP cmp = mkBinary(ismax ? ">" : "<", clone(d), clone(s), w);
+                ExprP r = mkTernary(cmp, clone(d), clone(s), w); r->is_float = true;
+                do_dst(b, OP(0), r, in.addr);
+                break;
+            }
+            case X86_INS_VXORPS: case X86_INS_VXORPD: case X86_INS_VPXOR: {
+                /* zero when both sources are the same reg; else FP negate when src2 is a
+                 * sign mask (dst = -src1). Value is src1(OP1), mask is src2(OP2). */
+                if (nop < 3) break;
+                if (OP(1).type==X86_OP_REG && OP(2).type==X86_OP_REG && OP(1).reg==OP(2).reg) {
+                    do_dst(b, OP(0), mkConst(0, (id==X86_INS_VXORPD)?8:4), in.addr);
+                    Reg zr; int zw; map_reg(OP(0).reg, zr, zw);
+                    if (is_xmm(zr)) {
+                        regfile_hi[zr] = mkConst(0, 8);
+                        ExprP zl[4] = { mkConst(0,4), mkConst(0,4), mkConst(0,4), mkConst(0,4) };
+                        populate_xmm_i(zr, zl);
+                    }
+                    break;
+                }
+                if (id != X86_INS_VPXOR && OP(0).type==X86_OP_REG) {
+                    uint32_t lo=0, hi=0; bool have=false;
+                    if (OP(2).type==X86_OP_MEM && OP(2).mem.base==X86_REG_RIP &&
+                        OP(2).mem.index==X86_REG_INVALID) {
+                        uint64_t a = cur_insn_addr + cur_insn_size + (uint64_t)OP(2).mem.disp;
+                        int32_t l2,h2; if (read_i32(a,l2)&&read_i32(a+4,h2)) { lo=(uint32_t)l2; hi=(uint32_t)h2; have=true; }
+                    } else if (OP(2).type==X86_OP_REG) {
+                        ExprP mv=rvalue(OP(2));
+                        if (mv && mv->kind==EK::Const) { lo=(uint32_t)(uint64_t)mv->cval; hi=(mv->width>=8)?(uint32_t)((uint64_t)mv->cval>>32):0u; have=true; }
+                    }
+                    if (have) {
+                        int negw=0;
+                        if (lo==0x80000000u&&hi==0) negw=4;
+                        else if (lo==0&&hi==0x80000000u) negw=8;
+                        else if (lo==0x80000000u&&hi==0x80000000u) negw=(id==X86_INS_VXORPD)?8:4;
+                        if (negw) { ExprP r=mkUnary("-", fp_src(OP(1),negw), negw); r->is_float=true; do_dst(b, OP(0), r, in.addr); }
+                    }
+                }
+                break;
+            }
+            case X86_INS_VANDPS: case X86_INS_VANDPD: {
+                /* fabs: dst = src1 & abs-mask. value=OP1, mask=OP2. */
+                if (nop < 3 || OP(0).type != X86_OP_REG) break;
+                uint32_t lo=0, hi=0; bool have=false;
+                if (OP(2).type==X86_OP_MEM && OP(2).mem.base==X86_REG_RIP && OP(2).mem.index==X86_REG_INVALID) {
+                    uint64_t a = cur_insn_addr + cur_insn_size + (uint64_t)OP(2).mem.disp;
+                    int32_t l2,h2; if (read_i32(a,l2)&&read_i32(a+4,h2)) { lo=(uint32_t)l2; hi=(uint32_t)h2; have=true; }
+                } else if (OP(2).type==X86_OP_REG) {
+                    ExprP mv=rvalue(OP(2));
+                    if (mv && mv->kind==EK::Const) { lo=(uint32_t)(uint64_t)mv->cval; hi=(mv->width>=8)?(uint32_t)((uint64_t)mv->cval>>32):0u; have=true; }
+                }
+                int absw=0;
+                if (have) {
+                    if (lo==0x7fffffffu && hi==0) absw=4;
+                    else if (lo==0xffffffffu && hi==0x7fffffffu) absw=8;
+                    else if (lo==0x7fffffffu && hi==0x7fffffffu) absw=(id==X86_INS_VANDPD)?8:4;
+                }
+                if (absw) {
+                    auto call = std::make_shared<Expr>();
+                    call->kind=EK::Call; call->callee=(absw>=8)?"__fabs":"__fabsf";
+                    call->width=absw; call->is_float=true;
+                    call->args.push_back(fp_src(OP(1), absw));
+                    used_fabs=true;
+                    do_dst(b, OP(0), call, in.addr);
+                }
+                break;
+            }
+            case X86_INS_VFMADD132SS: case X86_INS_VFMADD213SS: case X86_INS_VFMADD231SS:
+            case X86_INS_VFMADD132SD: case X86_INS_VFMADD213SD: case X86_INS_VFMADD231SD:
+            case X86_INS_VFNMADD132SS: case X86_INS_VFNMADD213SS: case X86_INS_VFNMADD231SS:
+            case X86_INS_VFNMADD132SD: case X86_INS_VFNMADD213SD: case X86_INS_VFNMADD231SD:
+            case X86_INS_VFMSUB132SS: case X86_INS_VFMSUB213SS: case X86_INS_VFMSUB231SS:
+            case X86_INS_VFMSUB132SD: case X86_INS_VFMSUB213SD: case X86_INS_VFMSUB231SD:
+            case X86_INS_VFNMSUB132SS: case X86_INS_VFNMSUB213SS: case X86_INS_VFNMSUB231SS:
+            case X86_INS_VFNMSUB132SD: case X86_INS_VFNMSUB213SD: case X86_INS_VFNMSUB231SD: {
+                /* Fused multiply-add: dst = ±(m1*m2) ± addend. The 132/213/231 suffix
+                 * selects which operands are the two multiplicands vs the addend:
+                 *   132: dst = dst*src2 + src1     213: dst = src1*dst + src2
+                 *   231: dst = src1*src2 + dst
+                 * fnmadd negates the product; fmsub subtracts the addend; fnmsub both. */
+                if (nop < 3) break;
+                int w, variant; bool negp, subc;
+                if (!fma_props(id, w, variant, negp, subc)) break;
+                ExprP a = fp_src(OP(0), w), b1 = fp_src(OP(1), w), c = fp_src(OP(2), w);
+                ExprP m1, m2, add;
+                if (variant == 132)      { m1 = a;  m2 = c;  add = b1; }
+                else if (variant == 213) { m1 = b1; m2 = a;  add = c;  }
+                else                     { m1 = b1; m2 = c;  add = a;  }
+                ExprP prod = mkBinary("*", m1, m2, w); prod->is_float = true;
+                if (negp) { prod = mkUnary("-", prod, w); prod->is_float = true; }
+                ExprP r = mkBinary(subc ? "-" : "+", prod, add, w); r->is_float = true;
+                do_dst(b, OP(0), r, in.addr);
                 break;
             }
             case X86_INS_CVTTSS2SI: case X86_INS_CVTTSD2SI:
@@ -17294,6 +17495,8 @@ struct Decompiler {
         if (!decls.empty()) full += "\n";
         full += body;
         full += "}\n";
+        if (!std::getenv("DS_NO_STDINT"))
+            full = "#include <stdint.h>\n" + apply_stdint_types(full);
         return full;
     }
 
@@ -17327,6 +17530,55 @@ struct Decompiler {
             s += " */\n";
         }
         return s;
+    }
+
+    /* Rewrite the C base-type names to the stdint.h spelling the user reads at the
+     * source level (`unsigned int` -> `uint32_t`, `long long` -> `int64_t`, ...).
+     * Purely cosmetic — the underlying types are identical — so a `#include
+     * <stdint.h>` keeps every TU compiling. Applied to the FINAL text with a tiny
+     * lexer that skips string/char literals and comments (so a recovered string
+     * or an inline note is never corrupted) and matches only whole words (so
+     * identifiers like point/printf are untouched). char and char* stay char
+     * (idiomatic for strings). DS_NO_STDINT. */
+    static std::string apply_stdint_types(const std::string& s) {
+        struct M { const char* from; const char* to; };
+        static const M tbl[] = {   /* longest-first at each position */
+            {"unsigned long long", "uint64_t"}, {"unsigned int", "uint32_t"},
+            {"unsigned short", "uint16_t"},      {"unsigned char", "uint8_t"},
+            {"signed char", "int8_t"},           {"long long", "int64_t"},
+            {"short", "int16_t"},                {"int", "int32_t"},
+        };
+        auto isident = [](char c){ return c=='_' || (c>='0'&&c<='9') || (c>='a'&&c<='z') || (c>='A'&&c<='Z'); };
+        std::string out; out.reserve(s.size() + 16);
+        for (size_t i = 0; i < s.size(); ) {
+            char c = s[i];
+            /* pass through string / char literals verbatim */
+            if (c == '"' || c == '\'') {
+                char q = c; out += c; ++i;
+                while (i < s.size()) { out += s[i]; if (s[i] == '\\' && i+1 < s.size()) { out += s[i+1]; i += 2; continue; } if (s[i] == q) { ++i; break; } ++i; }
+                continue;
+            }
+            /* pass through comments verbatim */
+            if (c == '/' && i+1 < s.size() && s[i+1] == '/') { while (i < s.size() && s[i] != '\n') out += s[i++]; continue; }
+            if (c == '/' && i+1 < s.size() && s[i+1] == '*') { out += "/*"; i += 2; while (i < s.size() && !(s[i]=='*'&&i+1<s.size()&&s[i+1]=='/')) out += s[i++]; if (i < s.size()) { out += "*/"; i += 2; } continue; }
+            /* at a word start, try to match a type keyword */
+            bool at_word_start = (i == 0) || !isident(s[i-1]);
+            if (at_word_start && isident(c)) {
+                bool matched = false;
+                for (const M& m : tbl) {
+                    size_t n = std::strlen(m.from);
+                    if (s.compare(i, n, m.from) == 0 && (i+n >= s.size() || !isident(s[i+n]))) {
+                        out += m.to; i += n; matched = true; break;
+                    }
+                }
+                if (matched) continue;
+                /* skip the rest of this identifier so we don't match mid-word */
+                while (i < s.size() && isident(s[i])) out += s[i++];
+                continue;
+            }
+            out += c; ++i;
+        }
+        return out;
     }
 
     std::string stub(const std::string& why) {
