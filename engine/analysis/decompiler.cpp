@@ -3216,6 +3216,7 @@ struct Decompiler {
         std::map<int64_t,std::string> fptr_tag; /* offset -> nested struct tag (field is `struct T*`) */
         int64_t stride = 0;                  /* >0: array-element struct, padded to this size */
         bool is_class = false;               /* tag is an RTTI class name -> guard the typedef */
+        bool shared_typedef = false;         /* tag is a shared NAMED type (Vec2/3/4) -> include-guard it */
         bool cls_kw_struct = false;          /* RTTI kind is `struct` (U/T tag) rather than `class` (V) */
         std::string qual_name;               /* RAW qualified RTTI name (game::Entity) for the namespace block */
     };
@@ -3653,12 +3654,29 @@ struct Decompiler {
             for (auto& b : blocks) for (auto& s : b.stmts)
                 if (s.kind == SK::Assign) scan_vt(s.lhs, s.rhs);
         }
+        /* Vec2/Vec3/Vec4: a by-pointer struct that is EXACTLY 2/3/4 contiguous width-4
+         * FLOAT fields at offsets 0,4,8,12 is a math vector — name it Vec<N> (a shared,
+         * include-guarded typedef) instead of the opaque per-fn `s_<fn>_<p>`. */
+        auto is_vec_layout = [&](const ParamStruct& L) -> int {
+            size_t n = L.fw.size();
+            if (n < 2 || n > 4 || L.stride != 0) return 0;
+            int64_t exp = 0;
+            for (auto& kv : L.fw) {
+                if (kv.first != exp || kv.second != 4) return 0;   /* contiguous, width-4 */
+                auto f = L.ff.find(kv.first);
+                if (f == L.ff.end() || !f->second) return 0;       /* must be float */
+                if (L.fptr.count(kv.first) && L.fptr.at(kv.first)) return 0;
+                exp += 4;
+            }
+            return (int)n;
+        };
         auto mktag = [&](const std::string& p, ParamStruct& L) {
             auto it = struct_class.find(p);
             if (it != struct_class.end()) { L.tag = it->second; L.is_class = true;
                                             L.cls_kw_struct = struct_class_kw.count(p) && struct_class_kw[p];
-                                            if (struct_class_qual.count(p)) L.qual_name = struct_class_qual[p]; }
-            else                            L.tag = "s_" + self_fname + "_" + p;
+                                            if (struct_class_qual.count(p)) L.qual_name = struct_class_qual[p]; return; }
+            if (int vn = is_vec_layout(L)) { L.tag = "Vec" + std::to_string(vn); L.shared_typedef = true; return; }
+            L.tag = "s_" + self_fname + "_" + p;
         };
         for (auto& kv : fw) {
             const std::string& p = kv.first;
@@ -3843,6 +3861,7 @@ struct Decompiler {
          * unique, so they are never guarded.) */
         std::string guard;
         if (L.is_class) { guard = "__DS_CLS_" + L.tag; }
+        else if (L.shared_typedef) { guard = "__DS_TY_" + L.tag; }   /* Vec2/3/4: one definition per TU */
         /* RTTI recovery emits the ORIGINAL keyword: `class` for a V-tagged type, `struct` for a
          * U/T-tagged one. `class` is C++-only, so a `#ifndef __cplusplus #define class struct` shim
          * (emitted once per TU by the caller) keeps the /TC recompile valid — members are all-public
@@ -3859,7 +3878,7 @@ struct Decompiler {
             if (L.fptr_tag.count(off)) ty = "struct " + L.fptr_tag.at(off) + "*";
             else if (L.fptr.count(off) && L.fptr.at(off)) ty = "void*";
             else ty = L.ff.at(off) ? (w >= 8 ? "double" : "float") : typ_str(w, L.fu.at(off), false);
-            body += "    " + ty + " field_" + hex(off).substr(2) + ";\n";
+            body += "    " + ty + " " + fld(L, off) + ";\n";
             pos = off + w;
         }
         if (L.stride > pos)
@@ -3897,6 +3916,9 @@ struct Decompiler {
      * (see struct_typedef_str), so it prints `__vftable`; every other field is `field_<hex>`. */
     std::string fld(const ParamStruct& L, int64_t off) {
         if (L.is_class && off == 0) return "__vftable";
+        if (L.shared_typedef) {   /* Vec2/3/4 -> x/y/z/w */
+            switch (off) { case 0: return "x"; case 4: return "y"; case 8: return "z"; case 12: return "w"; }
+        }
         return "field_" + hex(off).substr(2);
     }
     bool used_opnew = false;                    /* an operator_new call was recovered -> emit its proto */
@@ -3983,8 +4005,9 @@ struct Decompiler {
                     int w = mem->width ? mem->width : 1;
                     if (nf != nit->second.fw.end() && nf->second == w) {
                         /* the parent field is RETYPED `struct T*`, so a clean chained arrow
-                         * compiles — no inline cast (a1->f_28->f_K). */
-                        out = render(nested_base_load(mem->a)) + "->field_" + hex(noff).substr(2);
+                         * compiles — no inline cast (a1->f_28->f_K). Route through fld so a
+                         * nested Vec2/3/4 field uses x/y/z/w (matching its struct def). */
+                        out = render(nested_base_load(mem->a)) + "->" + fld(nit->second, noff);
                         return true;
                     }
                 }
@@ -4034,7 +4057,7 @@ struct Decompiler {
             if (nested_base_offset(e, np, noff) && noff != 0) {
                 auto nit = param_structs.find(np);
                 if (nit != param_structs.end() && nit->second.fw.count(noff)) {
-                    out = "&" + render(nested_base_load(e)) + "->field_" + hex(noff).substr(2);
+                    out = "&" + render(nested_base_load(e)) + "->" + fld(nit->second, noff);
                     return true;
                 }
                 return false;
@@ -4914,7 +4937,29 @@ struct Decompiler {
                 R = mkConst(0, fs.width); break;
             default:     op = "!="; break;
         }
+        /* A sub-word cmp operand is zero-extended by `movzx` but rvalue()/truncate()
+         * wraps it in a SIGNED narrowing cast (`(signed char)`). For an UNSIGNED code
+         * (jb/jae/ja/jbe) or an EQUALITY (je/jne) that inverts the meaning: with a byte
+         * b>=0x80, `(signed char)b == 0xED` is a tautology and `(unsigned)((signed
+         * char)b) < 0xE0` sign-extends — both silently miscompile UTF-8 / byte-class
+         * tests. Flip the narrowing cast to unsigned. Signed codes (jl/jg) and the
+         * sign test (js/jns) are left signed, which is what they need. */
+        if ((uns || cc == CC::E || cc == CC::NE) && fs.width < 4) {
+            L = flip_trunc_unsigned(L);
+            R = flip_trunc_unsigned(R);
+        }
         return fold(mkBinary(op, L, R, fs.width, uns));
+    }
+
+    /* Flip a SIGNED narrowing cast (`(signed char)`/`(short)`) to its unsigned form so
+     * a movzx'd operand compares as the unsigned byte/word the hardware used. */
+    ExprP flip_trunc_unsigned(ExprP e) {
+        if (!e || e->kind != EK::Cast) return e;
+        if (e->op == "(signed char)" || e->op == "(char)")
+            return mkCast("(unsigned char)", e->a, e->width, true);
+        if (e->op == "(short)")
+            return mkCast("(unsigned short)", e->a, e->width, true);
+        return e;
     }
 
     void set_flags_cmp(const cs_x86& x) {
@@ -6646,6 +6691,18 @@ struct Decompiler {
             else
                 lhs = mkCast(cast_str(w, true), lhs, w, true);
         }
+        /* A wide (64-bit) MULTIPLY of narrower operands must widen one operand so the
+         * C product is 64-bit: `(unsigned int)a * (unsigned int)b` is a 32-bit product
+         * reduced mod 2^32, dropping the high half — which corrupts every bignum limb
+         * multiply whose outgoing carry is `product >> 32` (always 0 if truncated).
+         * The 3-operand imul path already widens; the 2-operand `imul r11,rax` (this
+         * path) did not. */
+        if (op == "*" && w >= 8) {
+            int lw = lhs && lhs->width ? lhs->width : 4;
+            int rw = rhs && rhs->width ? rhs->width : 4;
+            if (lhs && lw < 8)      lhs = ext_to(lhs, lw, 8, lhs->is_unsigned);
+            else if (rhs && rw < 8) rhs = ext_to(rhs, rw, 8, rhs->is_unsigned);
+        }
         ExprP res = mkBinary(op, lhs, rhs, w, uns);
         do_dst(b, d, res, addr);
         set_flags_dst(d, res, w);
@@ -7985,7 +8042,14 @@ struct Decompiler {
              * signed, where the promotion's sign-extended negative would be reinterpreted
              * as a large unsigned (`(unsigned int)((signed char)0xFF)` = 0xFFFFFFFF, not
              * (signed char)0xFF = -1). */
-            if (e->a->width < e->width && !(e->is_unsigned && !e->a->is_unsigned))
+            /* Only when the OUTER cast is int-width (<=4): there the narrow inner cast
+             * promotes to `int` value-identically, so the outer widening is pure noise.
+             * A width-8 (`long long`) outer cast is a REAL 64-bit widening — C promotes
+             * to `int`, not to 64-bit — so dropping it silently narrows a wide multiply
+             * `(unsigned long long)((unsigned int)a) * b` to a 32-bit product (mod 2^32),
+             * losing the high half (every bignum limb carry `product >> 32`). Keep it. */
+            if (e->a->width < e->width && e->width <= 4 &&
+                !(e->is_unsigned && !e->a->is_unsigned))
                 return peephole_expr(e->a);
         }
         /* a same-width, same-signedness integer cast over a plain var/mem read of that
@@ -16723,11 +16787,21 @@ struct Decompiler {
         if (any_class_kw)
             protos += "#ifndef __DS_CLASSKW\n#define __DS_CLASSKW\n#ifndef __cplusplus\n"
                       "#define class struct\n#endif\n#endif\n";
+        /* Dedupe by TAG: distinct params can share a tag (both a Vec3, or the same
+         * recovered class), and per-fn `s_<fn>_<p>` tags are already unique — so one
+         * forward decl + one typedef per tag (the include guard made it compile-safe,
+         * but emitting `struct Vec3 {...}` twice per function is just noise). */
+        std::set<std::string> emitted_tags;
         for (auto& kv : param_structs) {
+            if (!emitted_tags.insert(kv.second.tag).second) continue;
             const char* kw = (kv.second.is_class && !kv.second.cls_kw_struct) ? "class " : "struct ";
             protos += kw + kv.second.tag + ";\n";
         }
-        for (auto& kv : param_structs) protos += struct_typedef_str(kv.second);
+        emitted_tags.clear();
+        for (auto& kv : param_structs) {
+            if (!emitted_tags.insert(kv.second.tag).second) continue;
+            protos += struct_typedef_str(kv.second);
+        }
         /* extern decls for the vtable symbols referenced by `obj->__vftable = &<Class>__vftable`
          * (populated during body emit). The /TC gate compiles (no link), so extern is fine. */
         for (auto& v : referenced_vtables) protos += "extern void* " + v + ";\n";
@@ -17361,6 +17435,18 @@ void build_sig_table(ds_engine* e, std::map<uint64_t, FuncSig>& tab) {
                     }
                 }
             }
+            /* tail JMP through a FIXED IAT slot = a tail call to an IMPORT (the alloc
+             * wrapper `... jmp qword ptr [HeapAlloc]`). The function returns the
+             * import's value, which sits in the full 64-bit rax and is frequently a
+             * POINTER/HANDLE — recover an 8-byte return so callers don't truncate it to
+             * `int` (`(unsigned int)ptr`). Base register present => a vtable/computed
+             * tail call, left alone. */
+            if (c.id == X86_INS_JMP && x.op_count == 1 && x.operands[0].type == X86_OP_MEM &&
+                (x.operands[0].mem.base == X86_REG_INVALID || x.operands[0].mem.base == X86_REG_RIP) &&
+                x.operands[0].mem.index == X86_REG_INVALID) {
+                if (ret_rax_w < 8) ret_rax_w = 8;
+                saw_wide_ret = true; rax_live_at_ret = true;
+            }
             /* a call sets rax to the callee's return value; remember its width
              * provisionally (a later explicit eax/rax write or a discard will
              * override). This lets `call f; ret` wrappers be non-void while a
@@ -17382,6 +17468,17 @@ void build_sig_table(ds_engine* e, std::map<uint64_t, FuncSig>& tab) {
                             callee_fw = (it->second.ret_kind == 4) ? 8 : 4;
                         }
                     }
+                } else if (c.detail && x.op_count >= 1 && x.operands[0].type == X86_OP_MEM &&
+                           (x.operands[0].mem.base == X86_REG_INVALID ||
+                            x.operands[0].mem.base == X86_REG_RIP) &&
+                           x.operands[0].mem.index == X86_REG_INVALID) {
+                    /* indirect call through a FIXED IAT slot = an import (unlike a
+                     * vtable call `[rax+0x20]`, which has a base register). Its return
+                     * sits in the full 64-bit rax and is frequently a POINTER/HANDLE
+                     * (HeapAlloc/VirtualAlloc/CreateFile...). Defaulting to 4 truncates
+                     * a forwarded pointer at every caller — the alloc-wrapper
+                     * `int fun_000866d0()` -> `(unsigned int)ptr` truncation bug. */
+                    cw = 8;
                 }
                 if (callee_float) {
                     /* a FLOAT/DOUBLE-returning callee leaves its result in xmm0 (rax
