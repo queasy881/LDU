@@ -62,7 +62,7 @@ Legend: [ ] todo  [~] in progress  [x] done+gated  risk=none|low|med|high
 ## BATCH G — struct/field & pointer/array (risk=low-high)
 - [x] G1  const byte-offset on typed pointer -> `p[n]` (616)
 - [x] G2  one variable-indexed access disqualifies whole param struct (22 fns)  [>=4 fixed fields keeps struct]
-- [ ] G3  pad-hole / `&field+delta` offsets render raw amid fields (372)
+- [x] G3  pad-hole / `&field+delta` offsets render raw amid fields  [DONE+GATED 62d20f9: 1265->4 across NullWare; struct_base_offset resolves nested (base+c1)+c2]
 - [x] G4  pointer-valued qword fields typed as pointers (352 fields / 238 fns)  [DONE+GATED 983150d; was reverted before]
        IMPLEMENTED: enabled scan_field_ptr (DS_NO_FIELDPTR) so a qword field whose VALUE is
        used as an address base becomes `void*`. Driven by an 8-agent audit workflow (g4-field-pointer-

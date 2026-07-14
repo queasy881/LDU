@@ -9917,6 +9917,64 @@ struct Decompiler {
     std::vector<Loop> loops;
     std::map<int,int> loop_of_header;
 
+    /* LOOP-LOCAL post-dominators (for non-duplicating in-loop forward structuring): post-doms on
+     * the loop body's FORWARD flow, where the back-edge (to header) and every loop-exit edge are
+     * routed to a single virtual exit. loop_ipdom[u] is the block all of u's in-loop forward paths
+     * funnel through before continue/break — an in-loop join J that loop-post-dominates its feeding
+     * region is a loop-forward-SINK: emit J once, nested arms fall through, ZERO gotos, ZERO code
+     * duplication. Returns block-id -> loop-ipdom (-1 = virtual exit). Loops are small. */
+    std::map<int,int> compute_loop_postdom(const Loop& lp) {
+        std::vector<int> B(lp.body.begin(), lp.body.end());
+        int m = (int)B.size();
+        std::map<int,int> idx; for (int i = 0; i < m; ++i) idx[B[i]] = i;
+        int V = m;                                   /* virtual exit */
+        auto fsucc = [&](int i, std::set<int>& out) {
+            out.clear();
+            for (int s : blocks[B[i]].succ) {
+                if (s == lp.header) { out.insert(V); continue; }   /* back-edge -> exit */
+                auto it = idx.find(s);
+                if (it == idx.end()) out.insert(V);                /* loop exit -> exit */
+                else out.insert(it->second);
+            }
+            if (blocks[B[i]].succ.empty()) out.insert(V);
+        };
+        std::vector<int> order; std::vector<char> vis(m + 1, 0);
+        std::function<void(int)> dfs = [&](int u) {
+            if (u == V || vis[u]) return; vis[u] = 1;
+            std::set<int> ss; fsucc(u, ss);
+            for (int w : ss) if (w != V) dfs(w);
+            order.push_back(u);
+        };
+        if (idx.count(lp.header)) dfs(idx[lp.header]);
+        std::reverse(order.begin(), order.end());
+        std::vector<int> rpo(m + 1, -1); for (size_t i = 0; i < order.size(); ++i) rpo[order[i]] = (int)i;
+        rpo[V] = (int)order.size();                  /* V is last in the forward order */
+        std::vector<int> pd(m + 1, -1); pd[V] = V;
+        auto inter = [&](int a, int b2) {
+            int g = 0;
+            while (a != b2) {
+                if (a == V || b2 == V) return V;   /* a node that can exit/continue has no in-loop postdom */
+                if (++g > 4 * (m + 2)) return V;
+                while (rpo[a] > rpo[b2]) { if (pd[a] < 0 || pd[a] == a) return V; a = pd[a]; }
+                while (rpo[b2] > rpo[a]) { if (pd[b2] < 0 || pd[b2] == b2) return V; b2 = pd[b2]; }
+            }
+            return a;
+        };
+        bool ch = true; int g = 0;
+        while (ch && g++ < m + 8) {
+            ch = false;
+            for (auto it = order.rbegin(); it != order.rend(); ++it) {
+                int u = *it; std::set<int> ss; fsucc(u, ss);
+                int ni = -1;
+                for (int s : ss) { if (rpo[s] < 0 || pd[s] < 0) continue; ni = (ni < 0) ? s : inter(s, ni); }
+                if (ni >= 0 && pd[u] != ni) { pd[u] = ni; ch = true; }
+            }
+        }
+        std::map<int,int> out;
+        for (int i = 0; i < m; ++i) out[B[i]] = (pd[i] == V || pd[i] < 0) ? -1 : B[pd[i]];
+        return out;
+    }
+
     /* for-loop reconstruction: a counted pretest loop (init in the preheader, a
      * single `IV = IV +/- c` latch increment, IV in the exit condition) renders as
      * `for(init; cond; incr)`. ForInfo carries the hoisted init/incr text; the init
@@ -10540,6 +10598,7 @@ struct Decompiler {
     void flag_dispatch_multiexit_loops() {
         if (std::getenv("DS_NO_FLAG_DISPATCH")) return;
         fwd_sinks.clear();
+        loop_fwd_sink.clear();
         /* exits: empty => 2-way plan (F,S); else N-way ([J, T1, T2, ...] dispatched via
          * an if-ladder on the flag). */
         struct Plan { int H, F, S; std::set<int> body; std::vector<int> exits; };
@@ -10592,9 +10651,21 @@ struct Decompiler {
                 if (loop_of_header.count(J)) continue;
                 if ((int)blocks[J].pred.size() < 3) continue;
                 if (touched.count(J)) { if (DBGF) fprintf(stderr,"[FWDREJ] J=%d(0x%llx) touched\n",J,(unsigned long long)blocks[J].addr); continue; }
-                bool in_loop = false;
-                for (auto& lp2 : loops) if (lp2.body.count(J)) { in_loop = true; break; }
-                if (in_loop) { if (DBGF) fprintf(stderr,"[FWDREJ] J=%d(0x%llx) in_loop\n",J,(unsigned long long)blocks[J].addr); continue; }
+                /* innermost loop containing J (or -1). An in-loop join is NOT rejected — instead the
+                 * loop's continue/break are filtered from its region exits, and if J is the loop's
+                 * forward convergence it becomes a loop-forward-sink (emitted once, non-duplicating). */
+                int jloop = -1; size_t jbody = SIZE_MAX;
+                for (auto& kv2 : loop_of_header)
+                    if (loops[kv2.second].body.count(J) && loops[kv2.second].body.size() < jbody) {
+                        jloop = kv2.first; jbody = loops[kv2.second].body.size();
+                    }
+                /* COST GUARD: the region R computation below is O(N) block_reaches per block; running it
+                 * for the many convergences of a big loop is O(loop_joins * N^2) and stalls the dump.
+                 * Skip in-loop detection for large loops/functions (they keep a few gotos — acceptable). */
+                if (jloop >= 0 && (jbody > 48 || (int)blocks.size() > 160)) {
+                    if (DBGF) fprintf(stderr,"[FWDREJ] J=%d in_loop bigloop(%zu)/bigfn(%zu)\n",J,jbody,blocks.size());
+                    continue;
+                }
                 /* preds may reach J via taken OR the region's fall-through terminal.
                  * The 2-exit-region check below is the real guard (a plain diamond has
                  * ONE exit and is skipped); require >=2 taken-arms so it is a genuine
@@ -10606,14 +10677,18 @@ struct Decompiler {
                 int E = blocks[J].pred[0];
                 for (size_t i = 1; i < blocks[J].pred.size(); ++i) { E = idom_lca(E, blocks[J].pred[i]); if (E < 0) break; }
                 if (E < 0 || E == J || !dominates(E, J)) { if (DBGF) fprintf(stderr,"[FWDREJ] J=%d(0x%llx) E=%d bad\n",J,(unsigned long long)blocks[J].addr,E); continue; }
-                /* region R = blocks dominated by E that reach J but are not J and not
-                 * dominated by J; bounded. */
+                /* region R = blocks dominated by E that reach J but are not J and not dominated by J.
+                 * "reaches J" is one backward BFS from J (O(N+E)) instead of block_reaches per block
+                 * (which was O(N^2) per join and stalled the dump once in-loop joins were included). */
+                std::set<int> reachesJ;
+                { std::vector<int> wk{J};
+                  while (!wk.empty()) { int c = wk.back(); wk.pop_back();
+                      for (int p : blocks[c].pred) if (p >= 0 && reachesJ.insert(p).second) wk.push_back(p); } }
                 std::set<int> R;
-                for (int X = 0; X < (int)blocks.size(); ++X) {
+                for (int X : reachesJ) {
                     if (X == J) continue;
                     if (!dominates(E, X)) continue;
                     if (dominates(J, X)) continue;
-                    if (!block_reaches(X, J)) continue;
                     R.insert(X);
                     if (R.size() > 24) { ok = false; break; }
                 }
@@ -10628,6 +10703,25 @@ struct Decompiler {
                         if (Ts.size() > 3) { toomany = true; break; }
                     }
                     if (toomany) break;
+                }
+                /* IN-LOOP forward sink: the loop's continue (header) and break (follow) are loop
+                 * control, not region exits — filter them from Ts. If nothing else remains, J is the
+                 * loop's forward CONVERGENCE: emit it ONCE at the loop-body level so the nested arms
+                 * fall through (zero gotos, zero code duplication). This closes the dominant `in_loop`
+                 * goto bucket. Only one per loop (the outermost / most-preds convergence). */
+                if (jloop >= 0) {
+                    if (std::getenv("DS_NO_LOOP_SINK")) { if (DBGF) fprintf(stderr,"[FWDREJ] J=%d in_loop(off)\n",J); continue; }
+                    int jfollow = loop_follow(jloop);
+                    std::vector<int> Ts2;
+                    for (int t : Ts) if (t != jloop && t != jfollow) Ts2.push_back(t);
+                    if (!Ts2.empty()) { if (DBGF) fprintf(stderr,"[FWDREJ] J=%d in_loop realexits=%zu\n",J,Ts2.size()); continue; }
+                    if (touched.count(J)) continue;
+                    /* Do NOT mark R touched (unlike the non-loop plans): sequential in-loop convergences
+                     * J1->J2 in the same loop have OVERLAPPING regions (R2 contains R1) and BOTH should
+                     * become sinks (a fall-through chain). Only claim J so a plan can't re-use it. */
+                    loop_fwd_sink[jloop].insert(J); touched.insert(J);
+                    if (DBGF) fprintf(stderr,"[LOOPSINK] loop hdr=%d J=%d Rsize=%zu\n",jloop,J,R.size());
+                    continue;
                 }
                 if (Ts.empty()) {
                     /* T=-1 pure convergence: forward SINK (emit once after the region). */
@@ -11430,6 +11524,7 @@ struct Decompiler {
              * region, so no divergent code is skipped). Toggled to -1 for the single
              * bottom emission so the sink block itself is not self-suppressed. */
             if (cur_fwd_sink >= 0 && b == cur_fwd_sink && b != stop) return;
+            if (!active_loop_sinks.empty() && active_loop_sinks.count(b) && b != stop) return;  /* loop-fwd-sink chain */
             if (structured.count(b)) {
                 /* High-fan-in reconvergence: a non-trivial tail reached from >=3
                  * paths (a shared append / return / field-store landing) is the
@@ -11485,6 +11580,23 @@ struct Decompiler {
                 /* already emitted elsewhere (or a high-fan-in shared tail) — jump to it */
                 need_label.insert(b);
                 dst += ind() + "goto " + block_label(b) + ";\n";
+                if (std::getenv("DS_GOTO_WHY")) {
+                    /* Classify WHY this reconvergence goto survived structuring, for the
+                     * census that drives structural fixes. Hard CFG facts, not text. */
+                    int fanin = (int)blocks[b].pred.size();
+                    /* is b some (non-innermost) loop's follow? -> multi-level break */
+                    int obreak = 0, ocont = 0;
+                    for (auto& kv : loop_of_header) {
+                        if (loop_follow(kv.first) == b && kv.first != cur_loop_header) obreak = 1;
+                        if (kv.first == b && kv.first != cur_loop_header) ocont = 1;
+                    }
+                    /* does b post-dominate its own immediate dominator? (hoistable merge) */
+                    int pdom = (idom[b] >= 0 && idom[b] < (int)ipdom.size() && ipdom[idom[b]] == b) ? 1 : 0;
+                    int inloop = (cur_loop_header >= 0) ? 1 : 0;
+                    dst.insert(dst.size() - 1, " /*WHY fanin=" + std::to_string(fanin) +
+                               " obreak=" + std::to_string(obreak) + " ocont=" + std::to_string(ocont) +
+                               " pdom=" + std::to_string(pdom) + " inloop=" + std::to_string(inloop) + "*/");
+                }
                 return;
             }
 
@@ -11667,7 +11779,7 @@ struct Decompiler {
                 int saved_loop = cur_loop_header; cur_loop_header = header;
                 int saved_follow = cur_loop_follow; cur_loop_follow = follow;
                 int saved_latch = cur_loop_latch; cur_loop_latch = unique_latch(lh, header, follow);
-                emit_region(body_entry, cur_loop_latch >= 0 ? cur_loop_latch : header, dst, header);
+                emit_loop_region(body_entry, cur_loop_latch >= 0 ? cur_loop_latch : header, header, dst);
                 emit_shared_latch(header, dst);
                 cur_loop_header = saved_loop; cur_loop_follow = saved_follow; cur_loop_latch = saved_latch;
                 indent_lvl--;
@@ -11722,6 +11834,9 @@ struct Decompiler {
     int cur_loop_latch  = -1;
     std::set<int> fwd_sinks;   /* T=-1 pure-convergence joins: emit ONCE after the region */
     int cur_fwd_sink = -1;
+    std::map<int,std::map<int,int>> loop_pd;   /* loop-header -> (block -> loop-local ipdom), lazy */
+    std::map<int,std::set<int>> loop_fwd_sink; /* loop-header -> in-loop convergence joins (chain), each emitted once */
+    std::set<int> active_loop_sinks;           /* currently-active in-loop sinks: a reach falls through */
 
     /* The loop's UNIQUE latch (single block whose back-edge closes the loop),
      * when it is a distinct block from the header/follow. Emitting the body with
@@ -11774,9 +11889,42 @@ struct Decompiler {
         return true;
     }
 
+    /* the loop's in-loop forward-sink joins, sorted into a fall-through chain (J1 reaches J2). */
+    std::vector<int> loop_sinks_for(int header, int body_stop) {
+        std::vector<int> sinks;
+        auto sit = loop_fwd_sink.find(header);
+        if (sit != loop_fwd_sink.end())
+            for (int Ji : sit->second)
+                if (!structured.count(Ji) && Ji != body_stop && Ji != header && Ji != cur_loop_follow)
+                    sinks.push_back(Ji);
+        /* forward-flow order == address order for a reducible loop body (J1's tail falls to J2). */
+        std::sort(sinks.begin(), sinks.end(), [&](int a, int b){ return blocks[a].addr < blocks[b].addr; });
+        return sinks;
+    }
+    /* Emit a loop-body region [entry, body_stop) with its forward-sink chain: activate all sinks
+     * (nested reaches fall through), emit the region, then emit each convergence ONCE in order. */
+    void emit_loop_region(int entry, int body_stop, int header, std::string& dst) {
+        std::vector<int> sinks = loop_sinks_for(header, body_stop);
+        std::set<int> saved = active_loop_sinks;
+        for (int Ji : sinks) active_loop_sinks.insert(Ji);
+        emit_region(entry, body_stop, dst, header);
+        for (int Ji : sinks) {
+            if (structured.count(Ji)) continue;
+            active_loop_sinks.erase(Ji);
+            emit_region(Ji, body_stop, dst, header);
+        }
+        active_loop_sinks = saved;
+    }
     void emit_loop_body(int header, int follow, std::string& dst, bool emit_latch = true) {
         Block& H = blocks[header];
         int body_stop = (cur_loop_latch >= 0) ? cur_loop_latch : header;
+        /* LOOP-FORWARD-SINK CHAIN: each in-loop convergence J (all non-break/continue forward paths
+         * funnel through it) is emitted ONCE at the loop-body level. Activate ALL of the loop's sinks
+         * so nested arms fall through to whichever they reach (no goto, no duplication), emit the branch
+         * structure, then emit each sink in reachability order — J1's tail falls through to J2, etc. */
+        std::vector<int> sinks = loop_sinks_for(header, body_stop);
+        std::set<int> saved_active = active_loop_sinks;
+        for (int Ji : sinks) active_loop_sinks.insert(Ji);
         emit_stmts(header, dst);
         if (H.ends_jcc && H.cond && H.taken >= 0 && H.fall >= 0) {
             /* if branch leaves to follow, that's a break */
@@ -11797,6 +11945,12 @@ struct Decompiler {
             if (nxt == header) { /* self loop */ }
             else if (nxt >= 0) emit_region(nxt, body_stop, dst, header);
         }
+        for (int Ji : sinks) {                       /* emit each convergence ONCE, in reachability order */
+            if (structured.count(Ji)) continue;
+            active_loop_sinks.erase(Ji);             /* Ji about to be emitted -> stop suppressing it */
+            emit_region(Ji, body_stop, dst, header); /* Ji's tail falls through to the later sinks */
+        }
+        active_loop_sinks = saved_active;
         if (emit_latch) emit_shared_latch(header, dst);
     }
 
@@ -11988,7 +12142,258 @@ struct Decompiler {
         return true;
     }
 
+    /* ---- Acyclic proper-region flag structurer (Boehm-Jacopini reaching-flags) ----
+     * A single-entry acyclic region whose internal joins post-dominate no single
+     * branch (fn_00014b50's F/D/E/54 lattice: D reachable from an if-arm AND a nested
+     * else, neither dominating it) has NO goto-free if/else form without duplicating
+     * the shared blocks. Rather than a `goto` (or tripping the whole function into a
+     * switch(__state) machine), we lift ONLY the cross-join blocks (the ones normal
+     * structuring would `goto`) to a boolean `__at_<addr>` flag; every other block is
+     * emitted inline with its natural nested if/else via a chain walk. Each edge into a
+     * lifted join sets the flag; the join is emitted once, guarded, in topological
+     * order. Zero gotos, ZERO duplication, and clean structure everywhere but the
+     * genuine lattice. `entry` is a conditional whose own statements the caller already
+     * emitted; we emit only its branch onward.  Returns false (caller keeps its goto)
+     * on anything not provably safe. */
+    std::set<int> fl_R, fl_joins, fl_loopbodies;
+    std::map<int,int> fl_loopfollow, fl_bodyhdr;
+    int fl_stop = -1, fl_loophdr = -1;
+    bool fl_bail = false;
+    std::string flag_var(int x) { return std::string("__at_") + hex(blocks[x].addr).substr(2); }
+
+    /* The ladder-predecessor count of x: preds inside R count directly; a pred inside
+     * an opaque loop body counts as that loop's header. >=2 distinct => a join. */
+    int ladder_preds(int x) {
+        std::set<int> lp;
+        for (int p : blocks[x].pred) {
+            if (fl_R.count(p)) lp.insert(p);
+            else if (fl_bodyhdr.count(p)) lp.insert(fl_bodyhdr[p]);
+        }
+        return (int)lp.size();
+    }
+
+    /* Render the action for an edge to `tgt`: recurse inline for a single-pred region
+     * block, set a flag for a lifted join, break/continue for loop control, empty for
+     * the region exit. Sets fl_bail on an unrepresentable exit. Returns the code and,
+     * via `is_block`, whether it is a multi-line inlined subtree (vs a one-liner). */
+    std::string fl_arm(int tgt, bool& is_block) {
+        is_block = false;
+        if (tgt < 0 || tgt == fl_stop) return "";                      /* fall out to exit */
+        if (fl_joins.count(tgt)) return flag_var(tgt) + " = 1;";
+        if (fl_loophdr >= 0 && tgt == cur_loop_header) return "continue;";
+        if (cur_loop_follow >= 0 && tgt == cur_loop_follow) return "break;";
+        if (fl_R.count(tgt)) {                                          /* single-pred: inline */
+            std::string sub;
+            indent_lvl++;
+            emit_flag_chain(tgt, sub);
+            indent_lvl--;
+            is_block = true;
+            return sub;
+        }
+        fl_bail = true; return "";
+    }
+
+    /* Emit the straight-line chain from `cur`, inlining single-pred successors and
+     * their nested if/else, stopping at a lifted join / region exit / loop control. */
+    void emit_flag_chain(int cur, std::string& dst) {
+        int guard = 0;
+        while (cur >= 0 && !fl_bail) {
+            if (++guard > 4096) { fl_bail = true; return; }
+            if (loop_of_header.count(cur)) {
+                int fx = fl_loopfollow.count(cur) ? fl_loopfollow[cur] : -1;
+                std::string lp; emit_loop(cur, fx, lp);
+                if (lp.find("goto ") != std::string::npos) { fl_bail = true; return; }
+                dst += lp;
+                if (fx < 0 || fx == fl_stop) return;
+                if (fl_joins.count(fx)) { dst += ind() + flag_var(fx) + " = 1;\n"; return; }
+                if (!fl_R.count(fx)) {
+                    if (fl_loophdr >= 0 && fx == cur_loop_header) { dst += ind() + "continue;\n"; return; }
+                    if (cur_loop_follow >= 0 && fx == cur_loop_follow) { dst += ind() + "break;\n"; return; }
+                    fl_bail = true; return;
+                }
+                cur = fx; continue;                                    /* inline the follow */
+            }
+            emit_stmts(cur, dst);
+            Block& B = blocks[cur];
+            if (B.ends_ret) { dst += ind() + ret_text(cur) + "\n"; return; }
+            if (B.ends_jcc && B.taken >= 0 && B.fall >= 0) {
+                ExprP cond = B.cond ? B.cond : mkConst(1, 4);
+                bool tb = false, fb = false;
+                std::string ta = fl_arm(B.taken, tb);
+                std::string fa = fl_arm(B.fall, fb);
+                if (fl_bail) return;
+                bool ta_e = ta.empty(), fa_e = fa.empty();
+                auto blk = [&](std::string& s){ if (!s.empty() && s.back() != '\n') s += "\n"; };
+                if (tb) blk(ta); if (fb) blk(fa);
+                if (ta_e && fa_e) { /* both fall out */ return; }
+                if (fa_e) {
+                    dst += ind() + "if (" + render_cond(cond) + ") {\n";
+                    dst += tb ? ta : (ind(indent_lvl+1) + ta + "\n");
+                    dst += ind() + "}\n";
+                } else if (ta_e) {
+                    dst += ind() + "if (" + render_cond(negate_expr(cond)) + ") {\n";
+                    dst += fb ? fa : (ind(indent_lvl+1) + fa + "\n");
+                    dst += ind() + "}\n";
+                } else {
+                    dst += ind() + "if (" + render_cond(cond) + ") {\n";
+                    dst += tb ? ta : (ind(indent_lvl+1) + ta + "\n");
+                    dst += ind() + "} else {\n";
+                    dst += fb ? fa : (ind(indent_lvl+1) + fa + "\n");
+                    dst += ind() + "}\n";
+                }
+                return;
+            }
+            /* unconditional / fall */
+            int nxt = -1;
+            if (B.ends_jmp) { if (B.taken >= 0) nxt = B.taken; else { dst += ind() + ret_text(cur) + "\n"; return; } }
+            else nxt = B.fall;
+            if (nxt < 0) { dst += ind() + ret_text(cur) + "\n"; return; }
+            if (nxt == fl_stop) return;
+            if (fl_joins.count(nxt)) { dst += ind() + flag_var(nxt) + " = 1;\n"; return; }
+            if (!fl_R.count(nxt)) {
+                if (fl_loophdr >= 0 && nxt == cur_loop_header) { dst += ind() + "continue;\n"; return; }
+                if (cur_loop_follow >= 0 && nxt == cur_loop_follow) { dst += ind() + "break;\n"; return; }
+                fl_bail = true; return;
+            }
+            cur = nxt;                                                 /* inline next */
+        }
+    }
+
+    bool emit_flagged_region(int entry, int stop, std::string& dst, int loop_header) {
+        bool DBG = std::getenv("DS_DBG_FLAG");
+        if (std::getenv("DS_NO_ACYCFLAG")) return false;
+        if (entry < 0 || (size_t)entry >= blocks.size()) return false;
+        if ((size_t)entry >= rpo_num.size()) return false;
+        if (!(blocks[entry].ends_jcc && blocks[entry].taken >= 0 && blocks[entry].fall >= 0)) return false;
+        int stop_rpo = (stop >= 0 && (size_t)stop < rpo_num.size()) ? rpo_num[stop] : (1<<30);
+        if (rpo_num[entry] >= stop_rpo) { if(DBG) fprintf(stderr,"[FLAG]  bail entry-past-stop\n"); return false; }
+        if (loop_of_header.count(entry)) { if(DBG) fprintf(stderr,"[FLAG]  bail entry-is-loop\n"); return false; }
+        /* Region R = ladder scope: reachable from entry, RPO-before stop. A loop header
+         * is opaque — its body is emitted whole via emit_loop, so we jump to its follow
+         * rather than traverse it; fl_bodyhdr maps each body block to its loop header. */
+        std::set<int> R, loop_bodies; std::map<int,int> loop_node_follow, body_hdr;
+        { std::vector<int> wk{entry};
+          while (!wk.empty()) {
+              int c = wk.back(); wk.pop_back();
+              if (c < 0 || c == stop) continue;
+              if ((size_t)c >= rpo_num.size() || rpo_num[c] >= stop_rpo) continue;
+              if (!R.insert(c).second) continue;
+              if (R.size() > 48) { if(DBG) fprintf(stderr,"[FLAG]  bail R>48\n"); return false; }
+              if (loop_of_header.count(c) && c != entry) {
+                  const Loop& lp = loops[loop_of_header[c]];
+                  for (int bl : lp.body) if (bl != c) { loop_bodies.insert(bl); body_hdr[bl] = c; }
+                  int fx = loop_follow(c);
+                  loop_node_follow[c] = fx;
+                  if (fx >= 0) wk.push_back(fx);
+              } else {
+                  for (int s : blocks[c].succ) if (s >= 0) wk.push_back(s);
+              }
+          } }
+        if (R.size() < 3) { if(DBG) fprintf(stderr,"[FLAG]  bail R<3 (%zu)\n",R.size()); return false; }
+        for (int x : R) {
+            if (blocks[x].is_switch || blocks[x].is_switch_guard) { if(DBG) fprintf(stderr,"[FLAG]  bail switch@%d\n",x); return false; }
+            if (x != entry && structured.count(x)) { if(DBG) fprintf(stderr,"[FLAG]  bail structured@%d\n",x); return false; }
+        }
+        /* Single-entry: no edge enters a non-entry ladder node from outside R, except
+         * from inside an opaque loop body (internal to a loop node). */
+        for (int x : R) {
+            if (x == entry) continue;
+            for (int p : blocks[x].pred)
+                if (!R.count(p) && !loop_bodies.count(p)) { if(DBG) fprintf(stderr,"[FLAG]  bail multi-entry x=%d pred=%d\n",x,p); return false; }
+        }
+        /* publish region context */
+        fl_R = R; fl_loopbodies = loop_bodies; fl_loopfollow = loop_node_follow;
+        fl_bodyhdr = body_hdr; fl_stop = stop; fl_loophdr = loop_header; fl_bail = false;
+        /* joins = non-entry blocks with >=2 ladder-preds -> these get lifted to flags. */
+        fl_joins.clear();
+        std::vector<int> jorder;
+        for (int x : R) if (x != entry && ladder_preds(x) >= 2) fl_joins.insert(x);
+        if (fl_joins.empty()) { if(DBG) fprintf(stderr,"[FLAG]  bail no-joins\n"); return false; }
+        for (int x : R) if (fl_joins.count(x)) jorder.push_back(x);
+        std::sort(jorder.begin(), jorder.end(), [&](int a, int b2){ return rpo_num[a] < rpo_num[b2]; });
+
+        /* Emit into a scratch buffer; a late bail leaves dst untouched. */
+        std::string body;
+        body += ind() + "{\n";
+        indent_lvl++;
+        { std::string d = ind() + "char ";
+          bool first = true;
+          for (int x : jorder) { if (!first) d += ", "; d += flag_var(x) + " = 0"; first = false; }
+          d += ";\n"; body += d; }
+        /* entry's branch (its statements were already emitted by the caller). */
+        {
+            Block& B = blocks[entry];
+            ExprP cond = B.cond ? B.cond : mkConst(1, 4);
+            bool tb = false, fb = false;
+            std::string ta = fl_arm(B.taken, tb);
+            std::string fa = fl_arm(B.fall, fb);
+            if (fl_bail) { indent_lvl--; if(DBG) fprintf(stderr,"[FLAG]  bail entry-arm\n"); return false; }
+            auto blk = [&](std::string& s){ if (!s.empty() && s.back() != '\n') s += "\n"; };
+            if (tb) blk(ta); if (fb) blk(fa);
+            bool ta_e = ta.empty(), fa_e = fa.empty();
+            if (ta_e && fa_e) { /* nothing */ }
+            else if (fa_e) { body += ind() + "if (" + render_cond(cond) + ") {\n" + (tb?ta:(ind(indent_lvl+1)+ta+"\n")) + ind() + "}\n"; }
+            else if (ta_e) { body += ind() + "if (" + render_cond(negate_expr(cond)) + ") {\n" + (fb?fa:(ind(indent_lvl+1)+fa+"\n")) + ind() + "}\n"; }
+            else body += ind() + "if (" + render_cond(cond) + ") {\n" + (tb?ta:(ind(indent_lvl+1)+ta+"\n")) + ind() + "} else {\n" + (fb?fa:(ind(indent_lvl+1)+fa+"\n")) + ind() + "}\n";
+        }
+        /* each lifted join, once, guarded, in topological order. */
+        for (int J : jorder) {
+            std::string sub;
+            indent_lvl++;
+            emit_flag_chain(J, sub);
+            indent_lvl--;
+            if (fl_bail) break;
+            body += ind() + "if (" + flag_var(J) + ") {\n" + sub + ind() + "}\n";
+        }
+        indent_lvl--;
+        body += ind() + "}\n";
+        if (fl_bail) { if(DBG) fprintf(stderr,"[FLAG]  bail chain\n"); return false; }
+        for (int x : R) structured.insert(x);
+        for (int x : loop_bodies) structured.insert(x);
+        dst += body;
+        if (DBG) fprintf(stderr,"[FLAG]  OK entry=%d R=%zu joins=%zu loops=%zu\n", entry, R.size(), fl_joins.size(), loop_node_follow.size());
+        return true;
+    }
+
+    /* Proper-region lift wrapper: if this conditional is the entry of a region that
+     * contains a cross-join (a >=2-pred block that post-dominates no branch, so normal
+     * structuring must goto it), trial the normal emission and, if it gotos, restructure
+     * [b, stop) with reaching-flags. Fires at the OUTERMOST such if (emit_region is
+     * top-down) = the region's true single entry, so nothing inside is emitted yet. */
+    std::set<int> cross_joins;
+    bool in_flag_region = false;
+    int flag_trial_budget = 0;
     void emit_if_else(int b, int stop, std::string& dst, int loop_header) {
+        if (!in_flag_region && flag_trial_budget > 0 && !std::getenv("DS_NO_ACYCFLAG") &&
+            !cross_joins.empty() && (size_t)b < rpo_num.size()) {
+            int stop_rpo = (stop >= 0 && (size_t)stop < rpo_num.size()) ? rpo_num[stop] : (1<<30);
+            bool has_cj = false;
+            for (int J : cross_joins)
+                if ((size_t)J < rpo_num.size() && rpo_num[J] > rpo_num[b] &&
+                    rpo_num[J] < stop_rpo && dominates(b, J)) { has_cj = true; break; }
+            if (has_cj) {
+                --flag_trial_budget;
+                auto s_s = structured; auto s_l = need_label; auto s_t = threaded; int s_d = dup_budget;
+                std::string trial;
+                in_flag_region = true;
+                emit_if_else_body(b, stop, trial, loop_header);
+                if (trial.find("goto ") != std::string::npos) {
+                    structured = s_s; need_label = s_l; threaded = s_t; dup_budget = s_d;
+                    std::string fb;
+                    bool ok = emit_flagged_region(b, stop, fb, loop_header);
+                    in_flag_region = false;
+                    if (ok) { dst += fb; return; }
+                    structured = s_s; need_label = s_l; threaded = s_t; dup_budget = s_d;
+                } else {
+                    in_flag_region = false;
+                    dst += trial; return;                 /* reuse the goto-free trial */
+                }
+            }
+        }
+        emit_if_else_body(b, stop, dst, loop_header);
+    }
+
+    void emit_if_else_body(int b, int stop, std::string& dst, int loop_header) {
         Block& B = blocks[b];
         int t = B.taken, fl = B.fall;
         ExprP cond = B.cond ? B.cond : mkConst(1, 4);
@@ -12019,6 +12424,7 @@ struct Decompiler {
                 return;
             }
         }
+
 
         /* GUARD CLAUSE: an arm that is a side-effect-free chain ending in `return`
          * becomes an inline `if (cond) { return X; }`, with the OTHER arm continuing
@@ -15615,6 +16021,23 @@ struct Decompiler {
         }
         late_peephole();      /* final value-identical readability folds (nested casts, x+-K, cmp-normalize) */
 
+        /* cross-joins: >=2-pred blocks that post-dominate no single branch
+         * (ipdom[idom[J]] != J) — the joins normal structuring must goto. Precomputed
+         * so emit_if_else lifts the proper region at its OUTERMOST dominating if. */
+        cross_joins.clear();
+        in_flag_region = false;
+        flag_trial_budget = 300;   /* bound total proper-region trials per function */
+        if (!std::getenv("DS_NO_ACYCFLAG")) {
+            for (auto& bb : blocks) {
+                int J = bb.id;
+                if ((int)bb.pred.size() < 2) continue;
+                if (J >= (int)idom.size() || idom[J] < 0) continue;
+                int idm = idom[J];
+                if (idm < 0 || idm >= (int)ipdom.size()) continue;
+                if (ipdom[idm] != J) cross_joins.insert(J);
+            }
+        }
+
         /* ---- emit body ---- */
         std::string body;
         indent_lvl = 1;
@@ -15623,7 +16046,9 @@ struct Decompiler {
         try {
             auto reset_emit = [&]{
                 structured.clear(); threaded.clear(); struct_guard = 0; struct_bailed = false;
-                eff_join_cache.clear();
+                eff_join_cache.clear(); loop_pd.clear(); active_loop_sinks.clear();   /* per-function */
+                /* loop_fwd_sink is populated by flag_dispatch (pre-emit) and must survive reset_emit's
+                 * retries; it is cleared at flag_dispatch start, not here. */
                 dup_budget = std::getenv("DS_NO_DUP") ? 0 : 160;   /* tail-duplication budget (kept modest: raising it bloats diamonds exponentially — the effective-join trial emits shared joins ONCE instead of duplicating). */
                 indent_lvl = 1; cur_loop_header = -1; cur_loop_follow = -1;
                 for (int m : merged_blocks) structured.insert(m);

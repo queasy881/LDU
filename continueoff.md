@@ -1,5 +1,34 @@
 # CONTINUE-OFF — IDA-parity sweep (work AFTER the survey agents found the issues)
 
+## >>> STRUCTURER NIGHT (user 2026-07-14, CURRENT FOCUS) <<<
+Goal: drive REDUCIBLE gotos -> 0 (irreducible are fine) with NO code duplication and IDA-like
+readability; then load kernel32.dll, classify its gotos reducible/irreducible, fix the reducible ones.
+Metric = reducible gotos on the 129 NullWare reducible-goto fns (baseline 262) + full-binary GOTO_TOTAL
+(lineage baseline: loop-sink build = 292 / 11 state-machines, corpus 616/0).
+
+LANDED THIS SESSION (uncommitted until gate, corpus 616/0 already GREEN):
+- **Loop-sink knobs REVERTED** (region bound 40->24, N-way cap 5->3 — they net-REGRESSED +8; the memory
+  warned raising bounds backfires) + loop_sinks_for sort simplified to address order (removes block_reaches
+  from the hot emission path — was stalling full dumps).
+- **ACYCLIC PROPER-REGION FLAG STRUCTURER** (the big lever): a single-entry acyclic region whose join
+  post-dominates no branch (fn_00014b50's F/D/E/54 lattice) has NO goto-free if/else form without
+  duplication. `emit_flagged_region` lifts ONLY the cross-joins (>=2-pred blocks with `ipdom[idom[J]]!=J`)
+  to a `char __at_<addr>` reaching-flag; every other block emits inline with natural nested if/else via
+  `emit_flag_chain`; inner loops are OPAQUE nodes (emit_loop + flag the follow). Zero gotos, ZERO dup.
+  fn_00014b50: 3 gotos -> 0 with 6 flags, clean structure. On the 129 targets: **262 -> 183 reducible
+  gotos** (chain version, fired on 38 fns). Env: DS_NO_ACYCFLAG. Debug: DS_DBG_FLAG. Census: DS_GOTO_WHY
+  (goto cause tags: fanin/obreak/ocont/pdom/inloop).
+- **Coverage fix (building/gating now):** wrapper on emit_if_else precomputes `cross_joins` per fn and
+  fires emit_flagged_region at the OUTERMOST if dominating a cross-join (its true single entry) — fixes
+  the "fired too deep -> bail structured" (10568 bails) + many multi-entry bails. `emit_if_else` split
+  into wrapper + `emit_if_else_body`; `in_flag_region` guards re-entry.
+REMAINING: still-bailing buckets = entry-is-loop (44), multi-entry (140), unrepresentable-exit. Then
+GENERALIZATION: `DS_REAL_BIN=C:\Windows\System32\kernel32.dll python _qa/irreducible.py`, fix its reducible
+gotos (don't overfit to NullWare). HARD CONSTRAINT: never tail-duplicate; flags/node-split only.
+Tooling: `_qa/irreducible.py` (census, `--targets`/`--csv`), `_qa/goto_ab.sh`, `python _qa/irreducible.py --targets` = the 129-fn reducible target list.
+
+
+
 Context: a 12-agent survey workflow (`_qa/ida_parity_survey.js`) read our real decompiled NullWare
 output and ranked, across 12 dimensions, where it reads worse than Hex-Rays. The findings were
 distilled into a backlog: **`_qa/ida_parity_backlog.md`** (45 items, A1..J). Since then I've been
@@ -45,6 +74,8 @@ STANDING RULE from the user: **fix EVERY backlog item, none skipped/half-done; o
 - **BONUS CORRECTNESS BUGS found while doing the above (not parity items):** (1) `negate_expr` NaN root-fix — `!(a>b)` was being inverted to `a<=b`, WRONG for floats (NaN unordered); found via a B2/arr_clamp regression. (2) **block-field-coverage bug class** — 9 passes (collect_addr_taken, total_reads, coalesce liveness x3+rename, global_dead_store_elim addr-scan+liveness x2, trim_phantom, mark x2) scanned only SOME of the 6 block expr fields {stmts.lhs/rhs, cond, ret_value, ret_raw, switch_var, tail_call} -> a var live/addr-taken ONLY in a tail-call/raw-return was invisible -> miscompile. LESSON: any block-iterating pass MUST cover all 6.
 
 ## PROGRESS LOG (most recent first)
+- **STRUCTURER NIGHT (user 2026-07-14): drive REDUCIBLE gotos to 0.** Tool = `_qa/irreducible.py` (T1-T2 census: reducible=must-fix vs irreducible=keep) + `_qa/goto_ab.sh <rvas>` (fast per-fn goto A/B, reducibility is static so no re-census needed). BASELINE: total gotos 277, **REDUCIBLE_GOTOS=254 across 124 fns** (must->0), irreducible=23 across 5 fns (0x2c3d0 0x39aa0 0x70de0 0x24b0 0xe390 — KEEP), 8 reducible state-machines (0x26d0 0x4b530 0x57760 0x5cf90 0x65e34 0x6636c 0x6d5e4 0x70650 — worst, must structure). TOP reducible-goto targets: 0x19b80(8) 0x3e940(7) 0x5cba0(7) 0x25ad0(6) 0x23740(5) 0x24e90(5) 0x27f10(5) 0x35a30(5) 0x35b70(5) 0x71f30(5) 0x7fa54(5). METHOD: DS_DBG_FWD/DS_DBG_IF/DS_DBG_LOOPS on a target -> find rejection bucket -> fix -> DS_PAIRS_RVAS A/B -> gate corpus616/torture-bit-identical/NullWare1445. Dominant bucket = **in_loop joins** (flag_dispatch @10595 rejects them) -> needs loop-aware forward structuring (the relooper loop shape). Easy knobs already bumped: region bound 24->40 @~10618, N-way exit cap 3->5 @~10628. GATES: e2119de committed (C++ semantics + temp/deref). Base = e2119de.
+- **e2119de** — C++ semantics (namespace blocks, class/struct/template, __vftable, operator_new) + D2/D3 return fold + A10 + H2. Gated 616/0, 1445/1445, GOTO 291.
 - G3 (gating) — nested-const-offset `(a1+c1)+c2` now resolves in struct_base_offset (@~3308) -> field_(c1+c2) recovered instead of raw `&field_c1 + c2` (a lea-temp copy_propagate inlined without re-folding). fn_00006aa0: 78->2 `&field+N`. corpus 616/0. NullWare gate running.
 - REMAINING BACKLOG PLAN: safe render items (F4/C4/D2-5/A10/H2) -> a multi-item analysis workflow then batch-implement. RISKY items (E1 typed-protos [silent arg-drop via clamp, no NullWare behavioral gate -> DEFER, do high-confidence-arity-only subset], E3 phantom-API-args, I2 state-machine->labeled-gotos) -> dedicated careful cycles w/ workflow support. Then Rule 3 (12 new agents). E1 machinery: callee_typed_proto_arity @9397 (gated to FLOAT-param callees; proto emitter @~15994; call-site clamp @9358).
 - **983150d** — G4 pointer-fields->void* (352 fields/238 fns), previously-reverted high-risk, landed via 8-agent audit workflow. Gated 616/0 + 1445/1445 + GOTO 291. See [[decompiler-known-gaps]] MILESTONE 28.
