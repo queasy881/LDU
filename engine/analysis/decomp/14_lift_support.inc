@@ -455,6 +455,142 @@
         return false;
     }
 
+    /* Backing type for every name api_param_types() can produce. INTEGER-backed on
+     * purpose: a pointer and a 64-bit integer occupy the identical x64 register
+     * slot, so the callee reads rcx/edx unchanged and NO call site needs a cast it
+     * did not already need. A pointer-backed spelling (`typedef void* HANDLE`)
+     * would instead demand `(HANDLE)(uintptr_t)x` at every arg — measured as a
+     * large char regression for the same information, so it is not worth it here.
+     * Spelled in BASE C types deliberately: apply_stdint_types() rewrites this text
+     * when enabled, and under DS_NO_STDINT neither it nor <stdint.h> is emitted, so
+     * a `uint64_t` spelling would be a hard C2065 in that mode. */
+    static const char* api_type_backing(const std::string& t) {
+        if (t == "BOOL") return "int";
+        if (t == "DWORD" || t == "UINT") return "unsigned int";
+        return "unsigned long long";
+    }
+
+    /* Win32 PARAMETER TYPES for imports known_api() already pins an exact arity on,
+     * so `long long VirtualProtect(long long, long long, long long, long long)`
+     * reads `BOOL VirtualProtect(LPVOID, SIZE_T, DWORD, LPDWORD)` instead.
+     *
+     * The arity here is NEVER independently trusted. known_api()'s argc is the sole
+     * authority (callee_typed_proto_arity gates the proto emitter AND the call-site
+     * clamp on it), so a list whose length disagrees with it is REJECTED below and
+     * the caller falls back to `long long`. That makes a typo in this table
+     * structurally incapable of desyncing a proto from its call site — the C2197/
+     * C2198 class this feature could otherwise reintroduce.
+     *
+     * `LPCTSTR`/`LPTSTR` are placeholders, not emitted names: known_api() strips the
+     * A/W suffix and looks the BASE name up, so one row necessarily serves both
+     * CreateFileA and CreateFileW. Expanding by the caller's real suffix is what
+     * keeps `GetModuleHandleW(LPCWSTR)` from being mistyped as LPCSTR. */
+    static bool api_param_types(const std::string& nm, std::vector<std::string>& out) {
+        static const bool off = std::getenv("DS_NO_APITYPES") != nullptr;
+        if (off) return false;
+        struct T { const char* n; const char* p; };
+        static const T tbl[] = {
+            /* kernel32 — module / process */
+            {"SetLastError",      "DWORD"},
+            {"Sleep",             "DWORD"},
+            {"ExitProcess",       "UINT"},
+            {"CloseHandle",       "HANDLE"},
+            {"GetModuleHandle",   "LPCTSTR"},
+            {"LoadLibrary",       "LPCTSTR"},
+            {"LoadLibraryEx",     "LPCTSTR, HANDLE, DWORD"},
+            {"FreeLibrary",       "HMODULE"},
+            {"GetProcAddress",    "HMODULE, LPCSTR"},
+            {"GetModuleFileName", "HMODULE, LPTSTR, DWORD"},
+            {"GetStdHandle",      "DWORD"},
+            {"OutputDebugString", "LPCTSTR"},
+            /* kernel32 — heap / virtual memory */
+            {"HeapAlloc",         "HANDLE, DWORD, SIZE_T"},
+            {"HeapFree",          "HANDLE, DWORD, LPVOID"},
+            {"HeapReAlloc",       "HANDLE, DWORD, LPVOID, SIZE_T"},
+            {"VirtualAlloc",      "LPVOID, SIZE_T, DWORD, DWORD"},
+            {"VirtualFree",       "LPVOID, SIZE_T, DWORD"},
+            {"VirtualProtect",    "LPVOID, SIZE_T, DWORD, LPDWORD"},
+            /* kernel32 — critical sections */
+            {"InitializeCriticalSection", "LPCRITICAL_SECTION"},
+            {"EnterCriticalSection",      "LPCRITICAL_SECTION"},
+            {"LeaveCriticalSection",      "LPCRITICAL_SECTION"},
+            {"DeleteCriticalSection",     "LPCRITICAL_SECTION"},
+            /* kernel32 — file I/O */
+            {"CreateFile",        "LPCTSTR, DWORD, DWORD, LPVOID, DWORD, DWORD, HANDLE"},
+            {"WriteFile",         "HANDLE, LPCVOID, DWORD, LPDWORD, LPVOID"},
+            {"ReadFile",          "HANDLE, LPVOID, DWORD, LPDWORD, LPVOID"},
+            {"GetFileSize",       "HANDLE, LPDWORD"},
+            {"GetFileSizeEx",     "HANDLE, LPVOID"},
+            {"FlushFileBuffers",  "HANDLE"},
+            {"SetEndOfFile",      "HANDLE"},
+            {"DeleteFile",        "LPCTSTR"},
+            {"GetFileAttributes", "LPCTSTR"},
+            {"FindFirstFile",     "LPCTSTR, LPVOID"},
+            {"FindNextFile",      "HANDLE, LPVOID"},
+            {"FindClose",         "HANDLE"},
+            {"GetEnvironmentVariable", "LPCTSTR, LPTSTR, DWORD"},
+            /* kernel32 — sync / TLS / time */
+            {"WaitForSingleObject", "HANDLE, DWORD"},
+            {"SetEvent",          "HANDLE"},
+            {"ResetEvent",        "HANDLE"},
+            {"ReleaseMutex",      "HANDLE"},
+            {"CreateThread",      "LPVOID, SIZE_T, LPVOID, LPVOID, DWORD, LPDWORD"},
+            {"TlsFree",           "DWORD"},
+            {"TlsGetValue",       "DWORD"},
+            {"TlsSetValue",       "DWORD, LPVOID"},
+            {"QueryPerformanceCounter",   "LPVOID"},
+            {"QueryPerformanceFrequency", "LPVOID"},
+            {"GetSystemTimeAsFileTime",   "LPVOID"},
+            /* kernel32 — code pages. Explicitly LPCSTR/LPCWSTR (not the T
+             * placeholder): these take BOTH widths regardless of any suffix. */
+            {"MultiByteToWideChar", "UINT, DWORD, LPCSTR, int, LPWSTR, int"},
+            {"WideCharToMultiByte", "UINT, DWORD, LPCWSTR, int, LPSTR, int, LPCSTR, LPBOOL"},
+            /* user32 */
+            {"GetSystemMetrics",  "int"},
+            {"ShowWindow",        "HWND, int"},
+            {"DestroyWindow",     "HWND"},
+            {"GetDC",             "HWND"},
+            {"ReleaseDC",         "HWND, HDC"},
+            {"GetClientRect",     "HWND, LPVOID"},
+            {"GetWindowRect",     "HWND, LPVOID"},
+            {"MessageBox",        "HWND, LPCTSTR, LPCTSTR, UINT"},
+        };
+        /* mirror known_api's A/W normalization so CreateFileW hits the base row */
+        std::string base = nm;
+        bool wide = false, tagged = false;
+        if (base.size() > 1 && (base.back() == 'A' || base.back() == 'W')) {
+            char p = base[base.size() - 2];
+            if (p >= 'a' && p <= 'z') { wide = (base.back() == 'W'); tagged = true; base.pop_back(); }
+        }
+        (void)tagged;
+        const char* plist = nullptr;
+        for (const T& e : tbl)
+            if (nm == e.n || base == e.n) { plist = e.p; break; }
+        if (!plist) return false;
+
+        out.clear();
+        std::string cur;
+        for (const char* q = plist; ; ++q) {
+            if (*q == ',' || *q == '\0') {
+                if (!cur.empty()) {
+                    if (cur == "LPCTSTR") cur = wide ? "LPCWSTR" : "LPCSTR";
+                    else if (cur == "LPTSTR") cur = wide ? "LPWSTR" : "LPSTR";
+                    out.push_back(cur);
+                    cur.clear();
+                }
+                if (*q == '\0') break;
+                continue;
+            }
+            if (*q != ' ') cur += *q;
+        }
+        /* THE SAFETY VALVE: known_api's argc is the authority both the proto and the
+         * call-site clamp already agree on. A row that disagrees loses its types
+         * rather than shifting an arg boundary. */
+        int argc = 0, rk = 0;
+        if (!known_api(nm, argc, rk) || (int)out.size() != argc) { out.clear(); return false; }
+        return true;
+    }
+
     /* LOCK RECOVERY: classify a callee name as a lock ACQUIRE (1) or RELEASE (2).
      * Only the primitives whose pairing is unambiguous are listed — Initialize/
      * Delete/InitOnce* touch a lock without guarding a region, and naming them

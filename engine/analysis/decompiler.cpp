@@ -4935,6 +4935,7 @@ struct Decompiler {
             else if (sf == "__scasq_eq") protos += "unsigned long long __scasq_eq(const unsigned long long*, unsigned long long, unsigned long long);\n";
         }
         std::set<std::string> seen_proto;
+        std::set<std::string> api_types_used;   /* only these get a typedef prelude */
         for (auto& kv : extern_callees) {
             const std::string& c = kv.first;
             if (c == fname) continue;
@@ -4987,7 +4988,20 @@ struct Decompiler {
                 if (known_api(c, kargc, kark)) {
                     /* known imported API: exact arity from the table. `(void)` for a
                      * 0-arg API — a bare `()` would be K&R (unspecified) again. */
+                    std::vector<std::string> apt;
                     if (tp_pc == 0) pp = "void";
+                    else if (api_param_types(c, apt) && (int)apt.size() == tp_pc) {
+                        /* TYPES ONLY — the arg COUNT still comes from tp_pc, and the size
+                         * re-check above is what welds them: known_api()'s argc stays the
+                         * sole arity authority, so a typo in the type table can never
+                         * desync this proto from its call-site clamp (the C2197/C2198
+                         * class). A mismatch silently falls back to `long long`. */
+                        for (int p = 0; p < tp_pc; ++p) {
+                            if (p) pp += ", ";
+                            pp += apt[p];
+                            if (apt[p] != "int") api_types_used.insert(apt[p]);
+                        }
+                    }
                     else for (int p = 0; p < tp_pc; ++p) { if (p) pp += ", "; pp += "long long"; }
                 } else {
                     uint64_t crva = strtoull(c.c_str() + 4, nullptr, 16);
@@ -5007,6 +5021,12 @@ struct Decompiler {
         std::string full = "/* " + fname + " @ " + hex(f->rva) +
                            "  size=" + std::to_string((unsigned long long)f->size) + " */\n";
         full += build_xref_comment();
+        /* Only the Win32 names a proto in THIS function actually used, so a function that
+         * calls no typed import carries no unused-typedef churn. Repeating an IDENTICAL
+         * typedef is legal C, which is what keeps the combined-TU recompile clean when many
+         * functions each emit their own. */
+        for (const std::string& t : api_types_used)
+            full += std::string("typedef ") + api_type_backing(t) + " " + t + ";\n";
         full += build_confidence_comment(body, referenced);
         if (!protos.empty()) full += protos;
         full += head + eh_annotation() + lock_annotation() + decls;
