@@ -6526,6 +6526,24 @@ struct Decompiler {
                 }
                 break;
             }
+            /* BMI2 MULX: {OP(0):OP(1)} = rdx * OP(2), high in OP(0), low in OP(1), and
+             * unlike MUL it touches NO flags — which is exactly why bignum/crypto code
+             * uses it, and why leaving it unmodeled dropped BOTH halves of a multiply
+             * that a carry chain then read as stale. The high half is expressible via
+             * the same mulhi_expr the magic-division recovery already consumes.
+             * Both halves are computed BEFORE either is stored: OP(0)/OP(1) may alias
+             * rdx or the source, so storing first would corrupt the second read. */
+            case X86_INS_MULX: {
+                if (nop < 3) break;
+                int w = OP(0).size ? OP(0).size : 8;
+                ExprP a = reg_value(R_RDX, w), s = rvalue(OP(2));
+                if (!a || !s) break;
+                ExprP lo = fold(mkBinary("*", clone(a), clone(s), w, true));
+                ExprP hi = fold(mulhi_expr(clone(a), clone(s), w, /*uns=*/true));
+                do_dst(b, OP(1), lo, in.addr);
+                do_dst(b, OP(0), hi, in.addr);
+                break;
+            }
             case X86_INS_MUL: {
                 if (nop >= 1) {
                     int w = OP(0).size ? OP(0).size : 4;
@@ -9070,6 +9088,10 @@ struct Decompiler {
     }
     /* True if `e` contains a `/` or `%` — hoisting such a value to a dominator could
      * move a guarded division ahead of its guard (a new divide-by-zero fault). */
+    /* (Measured 2026-07-16: relaxing this to allow a non-zero, non-(-1) CONSTANT divisor
+     * — which cannot trap and so is safe to hoist — changed NullWare output by exactly
+     * ZERO lines. This guard is not what keeps `x % 7` out of cse_global; its other
+     * conditions are. Don't "fix" it again without measuring first.) */
     bool has_div(const ExprP& e) {
         if (!e) return false;
         if (e->kind == EK::Binary && (e->op == "/" || e->op == "%")) return true;
@@ -9628,6 +9650,21 @@ struct Decompiler {
                                                e->width));
             }
         }
+        /* `(x % N) % N` -> `(x % N)`. An UNSIGNED modulo already lies in [0, N-1], so a
+         * second reduction by the same N is identity. NullWare's obfuscator reduces twice
+         * (a 64-bit magic then a 32-bit one) and, now that both magics fold, the
+         * redundancy is visible — 22 sites. Requirements that make this sound: the INNER
+         * modulo must be UNSIGNED (a signed remainder can be negative, and a widening
+         * cast of that would wrap to a huge value where `% N` is NOT identity), and N
+         * must be small enough that any intervening narrowing cast still holds it. */
+        if (!tf_off && e->kind == EK::Binary && e->op == "%" && !e->is_float &&
+            e->b && e->b->kind == EK::Const && e->b->cval > 0 && e->b->cval <= 127 && e->a) {
+            ExprP inner = e->a;
+            while (inner && inner->kind == EK::Cast && inner->a) inner = inner->a;
+            if (inner && inner->kind == EK::Binary && inner->op == "%" && inner->is_unsigned &&
+                inner->b && inner->b->kind == EK::Const && inner->b->cval == e->b->cval)
+                return e->a;
+        }
         /* both arms the same constant -> that constant (the condition is dead) */
         if (!tf_off && ternary_of_consts(e) && e->b->cval == e->c->cval)
             return mkConst(e->b->cval, e->width, e->is_unsigned);
@@ -9648,7 +9685,9 @@ struct Decompiler {
             if (e->a && e->a->kind == EK::Binary && e->a->op == "|") {
                 ExprP c1 = ternary_truth(e->a->a), c2 = ternary_truth(e->a->b);
                 if (c1 && c2) {
-                    ExprP o = mkBinary("||", c1, c2, 4);
+                    /* re-peephole the `||`: it is BUILT here, so without another pass the
+                     * `a<b || a==b` -> `a<=b` rule below would never see it */
+                    ExprP o = peephole_expr(mkBinary("||", c1, c2, 4));
                     return (e->op == "!=") ? o : peephole_expr(mkUnary("!", o, 4));
                 }
             }
@@ -16590,7 +16629,7 @@ struct Decompiler {
                     corr = 0;
                 } else if (CORE && CORE->kind == EK::Binary && (CORE->op == "+" || CORE->op == "-")) {
                     if (md_match_mulhi(CORE->a, x, M, mb, mu) && !mu &&
-                        exprEqual(md_strip(CORE->b), x)) {
+                        exprEqual(md_strip(CORE->b), md_strip(x))) {   /* strip BOTH: see below */
                         corr = (CORE->op == "+") ? +1 : -1;
                     } else if (CORE->op == "+" && md_match_mulhi(CORE->b, x, M, mb, mu) && !mu &&
                                exprEqual(md_strip(CORE->a), x)) {
@@ -16637,7 +16676,14 @@ struct Decompiler {
                     if (!(md_match_mulhi(T, x, M, mb, mu) && mu)) continue;
                     /* sub = x - T : sub->b is the same mulhi as T, sub->a is x */
                     if (!exprEqual(md_strip(sub->b), md_strip(T))) continue;
-                    if (!exprEqual(md_strip(sub->a), x)) continue;
+                    /* STRIP BOTH SIDES. md_match_mulhi peels only WIDENING casts, so the
+                     * dividend it hands back keeps any narrow one (`(unsigned int)v20`),
+                     * while sub->a arrives fully stripped (`v20`) — comparing the two
+                     * unstripped never matched, which is why the unsigned add-correction
+                     * family (/7, /14, /28 — magic 0x24924925) never folded. NullWare's
+                     * decryptor showed `v % 7` as a 200-char magic monster, four times in
+                     * one function. */
+                    if (!exprEqual(md_strip(sub->a), md_strip(x))) continue;
                     int s = s1 + 1; int64_t d;
                     if (s >= 1 && s <= mb && md_find_unsigned(M, s, 1, mb, d)) {
                         x_out = clone(x); d_out = d; uns_out = true; wbytes = mb / 8; return true;
