@@ -35,6 +35,31 @@ typedef struct {
     uint32_t kind;
 } ds_ref;
 
+/* A user annotation for one function, loaded from the sidecar (see analysis/
+ * annotations.cpp for the file format and the identity rules).
+ *
+ * `hash`/`rva` are the identity AS RECORDED when the annotation was made; they are
+ * matched against the CURRENT analysis by ds_anno_resolve, which publishes the answer
+ * in `bound` — the rva of the function this annotation actually applies to, or
+ * DS_ANNO_UNBOUND when it resolves to nothing. Consumers only ever read `bound`, so
+ * the identity rules (and their decline cases) live in exactly one place. */
+typedef struct {
+    uint64_t hash;      /* masked-instruction-stream hash, 0 when unavailable */
+    uint64_t rva;       /* rva at record time — the fallback key */
+    uint64_t bound;     /* resolved current rva, or DS_ANNO_UNBOUND */
+    char     name[96];  /* user rename, "" = keep the recovered name  */
+    char     comment[256];
+} ds_anno;
+
+/* A user rename of one DISPLAY variable inside a function. `from` is the name as the
+ * decompiler printed it (v3, result, ...) — not the canonical SSA id. */
+typedef struct {
+    uint64_t hash, rva, bound;
+    char     from[64], to[64];
+} ds_anno_var;
+
+#define DS_ANNO_UNBOUND UINT64_MAX
+
 struct ds_engine {
     /* image (not owned; caller keeps alive) */
     const uint8_t* image;
@@ -72,6 +97,12 @@ struct ds_engine {
     /* recovered functions, sorted by rva (unique) */
     ds_func* funcs;
     size_t   func_len, func_cap;
+
+    /* user annotations (sidecar-backed; survive re-analysis) */
+    ds_anno* annos;
+    size_t   anno_len, anno_cap;
+    ds_anno_var* anno_vars;
+    size_t       anno_var_len, anno_var_cap;
 };
 
 /* ---- shared helpers used across translation units ------------------------ */
@@ -91,6 +122,18 @@ const ds_insn* ds_insn_at(const struct ds_engine* e, uint64_t rva);
 
 /* Push a ref edge (no dedup). Returns 1 on success. */
 int ds_push_ref(struct ds_engine* e, uint64_t from, uint64_t to, uint32_t kind);
+
+/* ---- user annotations (analysis/annotations.cpp) -------------------------- */
+
+/* Stable identity of a recovered function: fnv1a64 over its MASKED instruction
+ * stream. Returns 0 when unavailable (f->size == 0, or no decoded insns). */
+uint64_t ds_anno_func_hash(const struct ds_engine* e, const ds_func* f);
+/* Re-bind every annotation to the CURRENT analysis (fills ds_anno.bound). Cheap
+ * no-op when the store is empty; safe to call repeatedly. */
+void ds_anno_resolve(struct ds_engine* e);
+/* The annotation bound to the function starting at `rva`, or NULL. Call after
+ * ds_anno_resolve (ds_engine_resolve_symbols does). */
+const ds_anno* ds_anno_for_func(const struct ds_engine* e, uint64_t rva);
 
 #ifdef __cplusplus
 } /* extern "C" */

@@ -79,6 +79,8 @@ void ds_engine_destroy(ds_engine* e) {
     free(e->insns);
     free(e->refs);
     free(e->funcs);
+    free(e->annos);
+    free(e->anno_vars);
     free(e);
 }
 

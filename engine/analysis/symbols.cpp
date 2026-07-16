@@ -15,10 +15,15 @@
 #include "disasm.h"
 #include "engine_internal.h"
 
+#include <cctype>
 #include <cstring>
 #include <cstdio>
 #include <cstdint>
 #include <cstdlib>
+
+#include <map>
+#include <set>
+#include <string>
 
 namespace {
 
@@ -174,6 +179,177 @@ void recover_heuristic_names(ds_engine* e) {
     }
 }
 
+/* ---- names recovered from a reported-name string literal ------------------ */
+
+/* Local mirror of Decompiler::read_cstring (decompiler.cpp:1118), which is a private
+ * member of that class and so unreachable from this TU. Same contract: the rva must
+ * address READ-ONLY (non-writable, non-executable) data holding a NUL-terminated,
+ * printable string of at least MINLEN chars. No escaping — a reported name is a bare
+ * identifier or it is not a candidate at all. */
+bool sym_read_cstring(const ds_engine* e, uint64_t rva, std::string& out) {
+    if (!e || !e->image) return false;
+    const ds_segment* s = ds_seg_for_rva(e, rva);
+    if (!s) return false;
+    if ((s->flags & DS_FLAG_X) || (s->flags & DS_FLAG_W)) return false;  /* read-only data only */
+    const int MINLEN = 4, MAXLEN = 96;
+    std::string t;
+    for (int i = 0; i < MAXLEN; ++i) {
+        uint64_t at = rva + (uint64_t)i;
+        if (at >= e->image_size) return false;
+        uint8_t b = e->image[at];
+        if (b == 0) { if ((int)t.size() < MINLEN) return false; out.swap(t); return true; }
+        if (b < 0x20 || b >= 0x7f) return false;   /* non-printable -> not a string */
+        t += (char)b;
+    }
+    return false;   /* unterminated within MAXLEN */
+}
+
+/* Would `s` be a legal, non-reserved C function name? The reserved words matter because
+ * this name lands verbatim in a recompiled TU, where `double()` is a syntax error. Only
+ * words >= MINLEN can survive sym_read_cstring, so shorter keywords are omitted. */
+bool is_c_ident(const std::string& s) {
+    if (s.size() < 4 || s.size() > 63) return false;
+    if (!(std::isalpha((unsigned char)s[0]) || s[0] == '_')) return false;
+    for (size_t i = 1; i < s.size(); ++i)
+        if (!(std::isalnum((unsigned char)s[i]) || s[i] == '_')) return false;
+    static const char* const reserved[] = {
+        "auto", "bool", "break", "case", "catch", "char", "class", "const", "continue",
+        "default", "delete", "double", "else", "enum", "extern", "false", "float",
+        "goto", "inline", "long", "namespace", "NULL", "operator", "private",
+        "protected", "public", "register", "restrict", "return", "short", "signed",
+        "sizeof", "static", "struct", "switch", "template", "this", "throw", "true",
+        "typedef", "union", "unsigned", "virtual", "void", "volatile", "while", NULL
+    };
+    for (size_t i = 0; reserved[i]; ++i)
+        if (s == reserved[i]) return false;
+    return true;
+}
+
+/* The function whose body covers `rva`, or NULL. e->funcs is sorted and deduped by rva
+ * (cfg.cpp:362-373) with f->size set (cfg.cpp:346), so this is a binary search. */
+const ds_func* func_containing(const ds_engine* e, uint64_t rva) {
+    size_t lo = 0, hi = e->func_len;
+    while (lo < hi) {
+        size_t mid = lo + ((hi - lo) >> 1);
+        if (e->funcs[mid].rva <= rva) lo = mid + 1;
+        else hi = mid;
+    }
+    if (lo == 0) return NULL;
+    const ds_func* f = &e->funcs[lo - 1];
+    if (f->size && rva < f->rva + f->size) return f;
+    return NULL;
+}
+
+bool func_at(const ds_engine* e, uint64_t rva) {
+    size_t lo = 0, hi = e->func_len;
+    while (lo < hi) {
+        size_t mid = lo + ((hi - lo) >> 1);
+        if (e->funcs[mid].rva < rva) lo = mid + 1;
+        else hi = mid;
+    }
+    return lo < e->func_len && e->funcs[lo].rva == rva;
+}
+
+/* Does this instruction overwrite the arg0 register, invalidating a pending literal?
+ * Intel syntax puts the destination first, so a leading `rcx,` is a write to it. */
+bool writes_arg0(const ds_insn* in) {
+    static const char* const regs[] = { "rcx", "ecx", "cx", "cl", "ch", NULL };
+    for (size_t i = 0; regs[i]; ++i) {
+        size_t n = std::strlen(regs[i]);
+        if (std::strncmp(in->operands, regs[i], n) == 0 &&
+            (in->operands[n] == ',' || in->operands[n] == '\0'))
+            return true;
+    }
+    return false;
+}
+
+/* Name a function after the identifier-like string literal it hands to a name-reporting
+ * helper. MSVC's _invalid_parameter / _matherr report the name of the CALLER, so
+ * `lea rcx,"acosf"; call H` inside fun_00070ab0 means that function IS acosf.
+ *
+ * Merely referencing a string proves nothing, so the accept rule is statistical and
+ * caller-keyed: a helper must be fed a literal by >= QUORUM DISTINCT callers that each
+ * supply a DIFFERENT identifier — the shape of a routine reporting its own name. Any
+ * caller passing two different literals is a dispatcher walking a table (a TrueType
+ * {cmap,glyf,head} lookup, a menu's {Aimbot,Misc,Visuals}), so it is dropped and does
+ * not count toward quorum. That distinct-CALLER requirement is the whole safety
+ * argument: measured on real binaries the true positive has 7 callers and the next
+ * candidate has 2, and it is what rejects both table-walkers above. Validated against
+ * ucrtbase.dll, which exports its math functions: 11 predictions, 11 exact matches,
+ * 0 mismatches; kernel32.dll accepts nothing. Gated by DS_NO_STRNAME. */
+void recover_string_names(ds_engine* e) {
+    static const bool off = std::getenv("DS_NO_STRNAME") != nullptr;
+    if (off) return;
+    /* rcx = arg0 is the MS x64 ABI; 32-bit cdecl pushes its args, a different rule. */
+    if (e->arch != DS_ARCH_X64 || !e->image) return;
+
+    /* max measured lea->call distance is 12 insns (n=57 across three binaries); 16
+     * covers every real site with margin and 24 buys nothing. */
+    const size_t WIN = 16;
+    const size_t QUORUM = 3;
+
+    /* helper rva -> caller rva -> the distinct literals that caller passes it */
+    std::map<uint64_t, std::map<uint64_t, std::set<std::string> > > hits;
+
+    /* PASS A — collect (helper, caller, literal) from `lea rcx,<str>` ... `call H`. */
+    for (size_t i = 0; i < e->insn_len; ++i) {
+        const ds_insn* in = &e->insns[i];
+        if (!mnem_is(in, "lea")) continue;
+        if (in->ref_type != DS_REF_DATA || in->ref_target == 0) continue;
+        /* the decoder rewrites `[rip + x]` to the absolute `rcx, [0x985f0]` */
+        if (std::strncmp(in->operands, "rcx,", 4) != 0) continue;
+        std::string lit;
+        if (!sym_read_cstring(e, in->ref_target, lit) || !is_c_ident(lit)) continue;
+        const ds_func* caller = func_containing(e, in->rva);
+        if (!caller) continue;
+
+        for (size_t j = i + 1; j < e->insn_len && j - i <= WIN; ++j) {
+            const ds_insn* w = &e->insns[j];
+            if (w->rva >= caller->rva + caller->size) break;   /* left the function */
+            if (mnem_is(w, "ret")) break;
+            if (w->ref_type == DS_REF_JMP || w->ref_type == DS_REF_BRANCH) break;
+            /* any call consumes or clobbers rcx, so the first one decides — including
+             * an indirect `call rax`, which carries no ref_target at all. */
+            if (mnem_is(w, "call")) {
+                if (w->ref_type == DS_REF_CALL && w->ref_target != 0 &&
+                    !import_for_iat(e, w->ref_target) &&   /* not the call [rip] IAT form */
+                    func_at(e, w->ref_target))
+                    hits[w->ref_target][caller->rva].insert(lit);
+                break;
+            }
+            if (writes_arg0(w)) break;
+        }
+    }
+
+    /* PASS B — decide, then name. */
+    for (std::map<uint64_t, std::map<uint64_t, std::set<std::string> > >::const_iterator
+             h = hits.begin(); h != hits.end(); ++h) {
+        std::map<uint64_t, std::string> named;   /* surviving caller -> its one literal */
+        std::set<std::string> idents;
+        for (std::map<uint64_t, std::set<std::string> >::const_iterator
+                 c = h->second.begin(); c != h->second.end(); ++c) {
+            if (c->second.size() != 1) continue;   /* table-walker, not a name report */
+            const std::string& id = *c->second.begin();
+            named[c->first] = id;
+            idents.insert(id);
+        }
+        if (named.size() < QUORUM || idents.size() < QUORUM) continue;
+
+        for (std::map<uint64_t, std::string>::const_iterator n = named.begin();
+             n != named.end(); ++n) {
+            for (size_t i = 0; i < e->func_len; ++i) {
+                ds_func* f = &e->funcs[i];
+                if (f->rva != n->first) continue;
+                /* only ever upgrade the fun_ fallback, never a real symbol; the
+                 * uniqueness guard covers two callers reporting the same name. */
+                if (is_placeholder(f->name) && !name_taken(e, n->second.c_str(), i))
+                    ds_strlcpy(f->name, n->second.c_str(), sizeof(f->name));
+                break;
+            }
+        }
+    }
+}
+
 } // namespace
 
 extern "C" int ds_engine_resolve_symbols(ds_engine* e) {
@@ -228,7 +404,12 @@ extern "C" int ds_engine_resolve_symbols(ds_engine* e) {
         ds_strlcpy(f->name, buf, sizeof(f->name));
     }
 
-    /* (6) upgrade remaining fun_ placeholders with safe shape heuristics */
+    /* (6) upgrade fun_ placeholders from a self-reported name literal. Runs BEFORE the
+     * shape heuristics: a reported name outranks a j_/get_/set_ shape name, and going
+     * first lets the thunk pass below render `j_acosf` instead of `j_fun_00070ab0`. */
+    recover_string_names(e);
+
+    /* (7) upgrade remaining fun_ placeholders with safe shape heuristics */
     recover_heuristic_names(e);
 
     return 0;

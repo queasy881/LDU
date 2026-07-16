@@ -148,6 +148,13 @@ extern "C" int ds_engine_build_cfg(ds_engine* e) {
 
     if (e->insn_len == 0) return 0;
 
+    /* seed real names from the PDB the debug directory points at, if any. First,
+     * for the same reason RTTI runs here — a seeded rva is picked up by the
+     * e->symbols[] pass below, so a static that nothing calls is both recovered
+     * and named — and ahead of scan_rtti because a PDB name is authoritative and
+     * scan_rtti defers to any rva already seeded. */
+    ds_engine_load_pdb(e);
+
     /* recover C++ class/virtual-function names from MSVC RTTI and seed them as
      * symbols BEFORE function-start collection: a vtable-only virtual (never
      * directly called) is then picked up by the e->symbols[] pass below and both

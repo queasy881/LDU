@@ -241,6 +241,47 @@ impl Engine {
         self.stage(code, "build_xrefs")
     }
 
+    // ---- user annotations -------------------------------------------------
+
+    /// Load user renames/comments from a JSON sidecar. Replaces the in-memory
+    /// store; call after `build_cfg` so the identity hashes can bind.
+    pub fn load_annotations(&mut self, path: &str) -> Result<(), String> {
+        if !self.ok() {
+            return Err("engine creation failed (null handle)".into());
+        }
+        let c = cstring(path);
+        let code = unsafe { ffi::ds_engine_load_annotations(self.raw, c.as_ptr()) };
+        self.stage(code, "load_annotations")
+    }
+
+    /// Write the user annotation store to a JSON sidecar.
+    pub fn save_annotations(&mut self, path: &str) -> Result<(), String> {
+        if !self.ok() {
+            return Err("engine creation failed (null handle)".into());
+        }
+        let c = cstring(path);
+        let code = unsafe { ffi::ds_engine_save_annotations(self.raw, c.as_ptr()) };
+        self.stage(code, "save_annotations")
+    }
+
+    /// Rename and/or comment the function at `rva`. An empty str leaves that field.
+    pub fn set_func_annotation(&mut self, rva: u64, name: &str, comment: &str) {
+        if !self.ok() {
+            return;
+        }
+        let (n, c) = (cstring(name), cstring(comment));
+        unsafe { ffi::ds_engine_set_func_annotation(self.raw, rva, n.as_ptr(), c.as_ptr()) };
+    }
+
+    /// Rename a displayed local of the function at `rva` (`from` as printed).
+    pub fn set_var_annotation(&mut self, rva: u64, from: &str, to: &str) {
+        if !self.ok() {
+            return;
+        }
+        let (f, t) = (cstring(from), cstring(to));
+        unsafe { ffi::ds_engine_set_var_annotation(self.raw, rva, f.as_ptr(), t.as_ptr()) };
+    }
+
     // ---- queries ----------------------------------------------------------
 
     /// Snapshot of engine-wide metadata.

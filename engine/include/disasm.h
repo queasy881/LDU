@@ -120,6 +120,11 @@ void ds_engine_add_symbol(ds_engine* e, uint64_t rva, const char* name);
  * symbols. Runs inside ds_engine_resolve_symbols before naming; x64-only, gated
  * by DS_NO_RTTI. Idempotent-safe: only seeds still-unnamed recovered functions. */
 void ds_engine_scan_rtti(ds_engine* e);
+/* recover real function names from the PDB named by the PE debug directory's
+ * CodeView RSDS record, and seed them as symbols. Runs at build_cfg start,
+ * before scan_rtti, so the PDB name wins. Windows-only (dbghelp), gated by
+ * DS_NO_PDB. Idempotent-safe: never overwrites an already-seeded rva. */
+void ds_engine_load_pdb(ds_engine* e);
 /* seed a known function entry (entry point, export target, TLS callback) */
 void ds_engine_add_entry(ds_engine* e, uint64_t rva);
 /* seed an import: `name` is bound to the IAT slot rva that call/jmp thunks
@@ -139,6 +144,25 @@ int ds_engine_resolve_symbols(ds_engine* e);  /* name resolution priority chain 
 int ds_engine_build_xrefs(ds_engine* e);      /* bidirectional xref index     */
 /* convenience: runs all four stages in order */
 int ds_engine_analyze(ds_engine* e);
+
+/* ---- user annotations (renames/comments that survive re-analysis) --------- */
+
+/* Load/save the sidecar. Annotations are keyed by a content hash of the function
+ * (rva as fallback), so they re-attach across a rebuild that moves code around.
+ * Load REPLACES the in-memory store and is best called after ds_engine_build_cfg;
+ * ds_engine_resolve_symbols re-binds and applies whatever is loaded. Setting
+ * DS_ANNO_FILE=<path> makes resolve_symbols load it with no other wiring.
+ * Both return 0 on success, 1 on I/O failure, 2 on a malformed file. */
+int ds_engine_load_annotations(ds_engine* e, const char* path);
+int ds_engine_save_annotations(ds_engine* e, const char* path);
+/* Annotate the function at `rva` (upsert). NULL/"" leaves that field unchanged;
+ * the stable identity hash is captured here, so call after ds_engine_build_cfg. */
+void ds_engine_set_func_annotation(ds_engine* e, uint64_t rva, const char* name,
+                                   const char* comment);
+/* Rename a DISPLAY variable of the function at `rva`: `from` is the identifier as
+ * the decompiler printed it (v3, result). Pure display alias, zero semantics. */
+void ds_engine_set_var_annotation(ds_engine* e, uint64_t rva, const char* from,
+                                  const char* to);
 
 /* ---- queries -------------------------------------------------------------- */
 
