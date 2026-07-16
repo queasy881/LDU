@@ -7136,6 +7136,41 @@ struct Decompiler {
                 set_xmm_lanes(dr, sh(alo), sh(ahi), b);
                 break;
             }
+            /* packed sqrt over the two 64-bit (double) lanes. Unmodeled, the dest kept a
+             * stale value — the same failure the SCALAR sqrtss/sqrtsd fix addressed, where
+             * a dep-breaking `xorps dst,dst` then left the result as 0.0. */
+            case X86_INS_SQRTPD: case X86_INS_VSQRTPD: {
+                if (nop < 2 || OP(0).type != X86_OP_REG) break;
+                Reg dr; int dw; map_reg(OP(0).reg, dr, dw);
+                if (!is_xmm(dr)) break;
+                ExprP alo, ahi;
+                if (!simd_src_lanes(OP(nop >= 2 ? 1 : 0), alo, ahi)) break;
+                auto mk = [&](ExprP v) {
+                    auto c = std::make_shared<Expr>();
+                    c->kind = EK::Call; c->callee = "sqrt"; c->width = 8;
+                    c->is_float = true; c->ret_kind = 4;
+                    c->args.push_back(v);
+                    return c;
+                };
+                used_sqrt = true;
+                set_xmm_lanes(dr, mk(alo), mk(ahi), b);
+                break;
+            }
+            /* unpcklpd dst,src = {dst.lo, src.lo} — the low doubles interleaved (it is how
+             * a {x,y} pair is assembled). unpckhpd takes the HIGH lanes: {dst.hi, src.hi}. */
+            case X86_INS_UNPCKLPD: case X86_INS_VUNPCKLPD:
+            case X86_INS_UNPCKHPD: case X86_INS_VUNPCKHPD: {
+                if (nop < 2 || OP(0).type != X86_OP_REG) break;
+                Reg dr; int dw; map_reg(OP(0).reg, dr, dw);
+                if (!is_xmm(dr)) break;
+                int ai = (nop >= 3) ? 1 : 0, bi = (nop >= 3) ? 2 : 1;
+                ExprP alo, ahi, blo, bhi;
+                if (!simd_src_lanes(OP(ai), alo, ahi)) break;
+                if (!simd_src_lanes(OP(bi), blo, bhi)) break;
+                bool hi = (id == X86_INS_UNPCKHPD || id == X86_INS_VUNPCKHPD);
+                set_xmm_lanes(dr, hi ? ahi : alo, hi ? bhi : blo, b);
+                break;
+            }
             case X86_INS_PSRLDQ: {
                 /* byte-granular logical right shift. The horizontal-reduction idiom
                  * `psrldq xmm,8` moves lane1 into lane0 (lane1<-0); model only that. */
