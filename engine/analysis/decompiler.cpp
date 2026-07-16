@@ -10792,6 +10792,19 @@ struct Decompiler {
             int w = (it != var_width.end()) ? it->second : 4;
             if (w > 0 && w <= 4) a = a->a;
         }
+        /* Same for a CONSTANT argument: the literal already IS the value, so the cast is
+         * pure noise (`__fastfail((unsigned int)5)` -> `__fastfail(5)`).
+         * NON-NEGATIVE only, and this is not pedantry: dropping `(unsigned int)` from a
+         * NEGATIVE literal changes what a WIDER parameter receives —
+         * `f((unsigned int)-1)` passes 0x00000000FFFFFFFF while `f(-1)` sign-extends to
+         * 0xFFFFFFFFFFFFFFFF. */
+        if (a && a->kind == EK::Cast && a->a && a->a->kind == EK::Const &&
+            (a->op == "(unsigned int)" || a->op == "(int)") &&
+            !a->a->is_float && !a->a->char_hint && !a->a->null_hint &&
+            a->a->cval >= 0 && a->a->cval <= 0x7fffffff &&
+            !getenv("DS_NO_ARGCASTCLEAN")) {
+            a = a->a;
+        }
         std::string sl = try_string_lit(a);
         return sl.empty() ? render(a) : sl;
     }
