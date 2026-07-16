@@ -1528,6 +1528,54 @@
              * (0 or -1), NOT a 0/1 boolean — the mask is then AND-ed with data to select
              * it, so rendering a boolean would silently zero every selected lane.
              * `-(a == b)` is exactly that mask in C. */
+            /* ---- 16x8 BYTE-lane ops: OPAQUE intrinsics, deliberately NOT modeled lane-wise.
+             * The SSE2 strlen/strchr/memchr idiom is `xorps m,m; pcmpeqb m,[p]; pmovmskb r,m;
+             * bsf r`. There is no byte-lane geometry here (xmm_f/xmm_i are 4x32) and building
+             * one is the wrong altitude: nothing in NullWare reads an individual byte lane —
+             * across all 26 pcmpeqb sites the mask's only consumer is pmovmskb -> and/test ->
+             * bsf — and a symbolic 16-lane pmovmskb would be a 400-char bit-assembly that
+             * set_reg's own node_count>400 guard would just spill again.
+             *
+             * But leaving pcmpeqb unmodeled is far worse than ugly. The generic fallback at
+             * the bottom of this switch fires only for a GPR dest, so an xmm-dest pcmpeqb is
+             * SILENTLY DROPPED: the dest keeps its pre-compare value, and after the customary
+             * dep-breaking `xorps m,m` that value is the CONSTANT 0. Measured in fn_00084848
+             * (the real strlen) — the compare vanishes and the loop exit is gated on a
+             * fabricated zero:
+             *     if (__pmovmskb(0)) break;
+             * Defining the dest with an opaque call keeps the load in the tree and lets the
+             * confidence header disclose it. pmovmskb itself needs no case — the existing GPR
+             * fallback picks it up. DS_NO_LANES16. */
+            case X86_INS_PCMPEQB:  case X86_INS_VPCMPEQB:
+            case X86_INS_PSHUFB:   case X86_INS_VPSHUFB: {
+                if (std::getenv("DS_NO_LANES16")) break;
+                if (nop < 2 || OP(0).type != X86_OP_REG) break;
+                Reg dr; int dw; map_reg(OP(0).reg, dr, dw);
+                if (!is_xmm(dr)) break;      /* ymm -> R_NONE: the width guard's territory */
+                int ai = (nop >= 3) ? 1 : 0, bi = (nop >= 3) ? 2 : 1;   /* VEX: dst,src1,src2 */
+                /* `pcmpeqb x,x` is the canonical set-ALL-ONES idiom (the -1 twin of
+                 * `xorps x,x`), NOT a real compare. Fold it — an opaque call here would
+                 * DESTROY a known -1 mask. Both operands must be the SAME register: the
+                 * dst==src1-against-memory form is a real compare. */
+                if ((id == X86_INS_PCMPEQB || id == X86_INS_VPCMPEQB) &&
+                    OP(ai).type == X86_OP_REG && OP(bi).type == X86_OP_REG &&
+                    OP(ai).reg == OP(bi).reg) {
+                    set_xmm_lanes(dr, mkConst(-1, 8), mkConst(-1, 8), b);
+                    break;
+                }
+                ExprP a0 = rvalue(OP(ai)), a1v = rvalue(OP(bi));
+                if (!a0 || !a1v) break;      /* untracked source: leave the dest alone */
+                auto call = std::make_shared<Expr>();
+                call->kind = EK::Call;
+                call->callee = "__" + sani(in.mnem);
+                call->width = 8; call->ret_kind = 2;
+                call->args.push_back(a0);
+                call->args.push_back(a1v);
+                extern_callees[call->callee] = call->ret_kind;
+                opaque_ops[call->callee]++;      /* feeds the confidence header */
+                do_dst(b, OP(0), call, in.addr);
+                break;
+            }
             case X86_INS_PCMPEQD: case X86_INS_VPCMPEQD:
             case X86_INS_PCMPGTD: case X86_INS_VPCMPGTD: {
                 if (nop < 2 || OP(0).type != X86_OP_REG) break;
