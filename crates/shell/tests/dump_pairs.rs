@@ -78,7 +78,23 @@ fn dump_pairs() {
         .and_then(|v| v.parse().ok())
         .unwrap_or(400);
 
-    let dir = r"C:\Users\User\Downloads\sd\_qa\pairs";
+    // Output dir, in priority order: DS_PAIRS_DIR, else <crate's repo root>/_qa/pairs.
+    //
+    // This used to hardcode the main checkout's absolute path, which quietly defeated git
+    // worktree isolation: every agent working in its own worktree still dumped into the SAME
+    // directory, so concurrent runs stomped each other and each one's "evidence" was a mix of
+    // everybody's binaries. (One agent worked around it by hardcoding ITS worktree path
+    // instead -- which then silently broke dumping for the main tree.) CARGO_MANIFEST_DIR is
+    // the crate being tested, so ../.. is that checkout's root -- correct in a worktree too.
+    let dir = std::env::var("DS_PAIRS_DIR").unwrap_or_else(|_| {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(|p| p.parent())
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| std::path::PathBuf::from("."));
+        root.join("_qa").join("pairs").to_string_lossy().into_owned()
+    });
+    let dir: &str = &dir;
     let _ = std::fs::create_dir_all(dir);
     let mut written = 0usize;
     let mut index = String::new();
