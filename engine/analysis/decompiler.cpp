@@ -669,6 +669,13 @@ bool is_pure_callee(const std::string& c) {
     if (c == "__rdtsc" || c == "_xgetbv") return false;
     if (c == "__syscall") return false;   /* a kernel call: arbitrary side effects */
     if (c == "__security_check_cookie" || c == "__chkstk") return false;      /* may not return */
+    /* The opaque stand-in for an unmodeled op that WROTE MEMORY. The call IS the side
+     * effect, so treating it as pure would let CSE collapse two of them or DSE delete it
+     * outright — silently restoring the very dropped store it was added to disclose (and
+     * un-counting it from the confidence header, which only counts intrinsics that survive
+     * into the body). The wide-vector moves are the ones that reach this path: the VEX
+     * width guard refuses to remap any ymm/zmm form. */
+    if (c.rfind("__vmov", 0) == 0 || c.rfind("__vpmaskmov", 0) == 0) return false;
     if (c.rfind("__", 0) == 0) return true;
     return c.rfind("_rotl", 0) == 0 || c.rfind("_rotr", 0) == 0;
 }
@@ -3205,6 +3212,49 @@ struct Decompiler {
     bool ret_ptr_elem_uns = false;
     int  ret_small_w = 0;          /* 1/2 when every path returns a byte/short value */
     bool ret_small_uns = false;    /* signedness of that narrow return */
+    /* When every return path hands back the SAME recovered-struct pointer, the return type
+     * is that struct pointer — not the scalar element type of its first field. Without this,
+     * `Vec3* make(Vec3* out, ...) { out->x = ..; return out; }` declares `float*` (field 0's
+     * width) and casts the return `(float*)out`: the declared type contradicts the returned
+     * expression, and only that inserted cast keeps it compiling.
+     *
+     * Computed LAZILY, at render time, rather than as a pipeline pass. param_structs does not
+     * exist until recover_struct_layouts(), which runs ~75 lines AFTER recover_return_type() —
+     * a pass placed at the natural-looking spot reads an empty map and silently never fires
+     * (which is exactly what the first cut of this did). Deciding it on demand means it cannot
+     * be wrong about ordering, and the struct tags are final by then.
+     * Kill switch: DS_NO_RETSTRUCT. */
+    bool ret_struct_done = false;
+    std::string ret_struct_type;
+    const std::string& ret_struct_ty() {
+        if (ret_struct_done) return ret_struct_type;
+        ret_struct_done = true;
+        ret_struct_type.clear();
+        if (std::getenv("DS_NO_RETSTRUCT")) return ret_struct_type;
+        if (!used_return || !ret_is_pointer || ret_conflict_raw || ret_is_float)
+            return ret_struct_type;
+        std::string agreed;
+        bool any = false;
+        for (auto& b : blocks) {
+            /* a tail call returns the CALLEE's value, which this test says nothing about */
+            if (b.tail_call) return ret_struct_type;
+            if (!b.has_ret_value || !b.ret_value) continue;
+            ExprP m = b.ret_value;
+            while (m && m->kind == EK::Cast && m->a) m = m->a;   /* `return (T*)a1` */
+            if (!m || m->kind != EK::Var) return ret_struct_type;
+            auto si = param_structs.find(m->name);
+            if (si == param_structs.end()) return ret_struct_type;
+            std::string t = std::string(si->second.is_class && !si->second.cls_kw_struct
+                                        ? "class " : "struct ") + si->second.tag + "*";
+            /* EVERY path must agree. A function returning either a Node* or a Leaf* has no
+             * single struct return type, and naming one of them would be a lie. */
+            if (agreed.empty()) agreed = t;
+            else if (agreed != t) return ret_struct_type;
+            any = true;
+        }
+        if (any) ret_struct_type = agreed;
+        return ret_struct_type;
+    }
 
     /* True if `e` is a pointer-typed value: an address (AddrOf), a pointer
      * variable, or pointer arithmetic with a pointer-var operand. Used to
@@ -3627,6 +3677,9 @@ struct Decompiler {
         ret_ptr_elem_uns = eu;
         ret_ptr_elem_float = fl;
         ret_width = 8;
+        /* NOTE: the struct-pointer return type is NOT decided here — param_structs is still
+         * empty at this point in the pipeline (recover_struct_layouts runs later). See
+         * recover_return_struct_type(), called right after the layouts exist. */
         /* rebuild ret_value from the untruncated raw expression */
         for (auto& b : blocks) {
             if (b.has_ret_value && b.ret_raw) b.ret_value = clone(b.ret_raw);
@@ -4503,7 +4556,9 @@ struct Decompiler {
         else if (ret_byte_return) ret_t = "unsigned char";   /* bool/char in al */
         else if (ret_is_float) ret_t = (ret_width >= 8) ? "double" : "float";
         else if (ret_is_pointer) {
-            if (ret_ptr_elem_float)
+            if (!ret_struct_ty().empty())    /* returns a recovered struct pointer, not a scalar */
+                ret_t = ret_struct_ty();
+            else if (ret_ptr_elem_float)
                 ret_t = (ret_ptr_elem_w >= 8 ? "double" : "float") + std::string("*");
             else if (ret_ptr_elem_w > 0)
                 ret_t = typ_str(ret_ptr_elem_w, ret_ptr_elem_uns, false) + "*";
@@ -4913,6 +4968,15 @@ struct Decompiler {
         if (used_shift128) {
             protos += "unsigned long long __shiftright128(unsigned long long, unsigned long long, unsigned char);\n";
             protos += "unsigned long long __shiftleft128(unsigned long long, unsigned long long, unsigned char);\n";
+        }
+        /* The _Interlocked* intrinsics are declared, not #included: <intrin.h> drags in the
+         * whole MSVC intrinsic surface and the dumped units are compiled /TC standalone.
+         * Signatures match intrin.h exactly, so a real build that DOES include it agrees. */
+        for (const std::string& il : used_interlocked) {
+            if (il == "_InterlockedExchangeAdd")
+                protos += "long _InterlockedExchangeAdd(volatile long*, long);\n";
+            else if (il == "_InterlockedExchangeAdd64")
+                protos += "long long _InterlockedExchangeAdd64(volatile long long*, long long);\n";
         }
         if (used_movs) {
             protos += "void __movsb(unsigned char*, const unsigned char*, unsigned long long);\n";

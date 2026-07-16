@@ -376,6 +376,7 @@
     std::string self_fname;   /* sanitized name of THIS function (for recursive-call arity) */
     bool used_stos = false;   /* __stosb/w/d/q appears (rep stos fill) -> emit prototypes */
     bool used_movs = false;   /* __movsb/w/d/q appears (rep movs copy) -> emit prototypes */
+    std::set<std::string> used_interlocked;  /* _Interlocked* named -> emit prototypes */
     bool used_null = false;   /* `NULL` was rendered -> pull in <stddef.h> */
     bool used_fastfail = false; /* __fastfail appears (int 0x29) -> emit prototype */
     bool used_nearbyint = false; /* nearbyintf appears (cvtps2dq rounding) -> prototype */
@@ -477,6 +478,24 @@
         return 0;
     }
 
+    /* Does this instruction carry the LOCK prefix (0xf0)?
+     *
+     * Unlike most gaps this one is NOT a correctness bug: the xadd/cmpxchg/xchg handlers
+     * below already model the read-modify-write faithfully, old-value semantics included.
+     * What a load/store pair cannot express is ATOMICITY. A refcount release currently
+     * reads as
+     *     v1 = *(int32_t*)(qword_174c80);
+     *     *(int32_t*)(qword_174c80) = v1 - 1;
+     *     if (v1 != 1 || ...)
+     * which is correct, and tells the reader nothing about why it is safe or that the
+     * `v1 != 1` test is the classic "was I the last reference" check. Naming the intrinsic
+     * says both in one line, and is what Hex-Rays emits. */
+    bool has_lock(const cs_x86& x) {
+        for (int pi = 0; pi < 4; ++pi)
+            if (x.prefix[pi] == X86_PREFIX_LOCK) return true;
+        return false;
+    }
+
     /* `repne scas` is an inlined strlen/memchr (scan UNTIL al matches), `repe scas` an
      * inlined "skip while equal" (ntdll's RtlCompareMemoryUlong). Both were UNMODELED,
      * and the damage ran well past the dropped scan: the op's only architectural purpose
@@ -550,6 +569,13 @@
         const cs_x86_op* ops = x.operands;      /* repointed for VEX normalization */
         cs_x86_op vnops[4];
         auto OP = [&](int i) -> const cs_x86_op& { return ops[i]; };
+        /* Set when the VEX width guard below refuses to remap a 256/512-bit form. It is the
+         * ONLY thing that licenses the opaque memory-store fallback in the default case:
+         * capstone reports a VEX store's memory operand as access=READ (1), not WRITE (2)
+         * — measured on `vmovdqu ymmword ptr [rcx], ymm0` — so the access bits cannot be
+         * trusted to identify the destination, and "operand 0 is memory" alone would also
+         * catch read-only `cmp [mem], reg` / `test [mem], reg`. */
+        bool vex_wide_refused = false;
 
         /* ---- AVX / VEX scalar-float normalization ---------------------------
          * The VEX-encoded float ops are the non-destructive 3-operand forms of
@@ -562,7 +588,36 @@
          * FMA — where dst != src1 carries data — get dedicated cases below. */
         {
             unsigned sse = 0; bool take_op2 = false;
-            switch (id) {
+            /* THE REMAP IS ONLY SOUND AT 128 BITS. Every SSE handler below hardcodes 16
+             * bytes — the store paths gate on `OP(0).size == 16` and the lane arrays are
+             * xmm_f[..][4]. A 256-bit ymm operand is 32 bytes, so it FAILS that gate, skips
+             * the packed-store block entirely, and falls through to the bare `do_dst` at the
+             * bottom of the case — which commits a NARROW store of an unmapped (backstop)
+             * register. Measured, before this guard, on _qa/ymm/ymmtest.c:
+             *
+             *   void ymm_copy32(char* dst, const char* src)   <- the truth: 32 bytes copied
+             *   void ymm_copy32(int32_t*a1) { *a1 = 0; }      <- what we emitted
+             *
+             * The `src` param is gone, and a 32-byte copy is reported as a 4-byte zero. It
+             * compiles clean, so the 1497/1497 cl gate is blind to it: a textbook confident
+             * lie. Refusing the remap makes the op fall to the unmodeled path, which is a
+             * loud, honest gap instead.
+             *
+             * ymm is detected by REGISTER ID, not operand size: `vmovdqu ymm0, [rdx]` has a
+             * 32-byte MEM src but capstone reports the reg operand's size as 32 too, and
+             * keying on the register range is exact for the reg-reg forms as well. zmm is
+             * included for the same reason, pre-emptively.
+             * The 128-bit VEX forms — which is most of an /arch:AVX2 binary, including all
+             * the scalar float math this remap was built to recover — are untouched.
+             * DS_NO_VEXWIDTH restores the old (lying) behaviour. */
+            bool wide_vec = false;
+            for (int vi = 0; vi < nop; ++vi)
+                if (ops[vi].type == X86_OP_REG &&
+                    ((ops[vi].reg >= X86_REG_YMM0 && ops[vi].reg <= X86_REG_YMM15) ||
+                     (ops[vi].reg >= X86_REG_ZMM0 && ops[vi].reg <= X86_REG_ZMM31)))
+                    { wide_vec = true; break; }
+            if (wide_vec && !std::getenv("DS_NO_VEXWIDTH")) { sse = 0; vex_wide_refused = true; }
+            else switch (id) {
                 case X86_INS_VMOVAPS: sse = X86_INS_MOVAPS; break;
                 case X86_INS_VMOVUPS: sse = X86_INS_MOVUPS; break;
                 case X86_INS_VMOVAPD: sse = X86_INS_MOVAPD; break;
@@ -2188,6 +2243,36 @@
                 int w0 = OP(0).size ? OP(0).size : 4;
                 ExprP d_old = rvalue(OP(0));      /* old dst value */
                 ExprP s_old = rvalue(OP(1));      /* addend (src register) */
+                /* `lock xadd [m], r` IS _InterlockedExchangeAdd: it returns the OLD value
+                 * and performs the store itself, so one call replaces the load/store pair
+                 * and states the atomicity the pair cannot. Only the locked MEMORY form —
+                 * an unlocked or register-dst xadd is not the intrinsic and falls through.
+                 * DS_NO_INTERLOCKED. */
+                if (has_lock(x) && OP(0).type == X86_OP_MEM && (w0 == 4 || w0 == 8) &&
+                    !std::getenv("DS_NO_INTERLOCKED")) {
+                    auto call = std::make_shared<Expr>();
+                    call->kind = EK::Call;
+                    call->callee = (w0 == 8) ? "_InterlockedExchangeAdd64"
+                                             : "_InterlockedExchangeAdd";
+                    call->width = w0;
+                    call->ret_kind = (w0 == 8) ? 2 : 1;
+                    call->args.push_back(mkCast(w0 == 8 ? "(volatile long long*)"
+                                                        : "(volatile long*)",
+                                                addr_of_mem(OP(0)), 8, true));
+                    call->args.push_back(clone(s_old));
+                    used_interlocked.insert(call->callee);
+                    /* Bind the result to a temp FIRST: the call must be emitted exactly
+                     * once (it has the side effect), so neither the register nor the flag
+                     * expression may hold a second copy of it. */
+                    ExprP oldv = snapshot_to_temp(b, call, w0, in.addr);
+                    do_dst(b, OP(1), oldv, in.addr);         /* src reg = OLD dst */
+                    /* xadd sets ZF/SF/CF from the SUM. The intrinsic yields the old value,
+                     * so rebuild the sum from the temp — dropping this would leave the
+                     * flags holding an earlier, unrelated compare and the next jcc would
+                     * render a confidently WRONG condition. */
+                    set_flags_arith(mkBinary("+", clone(oldv), clone(s_old), w0), w0);
+                    break;
+                }
                 /* freeze the old dst so the src half sees the PRE-add value, not the
                  * just-stored sum (a mem dst expr would otherwise re-read it). */
                 if (OP(0).type == X86_OP_MEM) d_old = snapshot_to_temp(b, d_old, w0, in.addr);
@@ -2634,6 +2719,35 @@
                         opaque_ops[call->callee]++;   /* feeds the confidence header */
                         do_dst(b, OP(0), call, in.addr);
                     }
+                    break;
+                }
+                /* An unmodeled op that WRITES MEMORY is worse than one that writes a
+                 * register: the store is a side effect that simply VANISHES, and the
+                 * function then reads as complete. A 256-bit `vmovdqu ymmword [rcx],ymm0`
+                 * (the VEX remap above refuses it — see the width guard) left
+                 * `void ymm_copy32(void) { return; }` labelled "confidence: HIGH": an
+                 * empty function asserting it had nothing to do, which is exactly the x87
+                 * failure this project already paid for once.
+                 *
+                 * Emit an opaque void call naming the mnemonic and the DESTINATION ADDRESS.
+                 * The address is knowable; the stored VALUE is not (the source is an
+                 * unmapped vector register that would read back as a backstop 0 — the very
+                 * lie being removed), so only immediates join the address as arguments.
+                 * This also makes the op appear in the body text, which is the ONLY way the
+                 * confidence header counts it. DS_NO_OPAQUEMEM. */
+                if (nop >= 2 && vex_wide_refused && OP(0).type == X86_OP_MEM &&
+                    !in.mnem.empty() && !std::getenv("DS_NO_OPAQUEMEM")) {
+                    auto call = std::make_shared<Expr>();
+                    call->kind = EK::Call;
+                    call->callee = "__" + sani(in.mnem);
+                    call->width = 0; call->ret_kind = 0;
+                    call->args.push_back(mkCast("(void*)", addr_of_mem(OP(0)), 8, true));
+                    for (int k = 1; k < nop && k < 4; ++k)
+                        if (OP(k).type == X86_OP_IMM) call->args.push_back(rvalue(OP(k)));
+                    extern_callees[call->callee] = 0;
+                    opaque_ops[call->callee]++;
+                    Stmt s; s.kind = SK::Call; s.rhs = call; s.addr = in.addr;
+                    b.stmts.push_back(std::move(s));
                 }
                 break;
             }

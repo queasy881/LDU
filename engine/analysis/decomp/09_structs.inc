@@ -756,6 +756,58 @@
             for (auto& s : b.stmts) { scan(s.lhs); scan(s.rhs); }
             scan(b.cond); scan(b.ret_value); scan(b.ret_raw); scan(b.switch_var); scan(b.tail_call);
         }
+
+        /* SECOND SIGNATURE — the begin/end ITERATION walk. A vector consumed ONLY as a
+         * range (`for (x : v)`, or an explicit begin()/end() loop) never computes .size(),
+         * so the subtraction above never appears: _qa/vectest/rangefor.dll's rf_iter/rf_sum
+         * are exactly that shape and left the struct an anonymous `{int64_t field_0;
+         * int64_t field_8;}` pointer bag.
+         * The LAYOUT is far too weak to key on — any two-qword struct matches it — so the
+         * signature is the WALK: a var loaded from field_0 that is later compared against
+         * field_8 of the SAME struct. A begin/end range is the only thing that does that;
+         * an unrelated pointer pair is never cross-compared this way. Both halves are
+         * required, exactly as the std::string detector below demands layout AND the SSO
+         * discriminator. */
+        {
+            /* var -> the struct whose field_0 it was loaded from */
+            std::map<std::string, std::string> begin_of;
+            auto strip = [](ExprP o) { while (o && o->kind == EK::Cast && o->a) o = o->a; return o; };
+            auto field_of = [&](const ExprP& e, int64_t want, std::string& p) -> bool {
+                ExprP m = strip(e);
+                if (!m || m->kind != EK::Mem) return false;
+                int64_t off = 0;
+                return struct_base_offset(m->a, p, off) && off == want && param_structs.count(p);
+            };
+            auto two_qword = [&](const std::string& p) {
+                const ParamStruct& L = param_structs[p];
+                return L.fw.count(0) && L.fw.at(0) == 8 && L.fw.count(8) && L.fw.at(8) == 8;
+            };
+            for (auto& b : blocks)
+                for (auto& s : b.stmts) {
+                    if (s.kind != SK::Assign || !s.lhs || s.lhs->kind != EK::Var || !s.rhs) continue;
+                    std::string p;
+                    if (field_of(s.rhs, 0, p) && two_qword(p)) begin_of[s.lhs->name] = p;
+                }
+            std::function<void(const ExprP&)> scan_cmp = [&](const ExprP& e) {
+                if (!e) return;
+                if (e->kind == EK::Binary && (e->op == "==" || e->op == "!=") && e->a && e->b) {
+                    for (int i = 0; i < 2; ++i) {
+                        ExprP v = strip(i ? e->b : e->a), k = i ? e->a : e->b;
+                        std::string p;
+                        if (v && v->kind == EK::Var && field_of(k, 8, p) &&
+                            begin_of.count(v->name) && begin_of[v->name] == p)
+                            vecs.insert(p);
+                    }
+                }
+                scan_cmp(e->a); scan_cmp(e->b); scan_cmp(e->c);
+                for (auto& ar : e->args) scan_cmp(ar);
+            };
+            for (auto& b : blocks) {
+                for (auto& s : b.stmts) { scan_cmp(s.lhs); scan_cmp(s.rhs); }
+                scan_cmp(b.cond); scan_cmp(b.ret_value); scan_cmp(b.ret_raw);
+                scan_cmp(b.switch_var); scan_cmp(b.tail_call);
+            }
+        }
         for (auto& p : vecs) param_structs[p].is_vector = true;
     }
     /* Recognize an MSVC std::string: _Bx{char _Buf[16]; char* _Ptr}, _Mysize, _Myres. The

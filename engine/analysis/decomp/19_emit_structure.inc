@@ -316,12 +316,19 @@
             std::string rt = render_return_type_str();
             bool isnull = rhs->kind == EK::Const && rhs->cval == 0 && !rhs->is_float;
             bool already = rhs->kind == EK::Cast && rhs->op == "(" + rt + ")";
-            if (!isnull && !already) rv = wr("(" + rt + ")");
+            /* A variable ALREADY declared at the return type needs no cast: once the return
+             * type follows the returned struct pointer (ret_struct_type), `return (struct
+             * Vec3*)a1` where a1 IS a `struct Vec3*` is pure noise. Only skip the cast when
+             * the declared type matches exactly, so every reinterpreting return keeps its
+             * cast and its C4133-silence. */
+            bool same_ty = rhs->kind == EK::Var && decl_type(rhs->name) == rt;
+            if (!isnull && !already && !same_ty) rv = wr("(" + rt + ")");
         }
         return rv;
     }
     std::string render_return_type_str() {
         if (!ret_is_pointer) return "long long";
+        if (!ret_struct_ty().empty()) return ret_struct_ty();
         std::string base = ret_ptr_elem_float ? (ret_ptr_elem_w >= 8 ? "double" : "float")
                          : typ_str(ret_ptr_elem_w ? ret_ptr_elem_w : 1, ret_ptr_elem_uns, false);
         return base + "*";
