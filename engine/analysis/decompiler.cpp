@@ -664,6 +664,7 @@ bool is_pure_callee(const std::string& c) {
     /* NOT idempotent: each read returns a different value, so CSE must never collapse
      * two of them into one (they are pure in the no-side-effect sense, but not equal). */
     if (c == "__rdtsc" || c == "_xgetbv") return false;
+    if (c == "__syscall") return false;   /* a kernel call: arbitrary side effects */
     if (c == "__security_check_cookie" || c == "__chkstk") return false;      /* may not return */
     if (c.rfind("__", 0) == 0) return true;
     return c.rfind("_rotl", 0) == 0 || c.rfind("_rotr", 0) == 0;
@@ -6079,6 +6080,7 @@ struct Decompiler {
     bool used_shift128 = false;  /* __shiftright128/__shiftleft128 (64-bit shrd/shld) */
     bool used_rdtsc = false;     /* __rdtsc (rdtsc/rdtscp) -> prototype */
     bool used_xgetbv = false;    /* _xgetbv (xgetbv) -> prototype */
+    bool used_syscall = false;   /* __syscall (syscall/sysenter) -> prototype */
     /* exactly which _rotl/_rotr forms this function used -> declare only those */
     std::set<std::string> used_rot_fns;
     bool used_cpuid = false;  /* __cpuid_e?x appears -> emit prototypes */
@@ -8042,6 +8044,22 @@ struct Decompiler {
                 set_reg(R_RDX, 4, mkCast("(unsigned int)",
                         mkBinary(">>", clone(t), mkConst(32, 8, true), 8, true), 4, true), b);
                 if (xg) used_xgetbv = true; else used_rdtsc = true;
+                break;
+            }
+            /* The kernel transition. It returns its status in RAX (and clobbers RCX/R11),
+             * but has NO explicit operands — so the `default:` fallback, which requires a
+             * written REGISTER operand, never fired and the RAX definition was DROPPED.
+             * An ntdll stub is literally `mov eax,<n>; syscall; ret`, so without this the
+             * function "returns" the syscall NUMBER instead of the syscall's result: a
+             * compile-clean, entirely plausible, wrong value. The number in eax IS the
+             * selector, so keep it as the argument. */
+            case X86_INS_SYSCALL: case X86_INS_SYSENTER: {
+                auto call = std::make_shared<Expr>();
+                call->kind = EK::Call; call->callee = "__syscall";
+                call->width = 8; call->ret_kind = 2; call->is_unsigned = true;
+                call->args.push_back(mkCast("(unsigned int)", reg_value(R_RAX, 4), 4, true));
+                set_reg(R_RAX, 8, call, b);
+                used_syscall = true;
                 break;
             }
             case X86_INS_FFREE: break;                    /* tag-word only: no value effect */
@@ -10853,7 +10871,17 @@ struct Decompiler {
                 const ExprP& a = e->a;
                 if (a && a->kind == EK::Const && a->cval > 0x1000 &&
                     in_data_rva((uint64_t)a->cval)) {
-                    const char* pfx = (e->width >= 8) ? "qword" : (e->width == 4) ? "dword"
+                    /* Name by the TYPE the deref actually uses, not by width alone: a
+                     * float global was rendering `#define dword_173004 (*(float*)0x173004)`
+                     * — a name that says dword over a float load. Hex-Rays spells these
+                     * flt_/dbl_, and the name is the only type cue at the use site.
+                     * A `flt_`/`dbl_` name can never reach the `substr(6)` prefix-stripping
+                     * sites: those are all gated on is_global_struct_name(), which matches
+                     * only the 6-char qword_/dword_, and a struct base is required to be
+                     * !is_float anyway. If one address is touched as both float and int it
+                     * simply gets two names, each with its own correct #define. */
+                    const char* pfx = e->is_float ? ((e->width >= 8) ? "dbl" : "flt")
+                                     : (e->width >= 8) ? "qword" : (e->width == 4) ? "dword"
                                      : (e->width == 2) ? "word" : "byte";
                     char nm[40];
                     std::snprintf(nm, sizeof nm, "%s_%llx", pfx, (unsigned long long)a->cval);
@@ -18801,6 +18829,7 @@ struct Decompiler {
         if (used_nearbyint) protos += "float nearbyintf(float);\n";
         if (used_rdtsc)  protos += "unsigned long long __rdtsc(void);\n";
         if (used_xgetbv) protos += "unsigned long long _xgetbv(unsigned int);\n";
+        if (used_syscall) protos += "unsigned long long __syscall(unsigned int);\n";
         if (used_shift128) {
             protos += "unsigned long long __shiftright128(unsigned long long, unsigned long long, unsigned char);\n";
             protos += "unsigned long long __shiftleft128(unsigned long long, unsigned long long, unsigned char);\n";
