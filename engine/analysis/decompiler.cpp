@@ -9086,6 +9086,28 @@ struct Decompiler {
         }
         return true;
     }
+    /* Companion to leaves_stable for the case where D is ITSELF a use block: true iff no
+     * leaf of `sub` is assigned inside D from the def's INSERTION POINT to D's end, so
+     * the one shared temp is valid for every later use in D and in D's successors.
+     * MIRRORS the placement in cse_global exactly — the def goes before D's first
+     * STATEMENT use of sub, or at D's end when sub occurs only in D's cond/ret_value
+     * (those are evaluated after every statement, so an end-of-block def is consistent).
+     * leaves_stable() cannot cover this: it walks D's SUCCESSORS and skips D itself. */
+    bool leaves_stable_within(int D, const ExprP& sub, const std::set<std::string>& leaves) {
+        Block& DB = blocks[D];
+        int insert_at = (int)DB.stmts.size();
+        for (int si = 0; si < (int)DB.stmts.size(); ++si)
+            if (DB.stmts[si].kind == SK::Assign &&
+                (count_occ(DB.stmts[si].rhs, sub) + count_occ(DB.stmts[si].lhs, sub)) > 0) {
+                insert_at = si; break;
+            }
+        for (int si = insert_at; si < (int)DB.stmts.size(); ++si) {
+            const Stmt& s = DB.stmts[si];
+            if (s.kind == SK::Assign && s.lhs && s.lhs->kind == EK::Var && leaves.count(s.lhs->name))
+                return false;
+        }
+        return true;
+    }
     /* True if `e` contains a `/` or `%` — hoisting such a value to a dominator could
      * move a guarded division ahead of its guard (a new divide-by-zero fault). */
     /* (Measured 2026-07-16: relaxing this to allow a non-zero, non-(-1) CONSTANT divisor
@@ -9128,18 +9150,27 @@ struct Decompiler {
                 if (cnt < 2 || ublocks.size() < 2) continue;   /* single-block: cse_cross_statement */
                 int D = -1; for (int ub : ublocks) { D = common_dom(D, ub); if (D < 0) break; }
                 if (D < 0 || (size_t)D >= blocks.size()) continue;
-                /* STRICT dominator only: never place the def in a use block (a within-
-                 * block leaf reassignment between two occurrences would make a single
-                 * shared temp wrong — that case is cse_cross_statement's job). And
-                 * hard-assert real dominance so a common_dom slip can't cause a
+                /* Hard-assert real dominance so a common_dom slip can't cause a
                  * use-before-def. */
-                if (ublocks.count(D)) continue;
                 bool dom_ok = true;
                 for (int ub : ublocks) if (!dominates(D, ub)) { dom_ok = false; break; }
                 if (!dom_ok) continue;
                 std::set<std::string> leaves; collect_var_names(sub, leaves);
                 if (leaves.empty()) continue;
                 if (!leaves_stable(D, ublocks, leaves)) continue;
+                /* D may be a USE block itself. That used to be refused outright, which
+                 * also left the "place the def before the first use in D" branch below
+                 * permanently dead — and forced every propagation-duplicated value whose
+                 * dominator also uses it to stay duplicated at every site (NullWare's
+                 * decryptor re-derives one xorshift hash 18 times across 15 blocks).
+                 * The real hazard is narrow: leaves_stable() walks only D's SUCCESSORS
+                 * and never inspects D itself, so a leaf reassigned INSIDE D after the
+                 * insertion point would leave the shared temp stale. Check exactly that
+                 * instead of rejecting the whole case.
+                 * Require 3+ uses here: hoisting a mere 2-use value out of its own
+                 * dominator costs a decl + a def line to save ONE duplicate, which
+                 * measured as a NET +327 lines across NullWare. */
+                if (ublocks.count(D) && (cnt < 3 || !leaves_stable_within(D, sub, leaves))) continue;
                 if (cnt > bestcnt || (cnt==bestcnt && sz>bestsz)) { best=sub; bestcnt=cnt; bestsz=sz; bestD=D; bestUses=ublocks; }
             }
             if (!best) break;
