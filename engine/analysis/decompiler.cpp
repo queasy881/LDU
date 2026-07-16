@@ -55,6 +55,49 @@
 #include <capstone/capstone.h>
 #endif
 
+/* Portable 64x64 -> HIGH 64 bits of the 128-bit product (MSVC has no __int128).
+ * Used to VERIFY a recovered magic-number divisor, not to emit code. */
+static uint64_t ds_umulhi64(uint64_t a, uint64_t b) {
+    uint64_t al = (uint32_t)a, ah = a >> 32, bl = (uint32_t)b, bh = b >> 32;
+    uint64_t ll = al * bl, lh = al * bh, hl = ah * bl, hh = ah * bh;
+    uint64_t mid = (ll >> 32) + (uint32_t)lh + (uint32_t)hl;
+    return hh + (lh >> 32) + (hl >> 32) + (mid >> 32);
+}
+
+/* MAGIC-NUMBER DIVISION recovery. A compiler turns `x / N` (N a constant) into
+ * `umulh(x, M) >> s` — which reads as unintelligible magic. Recover N from (M,s):
+ * N ~= 2^(64+s)/M, then PROVE the candidate by checking the identity
+ * `umulh(x,M) >> s == x / N` on the values where a wrong N diverges: the small
+ * cases, the extremes, and — decisively — the multiples k*N and their neighbours
+ * (an off-by-one divisor always breaks at a quotient boundary). Granlund-Montgomery
+ * guarantees a correct magic is exact for ALL x, so a candidate that survives these
+ * is the real divisor. Returns false unless proven. */
+static bool ds_magic_udiv(uint64_t M, int s, uint64_t& N) {
+    if (M == 0 || s < 0 || s > 63) return false;
+    long double q = std::ldexp((long double)1.0, 64 + s) / (long double)M;   /* 2^(64+s)/M */
+    if (!(q >= 3.0L) || q > 1.0e18L) return false;      /* N<3 is a shift, not a magic */
+    uint64_t base = (uint64_t)(q + 0.5L);
+    for (int d = -1; d <= 1; ++d) {
+        uint64_t n = base + (uint64_t)(int64_t)d;
+        if (n < 3 || n > (~0ull / 8)) continue;         /* keep k*n below overflow */
+        static const uint64_t probe[] = {
+            0, 1, 2, 3, 7, 255, 65535, 0x7fffffffull, 0x80000000ull,
+            0xfffffffeull, 0x100000000ull, 0x123456789abcdefull,
+            ~0ull / 3, ~0ull / 2, ~0ull - 1, ~0ull
+        };
+        bool ok = true;
+        for (uint64_t x : probe)
+            if ((ds_umulhi64(x, M) >> s) != x / n) { ok = false; break; }
+        for (uint64_t k = 1; k <= 4 && ok; ++k) {       /* quotient boundaries */
+            uint64_t xs[3] = { k * n - 1, k * n, k * n + 1 };
+            for (uint64_t x : xs)
+                if ((ds_umulhi64(x, M) >> s) != x / n) { ok = false; break; }
+        }
+        if (ok) { N = n; return true; }
+    }
+    return false;
+}
+
 /* ====================================================================== */
 /*  malloc'd-string helper (shared by both build configurations)          */
 /* ====================================================================== */
@@ -102,8 +145,96 @@ std::string hex(uint64_t v) {
     return buf;
 }
 
-std::string sani(const std::string& in) {
-    /* Make an identifier safe for C: keep [A-Za-z0-9_], map the rest to '_'. */
+/* MSVC C++ name demangling via dbghelp!UnDecorateSymbolName, resolved at RUNTIME
+ * (LoadLibrary/GetProcAddress — no link-time dependency, and the raw name simply
+ * passes through when unavailable or on non-Windows). A mangled
+ *   ?cout@std@@3V?$basic_ostream@DU?$char_traits@D@std@@@1@A
+ * becomes `std::cout`, and
+ *   ?_Osfx@?$basic_ostream@DU?$char_traits@D@std@@@std@@QEAAXXZ
+ * becomes `std::basic_ostream<char>::_Osfx`. sani()ing THAT yields a readable
+ * identifier instead of sani()ing the mangled soup into
+ * `__Osfx___basic_ostream_DU__char_traits_D_std___std__QEAAXXZ`.
+ * UNDNAME_NAME_ONLY (0x1000) = qualified name only (no return type/params/CC).
+ * Cached under a mutex: dumptool decompiles across N threads. DS_NO_DEMANGLE. */
+#if defined(_WIN32)
+extern "C" __declspec(dllimport) void* __stdcall LoadLibraryA(const char*);
+extern "C" __declspec(dllimport) void* __stdcall GetProcAddress(void*, const char*);
+#endif
+/* Collapse the standard library's template spellings to the typedefs a human
+ * actually reads — `std::basic_ostream<char,std::char_traits<char> >` is
+ * `std::ostream` — and give operator symbols pronounceable names. Without this the
+ * sani'd identifier is 60 characters of template soup
+ * (`std__basic_ostream_char_std__char_traits_char_____operator__`); with it, it is
+ * `std__ostream__operator_shl`. NOTE an infix `a << b` is NOT an option: the /TC
+ * gate compiles C, where `void* << char*` is invalid — so the NAME carries the
+ * meaning instead. */
+static void simplify_std_name(std::string& s) {
+    struct R { const char* from; const char* to; };
+    static const R tbl[] = {
+        /* longest / most specific first */
+        {"basic_string<char,std::char_traits<char>,std::allocator<char> >", "string"},
+        {"basic_string<char,std::char_traits<char>,std::allocator<char>>",  "string"},
+        {"basic_iostream<char,std::char_traits<char> >", "iostream"},
+        {"basic_iostream<char,std::char_traits<char>>",  "iostream"},
+        {"basic_ostream<wchar_t,std::char_traits<wchar_t> >", "wostream"},
+        {"basic_istream<wchar_t,std::char_traits<wchar_t> >", "wistream"},
+        {"basic_ostream<char,std::char_traits<char> >", "ostream"},
+        {"basic_ostream<char,std::char_traits<char>>",  "ostream"},
+        {"basic_istream<char,std::char_traits<char> >", "istream"},
+        {"basic_istream<char,std::char_traits<char>>",  "istream"},
+        {"basic_streambuf<char,std::char_traits<char> >", "streambuf"},
+        {"basic_streambuf<char,std::char_traits<char>>",  "streambuf"},
+        {"basic_ios<char,std::char_traits<char> >", "ios"},
+        {"basic_ios<char,std::char_traits<char>>",  "ios"},
+        {"operator<<", "operator_shl"}, {"operator>>", "operator_shr"},
+        {"operator==", "operator_eq"},  {"operator!=", "operator_ne"},
+        {"operator<=", "operator_le"},  {"operator>=", "operator_ge"},
+        {"operator[]", "operator_idx"}, {"operator()", "operator_call"},
+        {"operator+=", "operator_addeq"}, {"operator-=", "operator_subeq"},
+        {"operator new", "operator_new"}, {"operator delete", "operator_delete"},
+        {"operator=", "operator_assign"},
+    };
+    for (const R& r : tbl) {
+        size_t fl = std::strlen(r.from), tl = std::strlen(r.to), p = 0;
+        while ((p = s.find(r.from, p)) != std::string::npos) { s.replace(p, fl, r.to); p += tl; }
+    }
+}
+
+static std::string demangle_msvc(const std::string& mangled) {
+    if (mangled.size() < 2 || mangled[0] != '?') return mangled;
+#if defined(_WIN32)
+    if (std::getenv("DS_NO_DEMANGLE")) return mangled;
+    typedef unsigned long(__stdcall * UnDecFn)(const char*, char*, unsigned long, unsigned long);
+    static std::mutex m;
+    static std::map<std::string, std::string> cache;
+    static UnDecFn fn = nullptr;
+    static bool tried = false;
+    std::lock_guard<std::mutex> lk(m);
+    auto it = cache.find(mangled);
+    if (it != cache.end()) return it->second;
+    if (!tried) {
+        tried = true;
+        void* h = LoadLibraryA("dbghelp.dll");
+        if (h) fn = (UnDecFn)GetProcAddress(h, "UnDecorateSymbolName");
+    }
+    std::string out = mangled;
+    if (fn) {
+        char buf[512];
+        unsigned long n = fn(mangled.c_str(), buf, (unsigned long)sizeof buf, 0x1000u);
+        if (n && buf[0]) { out.assign(buf); simplify_std_name(out); }
+    }
+    cache[mangled] = out;
+    return out;
+#else
+    return mangled;
+#endif
+}
+
+std::string sani(const std::string& raw) {
+    /* Make an identifier safe for C: keep [A-Za-z0-9_], map the rest to '_'.
+     * An MSVC-mangled `?...` name is demangled FIRST so the identifier reads as
+     * `std__cout` / `std__basic_ostream_char___Osfx`, not mangled soup. */
+    const std::string in = demangle_msvc(raw);
     std::string out;
     out.reserve(in.size());
     for (char c : in) {
@@ -780,6 +911,13 @@ CC cmovcc_of(unsigned id) {
         case X86_INS_CMOVB:  return CC::B;  case X86_INS_CMOVBE: return CC::BE;
         case X86_INS_CMOVA:  return CC::A;  case X86_INS_CMOVAE: return CC::AE;
         case X86_INS_CMOVS:  return CC::S;  case X86_INS_CMOVNS: return CC::NS;
+        /* O/NO/P/NP were MISSING: an unmodeled cmov falls through to the
+         * "unmodeled op that writes a register" path, which defines the dest as an
+         * opaque `__cmovo(x)` intrinsic — a PHANTOM call that silently drops the
+         * conditional move (the overflow-checked abs `x<0 ? -x : x` lowers to
+         * `neg; cmovo`). setcc_of already maps all four. */
+        case X86_INS_CMOVO:  return CC::O;  case X86_INS_CMOVNO: return CC::NO;
+        case X86_INS_CMOVP:  return CC::P;  case X86_INS_CMOVNP: return CC::NP;
         default: return CC::NONE;
     }
 }
@@ -3342,6 +3480,21 @@ struct Decompiler {
         /* rip-relative: resolve to absolute rva and read constant from image */
         if (m.base == X86_REG_RIP && m.index == X86_REG_INVALID) {
             uint64_t abs = cur_insn_addr + cur_insn_size + (uint64_t)m.disp;
+            /* A load from an IMPORT's IAT slot yields the imported object/function
+             * address. The IAT lives in read-only .rdata but is filled by the LOADER,
+             * so the file bytes are a stale hint — inlining them as a constant below
+             * would be flat wrong. Name the import instead: a data import like
+             * `?cout@std@@3V?$basic_ostream@...@A` renders as `std__cout`
+             * (demangled by sani), which is what `std::cout << x` loads.
+             * DS_NO_IMPDATA. */
+            if (width == 8 && !std::getenv("DS_NO_IMPDATA")) {
+                for (size_t i = 0; i < e->import_len; ++i)
+                    if (e->imports[i].iat_rva == abs && e->imports[i].name[0]) {
+                        std::string inm = sani(e->imports[i].name);
+                        imported_data.insert(inm);   /* -> `extern void* <inm>;` */
+                        return mkText(inm, 8);
+                    }
+            }
             /* A load from a WRITABLE global is a mutable variable: emit a deref of
              * its address, not the (initial) image byte — otherwise `mov r8,[g];
              * test r8,r8` collapses to `if (0 != 0)`. Read-only data (string/float
@@ -3561,6 +3714,7 @@ struct Decompiler {
         bool shared_typedef = false;         /* tag is a shared NAMED type (Vec2/3/4) -> include-guard it */
         bool cls_kw_struct = false;          /* RTTI kind is `struct` (U/T tag) rather than `class` (V) */
         std::string qual_name;               /* RAW qualified RTTI name (game::Entity) for the namespace block */
+        bool is_vector = false;              /* MSVC std::vector {_Myfirst,_Mylast,_Myend} range struct */
     };
     std::map<std::string, ParamStruct> param_structs;   /* param name -> layout */
     std::map<std::string, std::set<int64_t>> struct_field_ptr;  /* param -> offsets whose value is used as an address */
@@ -4227,6 +4381,7 @@ struct Decompiler {
             body += "    char _pad_end[" + std::to_string((long long)(L.stride - pos)) + "];\n";
 
         std::string s;
+        if (L.is_vector) s += "/* std::vector — _Myfirst=begin, _Mylast=end, _Myend=capacity; size()=(_Mylast-_Myfirst)/sizeof(T) */\n";
         if (!guard.empty()) s += "#ifndef " + guard + "\n#define " + guard + "\n";
         auto flat = [&]{ return "#pragma pack(push, 1)\n" + kw + " " + L.tag + " {\n" + body + "};\n#pragma pack(pop)\n"; };
         /* NAMESPACE: a namespaced RTTI name (game::Entity) dual-emits — a REAL
@@ -4261,9 +4416,44 @@ struct Decompiler {
         if (L.shared_typedef) {   /* Vec2/3/4 -> x/y/z/w */
             switch (off) { case 0: return "x"; case 4: return "y"; case 8: return "z"; case 12: return "w"; }
         }
+        if (L.is_vector) {        /* std::vector -> MSVC _Myfirst/_Mylast/_Myend */
+            switch (off) { case 0: return "_Myfirst"; case 8: return "_Mylast"; case 16: return "_Myend"; }
+        }
         return "field_" + hex(off).substr(2);
     }
+    /* Recognize an MSVC std::vector: the `_Mylast - _Myfirst` begin/end pointer
+     * difference (its .size() numerator) over a recovered struct's fields at
+     * offsets 8 and 0. That exact range subtraction is a high-precision STL
+     * signature — name the fields _Myfirst/_Mylast/_Myend and tag the struct so it
+     * reads as a vector, not an anonymous pointer bag. DS_NO_STLVEC. */
+    void detect_stl_vectors() {
+        if (std::getenv("DS_NO_STLVEC")) return;
+        std::set<std::string> vecs;
+        std::function<void(const ExprP&)> scan = [&](const ExprP& e) {
+            if (!e) return;
+            if (e->kind == EK::Binary && e->op == "-" && e->a && e->b &&
+                e->a->kind == EK::Mem && e->b->kind == EK::Mem) {
+                std::string pa, pb; int64_t oa = 0, ob = 0;
+                if (struct_base_offset(e->a->a, pa, oa) && oa == 8 &&
+                    struct_base_offset(e->b->a, pb, ob) && ob == 0 &&
+                    pa == pb && param_structs.count(pa)) {
+                    const ParamStruct& L = param_structs[pa];
+                    if (L.fw.count(0) && L.fw.at(0) == 8 && L.fw.count(8) && L.fw.at(8) == 8)
+                        vecs.insert(pa);
+                }
+            }
+            scan(e->a); scan(e->b); scan(e->c);
+            for (auto& ar : e->args) scan(ar);
+        };
+        for (auto& b : blocks) {
+            for (auto& s : b.stmts) { scan(s.lhs); scan(s.rhs); }
+            scan(b.cond); scan(b.ret_value); scan(b.ret_raw); scan(b.switch_var); scan(b.tail_call);
+        }
+        for (auto& p : vecs) param_structs[p].is_vector = true;
+    }
+
     bool used_opnew = false;                    /* an operator_new call was recovered -> emit its proto */
+    std::set<std::string> imported_data;        /* data imports referenced (std::cout/cin) -> extern decls */
     std::set<std::string> referenced_vtables;   /* <Class>__vftable symbols referenced -> extern decls */
     /* OPERATOR NEW recovery: a function whose result is used as the object that a constructor
      * stores a known vtable into (`obj = fun_X(size); obj->__vftable = &<vtable>`) IS an allocator
@@ -5675,6 +5865,9 @@ struct Decompiler {
     bool used_stos = false;   /* __stosb/w/d/q appears (rep stos fill) -> emit prototypes */
     bool used_cpuid = false;  /* __cpuid_e?x appears -> emit prototypes */
     bool used_segread = false; /* __readgsqword/__readfsqword appears -> emit prototypes */
+    bool used_u2f = false;     /* __u2f (uint bits -> float) helper for a movd xmm,r bit reinterpret */
+    bool used_f32hi = false;   /* __f32_hi (clear low 16 mantissa bits) — the Dekker high-part idiom */
+    bool used_min = false, used_max = false; /* __min/__max recovered from a select ternary */
 
     /* Classify a VEX FMA opcode: element width (4/8), operand variant (132/213/231),
      * whether the product is negated (fnmadd/fnmsub), whether the addend is
@@ -6362,13 +6555,42 @@ struct Decompiler {
                         if (is_xmm(dr0) && !is_xmm(sr0)) {
                             ExprP iv = rvalue(OP(1));
                             if (iv && !iv->is_float && xmm_bits_scalar_float(ix, dr0)) {
-                                std::string tn = "t" + std::to_string(++temp_seq);
-                                spill_temps.insert(tn); var_width[tn] = rw;   /* integer temp */
-                                Stmt st; st.kind = SK::Assign; st.lhs = mkVar(tn, rw); st.rhs = iv;
-                                b.stmts.push_back(std::move(st));
-                                ExprP reint = mkMem(mkAddrOf(mkVar(tn, rw)), rw, false);  /* *(float*)&t */
-                                reint->is_float = true;
-                                do_dst(b, OP(0), reint, in.addr);
+                                /* Recognize the Dekker HIGH-PART idiom `*(float*)&(
+                                 * *(u32*)&X & 0xffff0000)` — clearing a float's low 16
+                                 * mantissa bits for an extra-precision split — and emit a
+                                 * single semantic helper `__f32_hi(X)` (reads clean even
+                                 * inlined). Otherwise `__u2f(bits)` for a generic bits->
+                                 * float. Both width-4 only; width-8 keeps the mem form. */
+                                ExprP hiX;
+                                if (rw == 4 && iv->kind == EK::Binary && iv->op == "&" &&
+                                    iv->b && iv->b->kind == EK::Const &&
+                                    (uint32_t)iv->b->cval == 0xffff0000u &&
+                                    iv->a && iv->a->kind == EK::Mem && iv->a->a &&
+                                    iv->a->a->kind == EK::AddrOf && iv->a->a->a)
+                                    hiX = iv->a->a->a;
+                                if (rw == 4 && hiX) {
+                                    auto call = std::make_shared<Expr>();
+                                    call->kind = EK::Call; call->callee = "__f32_hi";
+                                    call->width = 4; call->is_float = true; call->ret_kind = 3;
+                                    call->args.push_back(clone(hiX));
+                                    used_f32hi = true;
+                                    do_dst(b, OP(0), call, in.addr);
+                                } else if (rw == 4) {
+                                    auto call = std::make_shared<Expr>();
+                                    call->kind = EK::Call; call->callee = "__u2f";
+                                    call->width = 4; call->is_float = true; call->ret_kind = 3;
+                                    call->args.push_back(iv);
+                                    used_u2f = true;
+                                    do_dst(b, OP(0), call, in.addr);
+                                } else {
+                                    std::string tn = "t" + std::to_string(++temp_seq);
+                                    spill_temps.insert(tn); var_width[tn] = rw;   /* integer temp */
+                                    Stmt st; st.kind = SK::Assign; st.lhs = mkVar(tn, rw); st.rhs = iv;
+                                    b.stmts.push_back(std::move(st));
+                                    ExprP reint = mkMem(mkAddrOf(mkVar(tn, rw)), rw, false);  /* *(double*)&t */
+                                    reint->is_float = true;
+                                    do_dst(b, OP(0), reint, in.addr);
+                                }
                                 if (rw < 8) { regfile_hi[dr0] = mkConst(0, 8); xmm_packed_var.erase(dr0); }
                                 break;
                             }
@@ -8673,6 +8895,24 @@ struct Decompiler {
                 !(e->is_unsigned && !e->a->is_unsigned))
                 return peephole_expr(e->a);
         }
+        /* MAGIC-NUMBER DIVISION: `umulh(X, M) >> s` is how the compiler spells
+         * `X / N` for a constant N. Recover and PROVE N (ds_magic_udiv verifies the
+         * identity on the quotient boundaries), then emit the real division — this
+         * is the single biggest readability win on constant division/modulo, which
+         * otherwise reads as an unintelligible 64-bit magic multiply.
+         * DS_NO_MAGICDIV. */
+        if (e->kind == EK::Binary && e->op == ">>" && e->a && e->b &&
+            e->b->kind == EK::Const && !e->is_float &&
+            e->a->kind == EK::Binary && e->a->op == "umulh" &&
+            e->a->a && e->a->b && e->a->b->kind == EK::Const &&
+            !std::getenv("DS_NO_MAGICDIV")) {
+            uint64_t N = 0;
+            if (ds_magic_udiv((uint64_t)e->a->b->cval, (int)e->b->cval, N)) {
+                ExprP d = mkBinary("/", clone(e->a->a), mkConst((int64_t)N, 8, true), 8, true);
+                d->is_unsigned = true;
+                return d;
+            }
+        }
         /* a same-width, same-signedness integer cast over a plain var/mem read of that
          * width is a no-op — `(int)v1` after D1 narrowed v1 to `int`. (fold has this rule
          * but runs at lift, before narrowing; re-apply it here on the FINAL widths.) */
@@ -9530,7 +9770,7 @@ struct Decompiler {
             case EK::AddrOf: return 15;
             case EK::Cast: return 14;
             case EK::Unary: return 14;
-            case EK::Ternary: return 2;
+            case EK::Ternary: return is_minmax(e) ? 99 : 2;   /* __min/__max render as a call */
             case EK::Reg: return 99;
             case EK::Binary: {
                 const std::string& op = e->op;
@@ -9610,6 +9850,37 @@ struct Decompiler {
         std::string s;
         if (read_cstring((uint64_t)e->cval, s)) return "\"" + s + "\"";
         return "";
+    }
+
+    /* std::min/std::max recovered from a select ternary: `C ? T : F` where C
+     * compares the SAME two side-effect-free operands that are the arms. Emits
+     * `__min(X,Y)` / `__max(X,Y)`. Strict exprEqual so the compared and selected
+     * values are identical (signedness included) => the macro is exact; has_call
+     * guard so the double-evaluating macro is safe. DS_NO_MINMAX. */
+    /* PURE shape test (no side effects) — also used by prec() so a recovered
+     * `__min(a,b)` is treated as a call (no parens), not a low-precedence ternary. */
+    bool is_minmax(const ExprP& e, ExprP* px = nullptr, ExprP* py = nullptr, bool* pmin = nullptr) const {
+        if (std::getenv("DS_NO_MINMAX")) return false;
+        if (!e || e->kind != EK::Ternary || !e->a || !e->b || !e->c) return false;
+        const ExprP& c = e->a;
+        if (c->kind != EK::Binary || !c->a || !c->b) return false;
+        bool lt = (c->op == "<" || c->op == "<="), gt = (c->op == ">" || c->op == ">=");
+        if (!lt && !gt) return false;
+        ExprP X = c->a, Y = c->b, T = e->b, F = e->c;
+        if (has_call(X) || has_call(Y)) return false;   /* macro double-evals -> must be pure */
+        bool isMin;
+        if (exprEqual(T, X) && exprEqual(F, Y)) isMin = lt;        /* X<Y?X:Y=min, X>Y?X:Y=max */
+        else if (exprEqual(T, Y) && exprEqual(F, X)) isMin = gt;   /* X<Y?Y:X=max, X>Y?Y:X=min */
+        else return false;
+        if (px) *px = X; if (py) *py = Y; if (pmin) *pmin = isMin;
+        return true;
+    }
+    bool try_minmax(const ExprP& e, std::string& out) {
+        ExprP X, Y; bool isMin = false;
+        if (!is_minmax(e, &X, &Y, &isMin)) return false;
+        if (isMin) used_min = true; else used_max = true;
+        out = std::string(isMin ? "__min(" : "__max(") + render(X) + ", " + render(Y) + ")";
+        return true;
     }
 
     /* APIs whose integer args are plain counts/millisecond delays and so read
@@ -9731,6 +10002,13 @@ struct Decompiler {
             case EK::Unary:  return e->op + rsub(e->a, 14, true);
             case EK::Cast:   return e->op + rsub(e->a, 14, true);
             case EK::Ternary: {
+                /* std::min / std::max: a select whose condition compares the SAME two
+                 * (side-effect-free) operands that are the two arms — `X<Y?X:Y` etc.
+                 * The strict exprEqual match means the compared and selected values are
+                 * identical (incl. signedness), so the `__min`/`__max` macro is exact.
+                 * DS_NO_MINMAX. */
+                std::string mm;
+                if (try_minmax(e, mm)) return mm;
                 /* When the two arms differ in pointer-ness (`cond ? 0x16 : ptr`, a
                  * capacity/max on a mis-typed pointer, or a genuine ptr/int select),
                  * the `:` is C4047. Coerce the pointer arm to (long long) so both arms
@@ -10211,6 +10489,12 @@ struct Decompiler {
      * both gate on the identical sigtab condition, so a typed proto always has a
      * matching clamped call site. On true, `pcount` = the required arg count. */
     bool callee_typed_proto_arity(const std::string& c, int& pcount) const {
+        /* A recognized imported API has an EXACT arity from the built-in table, so
+         * emit a TYPED proto and clamp its call sites to it — otherwise the bare
+         * K&R `HeapFree()` is declared with no params yet called with three, and the
+         * declaration never matches the call. Gating both the proto emitter and the
+         * call-site clamp on this one predicate keeps them consistent (no C2197/8). */
+        { int aargc, ark; if (known_api(c, aargc, ark)) { pcount = aargc; return true; } }
         if (!sigtab) return false;
         if (c.rfind("fun_", 0) != 0 && c.rfind("sub_", 0) != 0) return false;
         uint64_t crva = strtoull(c.c_str() + 4, nullptr, 16);
@@ -16934,6 +17218,7 @@ struct Decompiler {
         /* recover per-function struct layouts for pointer params (conservative, with
          * raw fallback) so `*(int*)((char*)a1 + 0x140)` renders `a1->field_140`. */
         recover_struct_layouts();
+        detect_stl_vectors();            /* _Mylast-_Myfirst range idiom -> name a std::vector's fields */
         recover_operator_new();          /* alloc-then-vtable-store callee -> operator_new / void*(size_t) */
         assign_global_struct_locals();   /* cache read-only global struct bases in locals */
         coalesce_locals();   /* AFTER struct recovery so decl_type (including struct-ptr, float,
@@ -17520,6 +17805,10 @@ struct Decompiler {
         /* extern decls for the vtable symbols referenced by `obj->__vftable = &<Class>__vftable`
          * (populated during body emit). The /TC gate compiles (no link), so extern is fine. */
         for (auto& v : referenced_vtables) protos += "extern void* " + v + ";\n";
+        /* data imports (std::cout / std::cin / ...) referenced by an IAT load: the
+         * slot's value is the imported object's address, so model it as a pointer. */
+        for (auto& v : imported_data)
+            if (!extern_callees.count(v)) protos += "extern void* " + v + ";\n";
         /* resolved virtual methods called by name need a proto (the /TC gate compiles
          * each function alone). K&R `()` so any arg count compiles. */
         for (auto& v : virtual_callees)
@@ -17550,6 +17839,23 @@ struct Decompiler {
             protos += "static float __fabsf(float x){ return x<0.0f?-x:x; }\n";
             protos += "#endif\n";
         }
+        if (used_u2f) {
+            /* reinterpret a 32-bit pattern as a float (bits-to-float), the write side
+             * of the movd xmm,r bit round-trip. Union type-pun is well-defined in C
+             * and compiles + runs standalone. Include-guarded for concatenated TUs. */
+            protos += "#ifndef __DS_U2F_DEFINED\n#define __DS_U2F_DEFINED\n";
+            protos += "static float __u2f(unsigned int __b){ union { unsigned int u; float f; } __x; __x.u = __b; return __x.f; }\n";
+            protos += "#endif\n";
+        }
+        if (used_f32hi) {
+            /* clear a float's low 16 mantissa bits — the Dekker high-part split used for
+             * extra-precision products (`hi*hi`, `hi + lo`). Self-contained + guarded. */
+            protos += "#ifndef __DS_F32HI_DEFINED\n#define __DS_F32HI_DEFINED\n";
+            protos += "static float __f32_hi(float __x){ union { float f; unsigned int u; } __v; __v.f = __x; __v.u &= 0xffff0000u; return __v.f; }\n";
+            protos += "#endif\n";
+        }
+        if (used_min) protos += "#ifndef __min\n#define __min(a,b) ((a)<(b)?(a):(b))\n#endif\n";
+        if (used_max) protos += "#ifndef __max\n#define __max(a,b) ((a)>(b)?(a):(b))\n#endif\n";
         if (used_sqrt) {
             /* real CRT exports (unlike header-inline fabsf): a prototype compiles
              * standalone and links against the CRT for the behavioral corpus. */
@@ -17627,13 +17933,21 @@ struct Decompiler {
             std::string pp;
             int tp_pc = 0;
             if (callee_typed_proto_arity(c, tp_pc)) {
-                uint64_t crva = strtoull(c.c_str() + 4, nullptr, 16);
-                const FuncSig& s = sigtab->at(crva);
-                for (int p = 0; p < tp_pc; ++p) {
-                    if (p) pp += ", ";
-                    if (s.float_mask & (1u << p))
-                        pp += (s.double_mask & (1u << p)) ? "double" : "float";
-                    else pp += "long long";
+                int kargc, kark;
+                if (known_api(c, kargc, kark)) {
+                    /* known imported API: exact arity from the table. `(void)` for a
+                     * 0-arg API — a bare `()` would be K&R (unspecified) again. */
+                    if (tp_pc == 0) pp = "void";
+                    else for (int p = 0; p < tp_pc; ++p) { if (p) pp += ", "; pp += "long long"; }
+                } else {
+                    uint64_t crva = strtoull(c.c_str() + 4, nullptr, 16);
+                    const FuncSig& s = sigtab->at(crva);
+                    for (int p = 0; p < tp_pc; ++p) {
+                        if (p) pp += ", ";
+                        if (s.float_mask & (1u << p))
+                            pp += (s.double_mask & (1u << p)) ? "double" : "float";
+                        else pp += "long long";
+                    }
                 }
             }
             protos += std::string(rt) + " " + c + "(" + pp + ");\n";
