@@ -55,49 +55,6 @@
 #include <capstone/capstone.h>
 #endif
 
-/* Portable 64x64 -> HIGH 64 bits of the 128-bit product (MSVC has no __int128).
- * Used to VERIFY a recovered magic-number divisor, not to emit code. */
-static uint64_t ds_umulhi64(uint64_t a, uint64_t b) {
-    uint64_t al = (uint32_t)a, ah = a >> 32, bl = (uint32_t)b, bh = b >> 32;
-    uint64_t ll = al * bl, lh = al * bh, hl = ah * bl, hh = ah * bh;
-    uint64_t mid = (ll >> 32) + (uint32_t)lh + (uint32_t)hl;
-    return hh + (lh >> 32) + (hl >> 32) + (mid >> 32);
-}
-
-/* MAGIC-NUMBER DIVISION recovery. A compiler turns `x / N` (N a constant) into
- * `umulh(x, M) >> s` — which reads as unintelligible magic. Recover N from (M,s):
- * N ~= 2^(64+s)/M, then PROVE the candidate by checking the identity
- * `umulh(x,M) >> s == x / N` on the values where a wrong N diverges: the small
- * cases, the extremes, and — decisively — the multiples k*N and their neighbours
- * (an off-by-one divisor always breaks at a quotient boundary). Granlund-Montgomery
- * guarantees a correct magic is exact for ALL x, so a candidate that survives these
- * is the real divisor. Returns false unless proven. */
-static bool ds_magic_udiv(uint64_t M, int s, uint64_t& N) {
-    if (M == 0 || s < 0 || s > 63) return false;
-    long double q = std::ldexp((long double)1.0, 64 + s) / (long double)M;   /* 2^(64+s)/M */
-    if (!(q >= 3.0L) || q > 1.0e18L) return false;      /* N<3 is a shift, not a magic */
-    uint64_t base = (uint64_t)(q + 0.5L);
-    for (int d = -1; d <= 1; ++d) {
-        uint64_t n = base + (uint64_t)(int64_t)d;
-        if (n < 3 || n > (~0ull / 8)) continue;         /* keep k*n below overflow */
-        static const uint64_t probe[] = {
-            0, 1, 2, 3, 7, 255, 65535, 0x7fffffffull, 0x80000000ull,
-            0xfffffffeull, 0x100000000ull, 0x123456789abcdefull,
-            ~0ull / 3, ~0ull / 2, ~0ull - 1, ~0ull
-        };
-        bool ok = true;
-        for (uint64_t x : probe)
-            if ((ds_umulhi64(x, M) >> s) != x / n) { ok = false; break; }
-        for (uint64_t k = 1; k <= 4 && ok; ++k) {       /* quotient boundaries */
-            uint64_t xs[3] = { k * n - 1, k * n, k * n + 1 };
-            for (uint64_t x : xs)
-                if ((ds_umulhi64(x, M) >> s) != x / n) { ok = false; break; }
-        }
-        if (ok) { N = n; return true; }
-    }
-    return false;
-}
-
 /* ====================================================================== */
 /*  malloc'd-string helper (shared by both build configurations)          */
 /* ====================================================================== */
@@ -394,6 +351,8 @@ struct Expr {
     std::string text;          /* Str : already-formatted literal text */
     bool hex_hint = false;      /* Const: render as hex (a bitmask/magic in a bitwise op) */
     bool char_hint = false;     /* Const: render as a char literal ('A') — a byte comparison */
+    bool dec_hint = false;      /* Const: render as DECIMAL (a recovered divisor: `x / 10`) */
+    bool null_hint = false;     /* Const 0: render as NULL (compared/assigned to a pointer) */
 };
 
 ExprP mkConst(int64_t v, int w = 4, bool u = false) {
@@ -689,22 +648,41 @@ bool has_call(const ExprP& e) {
     for (auto& ar : e->args) if (has_call(ar)) return true;
     return false;
 }
-/* Like has_call but IGNORES pure compiler intrinsics (__bsr / __umulh /
- * __pmovmskb / __mulh ...): they are value-producing, side-effect-free reads, so
- * a subexpression containing one is safe to hoist/CSE. Only a real callee
- * (fun_x / import / rand) blocks CSE. Used by the CSE passes so an intrinsic-
- * bearing address reused across an unrolled access collapses to one temp instead
- * of a multi-KB re-inlined line. */
+/* Is this callee a PURE value computation — safe to hoist, duplicate, or drop?
+ *
+ * The `__` prefix is the general rule (__bsr / __umulh / __pmovmskb / __mulh ...):
+ * value-producing, side-effect-free reads. Two exceptions matter:
+ *  - __stos* / __movs* WRITE MEMORY despite the `__` prefix. Treating them as pure
+ *    would let a CSE pass collapse or a DCE pass delete a real memory fill/copy.
+ *  - the _rotl/_rotr family IS pure, but MSVC spells it with a SINGLE underscore, so
+ *    the `__` test misses it — which left dead `v = _rotl(...)` temps uncollectable. */
+bool is_pure_callee(const std::string& c) {
+    /* NOT pure despite the `__` prefix: */
+    if (c.rfind("__stos", 0) == 0 || c.rfind("__movs", 0) == 0) return false; /* write memory */
+    if (c == "__writemxcsr") return false;              /* writes the SSE control word */
+    if (c == "__fastfail") return false;                /* noreturn: aborts the process */
+    /* NOT idempotent: each read returns a different value, so CSE must never collapse
+     * two of them into one (they are pure in the no-side-effect sense, but not equal). */
+    if (c == "__rdtsc" || c == "_xgetbv") return false;
+    if (c == "__security_check_cookie" || c == "__chkstk") return false;      /* may not return */
+    if (c.rfind("__", 0) == 0) return true;
+    return c.rfind("_rotl", 0) == 0 || c.rfind("_rotr", 0) == 0;
+}
+/* Like has_call but IGNORES pure compiler intrinsics: a subexpression containing one
+ * is safe to hoist/CSE. Only a real callee (fun_x / import / rand) — or a memory-
+ * writing intrinsic — blocks CSE. Used by the CSE passes so an intrinsic-bearing
+ * address reused across an unrolled access collapses to one temp instead of a
+ * multi-KB re-inlined line. */
 bool has_impure_call(const ExprP& e) {
     if (!e) return false;
-    if (e->kind == EK::Call && e->callee.rfind("__", 0) != 0) return true;
+    if (e->kind == EK::Call && !is_pure_callee(e->callee)) return true;
     if (has_impure_call(e->a) || has_impure_call(e->b) || has_impure_call(e->c)) return true;
     for (auto& ar : e->args) if (has_impure_call(ar)) return true;
     return false;
 }
 int count_impure_calls(const ExprP& e) {
     if (!e) return 0;
-    int n = (e->kind == EK::Call && e->callee.rfind("__", 0) != 0) ? 1 : 0;
+    int n = (e->kind == EK::Call && !is_pure_callee(e->callee)) ? 1 : 0;
     n += count_impure_calls(e->a) + count_impure_calls(e->b) + count_impure_calls(e->c);
     for (auto& ar : e->args) n += count_impure_calls(ar);
     return n;
@@ -2406,6 +2384,21 @@ struct Decompiler {
         int64_t arg_base = uses_rbp_frame ? (8 + rbp_minus_rsp)
                                           : (frame_size + 4);
         std::map<int,int> found; std::set<int64_t> written;
+        /* 1-based SLOT index -> FP width. The 32-bit ABI passes floats on the STACK, so
+         * there is no XMM signal to key float-ness on (the x64 path's tell) — an x87 read
+         * of the slot is the equivalent evidence, and without it every x87 float param
+         * typed as an integer and its arithmetic rendered as integer math on the bit
+         * pattern. FILD/FIADD/... are excluded: those read genuine integers. */
+        std::map<int,int> fl_arg;
+        auto x87_float_read = [](unsigned iid) {
+            switch (iid) {
+                case X86_INS_FLD:  case X86_INS_FADD: case X86_INS_FSUB: case X86_INS_FSUBR:
+                case X86_INS_FMUL: case X86_INS_FDIV: case X86_INS_FDIVR:
+                case X86_INS_FCOM: case X86_INS_FCOMP:
+                    return true;
+                default: return false;
+            }
+        };
         for (auto& in : insns) {
             const cs_x86& x = in.x86;
             for (int o = 0; o < x.op_count; ++o) {
@@ -2419,28 +2412,41 @@ struct Decompiler {
                 if (!normalise_slot(base, m.disp, norm)) continue;
                 int64_t rel = norm - arg_base;
                 if (rel < 0 || (rel % 4) != 0) continue;
-                int k = (int)(rel / 4) + 1;        /* 1-based arg index */
+                int k = (int)(rel / 4) + 1;        /* 1-based slot index */
                 if (k < 1 || k > 32) continue;
                 bool is_w = (x.operands[o].access & CS_AC_WRITE) != 0;
                 bool is_r = (x.operands[o].access & CS_AC_READ)  != 0;
                 if (is_r && !written.count(norm)) {
                     int w = x.operands[o].size ? x.operands[o].size : 4;
                     if (w > found[k]) found[k] = w;
+                    if (x87_float_read(in.id) && w >= 4 && w > fl_arg[k]) fl_arg[k] = w;
                 }
                 if (is_w) written.insert(norm);
             }
         }
         if (found.empty()) return;
         int maxk = found.rbegin()->first;
-        for (int k = 1; k <= maxk; ++k) {
-            int64_t norm = arg_base + 4 * (int64_t)(k - 1);
-            std::string nm = "a" + std::to_string(k);
-            if (!param_home_off.count(norm)) param_home_off[norm] = nm;
+        /* Walk the arg area by each value's OWN width rather than in fixed 4-byte steps.
+         * An 8-byte value (double / long long) occupies TWO slots, and the second one is
+         * its HIGH HALF — never a parameter of its own. Stepping 4 at a time invented a
+         * phantom middle param for every 8-byte arg (`add_d(int64_t a1, int32_t a2,
+         * int64_t a3)` for what is really `add_d(double, double)`). Parameter names must
+         * stay positional, so they are numbered sequentially as the area is consumed.
+         * For all-4-byte (pure integer) arg lists this is identical to the old walk. */
+        int p = 0;
+        for (int64_t off = 0; off <= 4 * (int64_t)(maxk - 1); ) {
+            int k = (int)(off / 4) + 1;
             int w = found.count(k) ? found[k] : 4;
-            record_width(nm, w ? w : 4);
-            if (w >= 8) var_is_ll[nm] = true;
+            if (w <= 0) w = 4;
+            std::string nm = "a" + std::to_string(++p);
+            int64_t norm = arg_base + off;
+            if (!param_home_off.count(norm)) param_home_off[norm] = nm;
+            record_width(nm, w);
+            if (w >= 8 && !fl_arg.count(k)) var_is_ll[nm] = true;
+            if (fl_arg.count(k)) var_is_float[nm] = true;
+            off += (w >= 8) ? 8 : 4;
         }
-        if (maxk > num_params) num_params = maxk;
+        if (p > num_params) num_params = p;
     }
 
     /* x64 args 5+ are passed on the stack, just above the 32-byte shadow space
@@ -2922,6 +2928,8 @@ struct Decompiler {
      * as `T*` so `base[i]` subscripts compile; otherwise pointers fall back to
      * the 64-bit-int model (`long long`). */
     std::string decl_type(const std::string& nm) {
+        /* a flag local whose every assignment is 0/1 (compute_bool_vars) */
+        if (bool_vars.count(nm)) return "bool";
         /* a recovered struct param renders `struct s_aN* aN` (or `class <Class>* aN` for an
          * RTTI class type, matching its `class`/`struct` definition keyword). */
         { auto si = param_structs.find(nm);
@@ -2985,6 +2993,58 @@ struct Decompiler {
 
     /* register file: current symbolic value of each canonical register */
     ExprP regfile[R_COUNT];
+
+    /* ---- x87 FPU stack --------------------------------------------------------
+     * x87 is a STACK machine: ST(0) is the top, FLD pushes, FSTP pops, and the
+     * arithmetic ops read/write ST(0) implicitly. NONE of it was modeled, so in a
+     * 32-bit /arch:IA32 binary — where x87 IS the entire float unit — every float
+     * function decompiled to an empty `void f(void) { return; }`: parameters,
+     * arithmetic and return value all silently dropped.
+     *
+     * Values are modeled as `double`. x87 computes in extended precision and rounds
+     * only on store, so widening at the load and rounding at the store is the
+     * faithful shape (and matches what the source-level `float` code meant).
+     *
+     * Compiler-generated x87 keeps the stack balanced within an expression and
+     * spills to memory across branches, so the stack simply flows with the block
+     * walk exactly as regfile does. `fpu_top` is the PHYSICAL index of ST(0). */
+    ExprP fpu[8];
+    int   fpu_top = 0;
+    /* operands of the most recent LEGACY compare (FCOM/FUCOM family), pending an
+     * `fnstsw ax` that reads the resulting condition bits back out */
+    ExprP fcom_a, fcom_b;
+    ExprP& fpu_slot(int i) { return fpu[(fpu_top + i) & 7]; }
+    void   fpu_push(ExprP v) { fpu_top = (fpu_top + 7) & 7; fpu[fpu_top] = v; }
+    ExprP  fpu_pop() {
+        ExprP v = fpu[fpu_top];
+        fpu[fpu_top] = nullptr;
+        fpu_top = (fpu_top + 1) & 7;
+        return v;
+    }
+    /* ST(i) as an rvalue; an empty slot means we lost track (unbalanced stack across
+     * a branch) — yield 0.0 rather than a null that would silently drop the use. */
+    ExprP fpu_get(int i) {
+        ExprP v = fpu_slot(i);
+        return v ? clone(v) : fpu_const(0.0);
+    }
+    ExprP fpu_const(double d) {
+        uint64_t bits; std::memcpy(&bits, &d, sizeof bits);
+        ExprP c = mkConst((int64_t)bits, 8);
+        c->is_float = true; c->width = 8;
+        return c;
+    }
+    /* Round an extended-precision stack value to the storage type. Must produce an
+     * expr whose width already MATCHES the store, because do_dst's truncate() would
+     * otherwise apply an INTEGER narrowing `(int)v` to a double. */
+    ExprP fpu_round(ExprP v, int sz) {
+        if (!v) return nullptr;
+        if (sz == 4) { ExprP c = mkCast("(float)", v, 4); c->is_float = true; return c; }
+        if (v->width != 8) { ExprP c = mkCast("(double)", v, 8); c->is_float = true; return c; }
+        return v;
+    }
+    static int st_index(unsigned cr) {
+        return (cr >= X86_REG_ST0 && cr <= X86_REG_ST7) ? (int)(cr - X86_REG_ST0) : -1;
+    }
 
     /* High 64-bit lane (bits[127:64]) of each XMM register, for modeling packed
      * 64-bit-element SIMD (auto-vectorized element-wise maps: a[i]*=c, a[i]+=b[i],
@@ -3058,6 +3118,109 @@ struct Decompiler {
      * *(unsigned int*)&lo`. Non-lvalue lanes are first materialized into a float
      * temp so their bit pattern can be taken by address. */
     std::set<std::string> force_float_vars;   /* address-reinterpreted lanes: keep `float` */
+    std::set<std::string> bool_vars;          /* every assignment is 0/1 -> declare `bool` */
+
+    /* BOOL INFERENCE: a local whose EVERY assignment is provably 0/1 (a comparison,
+     * `!x`, or the constants 0/1) is a `bool`, not an `int32_t` — `int v3; v3 = 1;
+     * ... if (!v3)` is how a flag reads today. Excluded: params (their ABI type is
+     * fixed), pointers/floats, and ADDRESS-TAKEN vars — a bool is 1 byte, so
+     * `*(int*)&v` on a retyped var would read past it. bool arithmetic promotes to
+     * int, and the value is already 0/1, so no expression changes meaning.
+     * DS_NO_BOOLVAR. */
+    void compute_bool_vars() {
+        if (std::getenv("DS_NO_BOOLVAR")) return;
+        /* A param-HOME alias local receives its initial value IMPLICITLY, through its
+         * DECLARATION (`int v2 = a4;` — v2 shares a4's home slot). There is no SK::Assign
+         * carrying it, so the 0/1 scan below never sees that arbitrary incoming param
+         * value and would wrongly type the variable `bool` — silently TRUNCATING the
+         * parameter to 0/1 (this broke heap_size_after / ident_length / range_sum_skip).
+         * Mirror the emitter's reuse_local_init construction and refuse every var it
+         * would initialise from a parameter. Same root cause as the invariant-inliner's
+         * param-home misidentification: an implicit init is invisible to a def scan. */
+        std::set<std::string> param_init;
+        for (auto& kv : home_reuse_local)
+            if (!kv.second.empty() && param_home_off.count(kv.first)) param_init.insert(kv.second);
+        for (auto& kv : stack_slot_name)
+            if (slot_init_param.count(kv.first)) param_init.insert(kv.second);
+        std::set<std::string> taken;
+        std::function<void(const ExprP&)> scan = [&](const ExprP& e) {
+            if (!e) return;
+            if (e->kind == EK::AddrOf && e->a && e->a->kind == EK::Var) taken.insert(e->a->name);
+            scan(e->a); scan(e->b); scan(e->c);
+            for (auto& ar : e->args) scan(ar);
+        };
+        std::map<std::string, bool> cand;
+        for (auto& b : blocks) {
+            for (auto& s : b.stmts) {
+                scan(s.lhs); scan(s.rhs);
+                if (s.kind != SK::Assign || !s.lhs || s.lhs->kind != EK::Var || !s.rhs) continue;
+                const std::string& n = s.lhs->name;
+                /* A FLOAT-typed value assigned to an integer-typed var is BIT-REINTERPRETED
+                 * by the emitter (`*(float*)&v = <float>`, the emit_stmt int-dest branch) —
+                 * a float-register compare result is exactly this shape. That store is 4/8
+                 * bytes wide, so the variable's storage must stay full width: a 1-byte
+                 * `bool` would be written through a `float*` lvalue and corrupt the frame
+                 * (arr_normalize01's v11). The reinterpret is applied at EMIT time, so the
+                 * statement here still looks like a plain 0/1 assignment — mirror the
+                 * emitter's condition rather than trusting the tree's shape. */
+                bool bv = is_bool_value(s.rhs) && !(s.rhs && s.rhs->is_float);
+                auto it = cand.find(n);
+                if (it == cand.end()) cand[n] = bv; else it->second = it->second && bv;
+            }
+            scan(b.cond); scan(b.ret_value); scan(b.ret_raw); scan(b.switch_var); scan(b.tail_call);
+        }
+        for (auto& kv : cand) {
+            if (!kv.second) continue;
+            const std::string& n = kv.first;
+            if (taken.count(n)) continue;                       /* &v needs real storage */
+            if (param_init.count(n)) continue;                  /* implicit `vN = aN` init */
+            if (is_ptr_param_name(n)) continue;                 /* param ABI type is fixed */
+            if (!n.empty() && n[0] == 'a' && n.size() >= 2 && n[1] >= '0' && n[1] <= '9') continue;
+            if (var_pointer.count(n) && var_pointer[n]) continue;
+            if (var_is_float.count(n) && var_is_float[n]) continue;
+            if (force_float_vars.count(n) || packed_gp_vars.count(n) ||
+                conflict_raw_vars.count(n) || array_locals.count(n) || struct_var.count(n)) continue;
+            if (param_structs.count(n)) continue;
+            int w = var_width.count(n) ? var_width[n] : 0;
+            if (w <= 0 || w > 4) continue;
+            bool_vars.insert(n);
+        }
+        if (!bool_vars.empty()) used_while_true = true;         /* pulls in <stdbool.h> */
+    }
+    /* A pointer tested or assigned against literal `0` is a NULL check. Hex-Rays spells
+     * it `if (p == NULL)`; the bare `0` hides that the value is a pointer at all, which
+     * is exactly the distinction a reader is scanning for. Runs after the pointer- and
+     * bool-type inference so decl_type is final. Purely cosmetic: NULL is `((void*)0)`,
+     * so the emitted C is identical either way. DS_NO_NULLPTR. */
+    void mark_null_consts() {
+        if (std::getenv("DS_NO_NULLPTR")) return;
+        auto take = [&](const ExprP& c, const ExprP& p) {
+            if (!c || !p) return;
+            if (c->kind != EK::Const || c->cval != 0 || c->is_float) return;
+            /* renders_as_pointer is the RENDERER's own predicate, so `NULL` can never
+             * disagree with the type actually printed. Exclude Binary: `p + i` renders
+             * as a pointer but `p - q` is a ptrdiff, and neither is a null test. */
+            if (!p || p->kind == EK::Binary || !renders_as_pointer(p)) return;
+            c->null_hint = true;      /* used_null is set when it actually renders */
+        };
+        std::function<void(const ExprP&)> walk = [&](const ExprP& e) {
+            if (!e) return;
+            walk(e->a); walk(e->b); walk(e->c);
+            for (auto& ar : e->args) walk(ar);
+            if (e->kind == EK::Binary && (e->op == "==" || e->op == "!=") && e->a && e->b) {
+                take(e->b, e->a);          /* p == 0 */
+                take(e->a, e->b);          /* 0 == p */
+            }
+        };
+        for (auto& b : blocks) {
+            for (auto& s : b.stmts) {
+                walk(s.lhs); walk(s.rhs);
+                if (s.kind == SK::Assign) take(s.rhs, s.lhs);      /* p = 0 -> p = NULL */
+            }
+            walk(b.cond); walk(b.ret_value); walk(b.ret_raw);
+            walk(b.switch_var); walk(b.tail_call);
+        }
+    }
     ExprP pack_two_floats(ExprP lo, ExprP hi, Block& b) {
         auto bits = [&](ExprP lane) -> ExprP {
             ExprP lv = lane;
@@ -3477,9 +3640,22 @@ struct Decompiler {
                 return mkMem(mkBinary("+", rd, idx, 8), width);
             }
         }
-        /* rip-relative: resolve to absolute rva and read constant from image */
-        if (m.base == X86_REG_RIP && m.index == X86_REG_INVALID) {
-            uint64_t abs = cur_insn_addr + cur_insn_size + (uint64_t)m.disp;
+        /* Resolve to an image RVA and read the constant out of the image: rip-relative
+         * (x64), or a bare ABSOLUTE address (32-bit, which has no rip-relative mode and
+         * addresses globals by their full VA — so subtract the image base to get the RVA
+         * this code, and the `byte_<rva>` global naming, work in).
+         * Without the 32-bit arm every x87 float constant — and x87 loads EVERY constant
+         * from memory — rendered as a raw `*(double*)0x1000e150` instead of its literal.
+         * The range test is the guard: only a disp that actually lands inside the image
+         * is treated as a global reference. */
+        bool rip_rel = (m.base == X86_REG_RIP && m.index == X86_REG_INVALID);
+        bool abs32 = (e && e->arch == DS_ARCH_X86 && m.base == X86_REG_INVALID &&
+                      m.index == X86_REG_INVALID && m.segment == X86_REG_INVALID &&
+                      (uint64_t)m.disp >= e->base &&
+                      (uint64_t)m.disp - e->base < e->image_size);
+        if (rip_rel || abs32) {
+            uint64_t abs = rip_rel ? (cur_insn_addr + cur_insn_size + (uint64_t)m.disp)
+                                   : ((uint64_t)m.disp - e->base);
             /* A load from an IMPORT's IAT slot yields the imported object/function
              * address. The IAT lives in read-only .rdata but is filled by the LOADER,
              * so the file bytes are a stale hint — inlining them as a constant below
@@ -5488,6 +5664,16 @@ struct Decompiler {
                 if (fs.is_cmp) L = fold(mkBinary("-", clone(fs.a), clone(fs.b), fs.width));
                 else if (decomposed) L = clone(fs.a);
                 R = mkConst(0, fs.width); break;
+            /* PARITY on an INTEGER test. A float compare's jp/jnp is the unordered
+             * (NaN) test and is handled on the is_fcmp path above, which returns before
+             * this switch — so reaching here means the x87 compare idiom
+             * `fnstsw ax; test ah, <mask>; jp`, whose mask selects the C0/C2 status
+             * bits. PF is the EVEN parity of the result byte: with C2 clear (operands
+             * ordered) at most one selected bit can be set, so jp is taken exactly when
+             * the masked result is ZERO. The `!=` default was the precise INVERSE of
+             * that, silently flipping every x87 comparison's sense. */
+            case CC::P:  op = "=="; break;
+            case CC::NP: op = "!="; break;
             default:     op = "!="; break;
         }
         /* A sub-word cmp operand is zero-extended by `movzx` but rvalue()/truncate()
@@ -5549,6 +5735,19 @@ struct Decompiler {
         for (int i = 0; i < R_COUNT; ++i) { regfile[i] = nullptr; regfile_hi[i] = nullptr; clear_xmm_f((Reg)i); }
         xmm_packed_var.clear(); stack_packed_var.clear(); int_slots.clear();
         if (b.is_switch) switch_resolved_index.erase(b.id);   /* recapture each pass */
+        /* x87 stack: reset like regfile, then inherit from a SINGLE predecessor (the
+         * same rule the flag state uses just below). Compiler-generated x87 keeps the
+         * stack balanced within an expression and spills across joins, so a single-pred
+         * chain is exactly the case that needs to carry values (`fld a; fld b; fcom;
+         * jcc; ...; fcompp`). A multi-pred join starts empty rather than guessing. */
+        for (int i = 0; i < 8; ++i) fpu[i] = nullptr;
+        fpu_top = 0; fcom_a = nullptr; fcom_b = nullptr;
+        if (b.pred.size() == 1 && b.pred[0] >= 0 &&
+            b.pred[0] < (int)block_fpu_out.size() && block_fpu_valid[b.pred[0]]) {
+            for (int i = 0; i < 8; ++i)
+                fpu[i] = block_fpu_out[b.pred[0]][i] ? clone(block_fpu_out[b.pred[0]][i]) : nullptr;
+            fpu_top = block_fpu_top_out[b.pred[0]];
+        }
         flags = FlagSrc();
         /* Inherit the flag state from a single predecessor: a compare in one block
          * feeding a conditional jump in the next (`cmp; jcc1; jcc2`, or the float
@@ -5631,6 +5830,13 @@ struct Decompiler {
         }
         if (b.id >= 0 && b.id < (int)block_flags_out.size())
             block_flags_out[b.id] = flags;
+        /* publish the x87 stack so a single successor can inherit it (see the reset above) */
+        if (b.id >= 0 && b.id < (int)block_fpu_out.size()) {
+            for (int i = 0; i < 8; ++i)
+                block_fpu_out[b.id][i] = fpu[i] ? clone(fpu[i]) : nullptr;
+            block_fpu_top_out[b.id] = fpu_top;
+            block_fpu_valid[b.id] = 1;
+        }
 
         /* branch condition */
         const Insn* last = b.insn_idx.empty() ? nullptr : &insns[b.insn_idx.back()];
@@ -5788,10 +5994,13 @@ struct Decompiler {
             }
         }
 
-        /* return value: xmm0 for a float/double return, else rax. */
+        /* return value: xmm0 for a float/double return, else rax. A 32-bit /arch:IA32
+         * function returns its float on the x87 stack in ST(0) instead, so prefer a live
+         * ST(0) — on x64 the FPU stack is always empty and this falls through to xmm0. */
         if (b.ends_ret && used_return) {
             if (ret_is_float) {
-                ExprP rv = regfile[R_XMM0] ? clone(regfile[R_XMM0]) : nullptr;
+                ExprP fsrc = fpu_slot(0) ? fpu_slot(0) : regfile[R_XMM0];
+                ExprP rv = fsrc ? clone(fsrc) : nullptr;
                 if (rv) {
                     rv->is_float = true; rv->width = ret_width;
                     b.ret_raw = clone(rv);
@@ -5863,6 +6072,15 @@ struct Decompiler {
     bool used_while_true = false; /* emitted `while (true)` -> needs <stdbool.h> in C mode */
     std::string self_fname;   /* sanitized name of THIS function (for recursive-call arity) */
     bool used_stos = false;   /* __stosb/w/d/q appears (rep stos fill) -> emit prototypes */
+    bool used_movs = false;   /* __movsb/w/d/q appears (rep movs copy) -> emit prototypes */
+    bool used_null = false;   /* `NULL` was rendered -> pull in <stddef.h> */
+    bool used_fastfail = false; /* __fastfail appears (int 0x29) -> emit prototype */
+    bool used_nearbyint = false; /* nearbyintf appears (cvtps2dq rounding) -> prototype */
+    bool used_shift128 = false;  /* __shiftright128/__shiftleft128 (64-bit shrd/shld) */
+    bool used_rdtsc = false;     /* __rdtsc (rdtsc/rdtscp) -> prototype */
+    bool used_xgetbv = false;    /* _xgetbv (xgetbv) -> prototype */
+    /* exactly which _rotl/_rotr forms this function used -> declare only those */
+    std::set<std::string> used_rot_fns;
     bool used_cpuid = false;  /* __cpuid_e?x appears -> emit prototypes */
     bool used_segread = false; /* __readgsqword/__readfsqword appears -> emit prototypes */
     bool used_u2f = false;     /* __u2f (uint bits -> float) helper for a movd xmm,r bit reinterpret */
@@ -5899,6 +6117,44 @@ struct Decompiler {
             case X86_INS_VFNMSUB213SD: w=8; variant=213; negp=true;  subc=true;  return true;
             case X86_INS_VFNMSUB231SD: w=8; variant=231; negp=true;  subc=true;  return true;
             default: return false;
+        }
+    }
+
+    /* `rep movs` copies rcx elements from [rsi] to [rdi] — how the compiler spells an
+     * inlined memcpy (a fixed-size struct/array copy). It was UNMODELED, so the whole
+     * copy was silently dropped: the destination kept its stale value and every use
+     * downstream read a lie. Same failure mode the `rep stos` fill had. Model it as the
+     * MSVC __movs* intrinsic (a real side-effecting call), then advance rsi/rdi and zero
+     * rcx exactly as the rep does. A bare (non-rep) movs copies one element.
+     * The direction flag is assumed forward, as `rep stos` already does — compilers do
+     * not emit `std`-prefixed copies. */
+    void emit_string_move(Block& b, const Insn& in, int sz, bool has_rep) {
+        if (has_rep) {
+            const char* fn = (sz==1)?"__movsb":(sz==2)?"__movsw":(sz==4)?"__movsd":"__movsq";
+            const char* pt = (sz==1)?"(unsigned char*)":(sz==2)?"(unsigned short*)":
+                             (sz==4)?"(unsigned long*)":"(unsigned long long*)";
+            const char* st = (sz==1)?"(const unsigned char*)":(sz==2)?"(const unsigned short*)":
+                             (sz==4)?"(const unsigned long*)":"(const unsigned long long*)";
+            auto call = std::make_shared<Expr>();
+            call->kind = EK::Call; call->callee = fn; call->width = 0; call->ret_kind = 5;
+            ExprP dst = reg_value(R_RDI, 8), src = reg_value(R_RSI, 8), cnt = reg_value(R_RCX, 8);
+            if (dst) call->args.push_back(mkCast(pt, dst, 8, true));
+            if (src) call->args.push_back(mkCast(st, src, 8, true));
+            if (cnt) call->args.push_back(mkCast("(unsigned long long)", cnt, 8, true));
+            Stmt s; s.kind = SK::Call; s.rhs = call; s.addr = in.addr;
+            b.stmts.push_back(std::move(s));
+            used_movs = true;
+            /* rcx is read into both advances BEFORE it is zeroed. */
+            regfile[R_RDI] = mkBinary("+", reg_value(R_RDI,8),
+                             mkBinary("*", reg_value(R_RCX,8), mkConst(sz,8), 8), 8);
+            regfile[R_RSI] = mkBinary("+", reg_value(R_RSI,8),
+                             mkBinary("*", reg_value(R_RCX,8), mkConst(sz,8), 8), 8);
+            regfile[R_RCX] = mkConst(0, 8);
+        } else {
+            ExprP lv = mkMem(reg_value(R_RDI, 8), sz, false);
+            emit_store(b, lv, mkMem(reg_value(R_RSI, 8), sz, false), in.addr);
+            regfile[R_RDI] = mkBinary("+", reg_value(R_RDI,8), mkConst(sz,8), 8);
+            regfile[R_RSI] = mkBinary("+", reg_value(R_RSI,8), mkConst(sz,8), 8);
         }
     }
 
@@ -6074,6 +6330,88 @@ struct Decompiler {
                 }
                 arith2(b, x, "^", in.addr); break;
             }
+            /* ROTATE. C has no rotate operator, so an unmodeled rol/ror DROPPED the whole
+             * operation: the destination silently kept its old value (and for a memory
+             * destination — `ror byte ptr [rbx+rcx*4+0x56], 0x30` — the store vanished
+             * outright). Emit the MSVC _rotl/_rotr intrinsic family, which lowers back to
+             * this exact instruction and so preserves x86's count-masking (& 0x1f / & 0x3f)
+             * semantics precisely — a hand-rolled `(x<<n)|(x>>(w-n))` would NOT, and is UB
+             * at n==0. Flags: rol/ror write only CF/OF, never ZF/SF, and no compiler
+             * branches on a rotate's carry — so leaving `flags` untouched keeps every
+             * ZF/SF-consuming condition exactly right. */
+            case X86_INS_ROL: case X86_INS_ROR: {
+                if (nop < 2) break;
+                int w = OP(0).size ? OP(0).size : 4;
+                bool left = (id == X86_INS_ROL);
+                const char* fn = left ? ((w==1)?"_rotl8":(w==2)?"_rotl16":(w==8)?"_rotl64":"_rotl")
+                                      : ((w==1)?"_rotr8":(w==2)?"_rotr16":(w==8)?"_rotr64":"_rotr");
+                const char* vt = (w==1)?"(unsigned char)":(w==2)?"(unsigned short)":
+                                 (w==8)?"(unsigned long long)":"(unsigned int)";
+                /* the 8/16-bit forms take an `unsigned char` shift, the 32/64-bit an `int` */
+                const char* ct = (w<=2) ? "(unsigned char)" : "(int)";
+                auto call = std::make_shared<Expr>();
+                call->kind = EK::Call; call->callee = fn; call->width = w;
+                call->ret_kind = (w==8) ? 2 : 1; call->is_unsigned = true;
+                call->args.push_back(mkCast(vt, rvalue(OP(0)), w, true));
+                call->args.push_back(mkCast(ct, rvalue(OP(1)), 1, true));
+                do_dst(b, OP(0), call, in.addr);
+                used_rot_fns.insert(fn);
+                break;
+            }
+            /* SHRD/SHLD — the double-precision shift (a 64-bit shift built from two
+             * 32-bit halves, and the tail of many hashes). C has no such operator, so
+             * unmodeled it DROPPED the whole operation and the destination silently kept
+             * its stale value.
+             *   shrd d,s,n = low  half of ((s:d) >> n)
+             *   shld d,s,n = high half of ((d:s) << n)
+             * The 32-bit form is EXACT as a 64-bit shift of the concatenated pair — and
+             * unlike a hand-rolled `(d>>n)|(s<<(32-n))` it is well-defined at n==0, where
+             * x86 makes the instruction a no-op. The 64-bit form needs a real 128-bit
+             * shift, which is precisely MSVC's __shiftright128/__shiftleft128 (both take
+             * (LowPart, HighPart, Shift)). Flags: shrd/shld write CF/ZF/SF but nothing
+             * branches on them, so `flags` is left alone (as the rotates do). */
+            case X86_INS_SHRD: case X86_INS_SHLD: {
+                if (nop < 3) break;
+                int w = OP(0).size ? OP(0).size : 4;
+                bool right = (id == X86_INS_SHRD);
+                ExprP d = rvalue(OP(0)), s = rvalue(OP(1)), c = rvalue(OP(2));
+                if (!d || !s || !c) break;
+                if (w == 8) {
+                    auto call = std::make_shared<Expr>();
+                    call->kind = EK::Call;
+                    call->callee = right ? "__shiftright128" : "__shiftleft128";
+                    call->width = 8; call->ret_kind = 2; call->is_unsigned = true;
+                    call->args.push_back(mkCast("(unsigned long long)", right ? d : s, 8, true));
+                    call->args.push_back(mkCast("(unsigned long long)", right ? s : d, 8, true));
+                    call->args.push_back(mkCast("(unsigned char)", c, 1, true));
+                    do_dst(b, OP(0), call, in.addr);
+                    used_shift128 = true;
+                    break;
+                }
+                if (w != 4) break;                 /* the 16-bit form does not occur */
+                /* widen through the UNSIGNED same-width type first: a direct
+                 * `(unsigned long long)` of a signed 32-bit value sign-extends and
+                 * would corrupt the high half of the pair. */
+                auto zx64 = [&](ExprP v) {
+                    return mkCast("(unsigned long long)", mkCast("(unsigned int)", v, 4, true), 8, true);
+                };
+                ExprP pair = mkBinary("|",
+                    mkBinary("<<", zx64(right ? s : d), mkConst(32, 8, true), 8, true),
+                    zx64(right ? d : s), 8, true);
+                ExprP cm = mkBinary("&", c, mkConst(31, 4, true), 4, true);
+                ExprP r = right
+                    ? mkBinary(">>", pair, cm, 8, true)
+                    : mkBinary(">>", mkBinary("<<", pair, cm, 8, true), mkConst(32, 8, true), 8, true);
+                do_dst(b, OP(0), r, in.addr);
+                break;
+            }
+            /* NOT MODELED — RCL/RCR (rotate through carry). Deliberate: the shifted-in
+             * bit is the INCOMING CF, and set_flags_arith records only the result value
+             * (flags.is_arith), so CF after the `shr hi,1` of the canonical 64-bit-shift
+             * idiom `shr hi,1; rcr lo,1` is not the shifted-out bit — cc_to_expr(CC::B)
+             * would fold to a constant false and we would emit a confidently WRONG carry.
+             * A stale destination is bad; plausible-but-wrong C is worse. Modeling this
+             * needs real CF tracking for the shift ops first. */
             case X86_INS_SHL: case X86_INS_SAL: arith2(b, x, "<<", in.addr); break;
             case X86_INS_SHR: arith2(b, x, ">>", in.addr, true); break;
             case X86_INS_SAR: sar_or_div(b, x, in.addr); break;
@@ -6099,6 +6437,24 @@ struct Decompiler {
                 if (nop < 1) break;
                 int w = OP(0).size ? OP(0).size : 4;
                 do_dst(b, OP(0), fold(mkUnary("~", rvalue(OP(0)), w)), in.addr);
+                break;
+            }
+            /* `mov ecx,<code>; int 0x29` is MSVC's __fastfail: the security abort behind
+             * /GS cookie checks, bounds checks and the invalid-parameter path. Unmodeled,
+             * the entire failure path VANISHED, so a validating function read as if it
+             * checked nothing. The FAST_FAIL_* code in ecx names the check that tripped
+             * (5 = INVALID_ARG, 2 = STACK_COOKIE_CHECK_FAILURE), so it is kept as the
+             * argument. Only int 0x29 is modeled; other software interrupts do not occur
+             * in compiler output. */
+            case X86_INS_INT: {
+                if (nop < 1 || OP(0).type != X86_OP_IMM || OP(0).imm != 0x29) break;
+                auto call = std::make_shared<Expr>();
+                call->kind = EK::Call; call->callee = "__fastfail";
+                call->width = 0; call->ret_kind = 0;
+                call->args.push_back(mkCast("(unsigned int)", reg_value(R_RCX, 4), 4, true));
+                Stmt s; s.kind = SK::Call; s.rhs = call; s.addr = in.addr;
+                b.stmts.push_back(std::move(s));
+                used_fastfail = true;
                 break;
             }
             case X86_INS_BSWAP: {
@@ -6259,6 +6615,19 @@ struct Decompiler {
              * bulk of a game-ish binary) is lost: values collapse to 0 and float
              * comparisons set no flags so every `comiss; ja` became `if (1)`. */
             case X86_INS_MOVSS: case X86_INS_MOVSD: {
+                /* The string `movsd` (rep movs dword) shares MOVSD's capstone id with the
+                 * SSE scalar move, so split it off first. Only the string form has two
+                 * MEMORY operands (es:[rdi], ds:[rsi]) or none — an SSE movsd always
+                 * names an xmm register, so this can never steal a float move. */
+                if (id == X86_INS_MOVSD &&
+                    (nop == 0 || (nop == 2 && OP(0).type == X86_OP_MEM
+                                           && OP(1).type == X86_OP_MEM))) {
+                    bool has_rep = false;
+                    for (int pi = 0; pi < 4; ++pi)
+                        if (x.prefix[pi] == X86_PREFIX_REP) { has_rep = true; break; }
+                    emit_string_move(b, in, 4, has_rep);
+                    break;
+                }
                 /* scalar float load/move: a .rdata constant source is a float
                  * literal (4B single / 8B double). */
                 if (nop < 2) break;
@@ -6636,6 +7005,12 @@ struct Decompiler {
             case X86_INS_PSUBQ:  case X86_INS_VPSUBQ:
             case X86_INS_VPMULLQ:
             case X86_INS_PAND:   case X86_INS_VPAND:
+            /* ORPS/ORPD are bit-identical to POR (only the encoding's type tag differs),
+             * so they belong on the same lane-wise `|`. Unmodeled, the dest kept a stale
+             * value — the float-select/sign-merge idiom `andps a,mask; andnps b,mask;
+             * orps a,b` silently lost its merge. */
+            case X86_INS_ORPS:   case X86_INS_ORPD:
+            case X86_INS_VORPS:  case X86_INS_VORPD:
             case X86_INS_POR:    case X86_INS_VPOR: {
                 /* packed 64-bit-lane ALU. 2-operand form: dst = dst OP src.
                  * 3-operand VEX form: dst = src1 OP src2. Modeled lanewise; only
@@ -6655,6 +7030,90 @@ struct Decompiler {
                     (id==X86_INS_PAND||id==X86_INS_VPAND)   ? "&" : "|";
                 set_xmm_lanes(dr, mkBinary(fop, alo, blo, 8),
                                   mkBinary(fop, ahi, bhi, 8), b);
+                break;
+            }
+            /* AND-NOT: dst = ~dst & src — note it inverts the FIRST source, and is NOT
+             * ~(a & b). It is the other half of the branchless float-select idiom
+             * (`andps a,mask; andnps b,mask; orps a,b`), so leaving it unmodeled dropped
+             * the "else" side of every such select. */
+            case X86_INS_PANDN:  case X86_INS_VPANDN:
+            case X86_INS_ANDNPS: case X86_INS_ANDNPD:
+            case X86_INS_VANDNPS: case X86_INS_VANDNPD: {
+                if (nop < 2 || OP(0).type != X86_OP_REG) break;
+                Reg dr; int dw; map_reg(OP(0).reg, dr, dw);
+                if (!is_xmm(dr)) break;
+                int ai = (nop >= 3) ? 1 : 0, bi = (nop >= 3) ? 2 : 1;
+                ExprP alo, ahi, blo, bhi;
+                if (!simd_src_lanes(OP(ai), alo, ahi)) break;
+                if (!simd_src_lanes(OP(bi), blo, bhi)) break;
+                set_xmm_lanes(dr, mkBinary("&", mkUnary("~", alo, 8), blo, 8),
+                                  mkBinary("&", mkUnary("~", ahi, 8), bhi, 8), b);
+                break;
+            }
+            /* Lane-wise compare. The result per lane is an all-ones / all-zero MASK
+             * (0 or -1), NOT a 0/1 boolean — the mask is then AND-ed with data to select
+             * it, so rendering a boolean would silently zero every selected lane.
+             * `-(a == b)` is exactly that mask in C. */
+            case X86_INS_PCMPEQD: case X86_INS_VPCMPEQD:
+            case X86_INS_PCMPGTD: case X86_INS_VPCMPGTD: {
+                if (nop < 2 || OP(0).type != X86_OP_REG) break;
+                Reg dr; int dw; map_reg(OP(0).reg, dr, dw);
+                if (!is_xmm(dr)) break;
+                int ai = (nop >= 3) ? 1 : 0, bi = (nop >= 3) ? 2 : 1;
+                ExprP a[4], bb[4];
+                if (!xmm_i_lanes(OP(ai), a) || !xmm_i_lanes(OP(bi), bb)) break;
+                bool eq = (id == X86_INS_PCMPEQD || id == X86_INS_VPCMPEQD);
+                ExprP r[4];
+                for (int i = 0; i < 4; ++i)
+                    r[i] = mkUnary("-", mkBinary(eq ? "==" : ">", a[i], bb[i], 4), 4);
+                set_xmm_i4(dr, r[0], r[1], r[2], r[3], b);
+                break;
+            }
+            /* Packed shift by a SCALAR count. x86 and C disagree at the edges: a count
+             * >= the lane width yields ZERO on x86 (all sign bits for psrad), where C's
+             * shift is UNDEFINED — so only a constant count within the lane is modeled,
+             * and anything else is left alone rather than mis-rendered. */
+            case X86_INS_PSLLD: case X86_INS_PSRLD: case X86_INS_PSRAD: {
+                if (nop < 2 || OP(0).type != X86_OP_REG) break;
+                Reg dr; int dw; map_reg(OP(0).reg, dr, dw);
+                if (!is_xmm(dr)) break;
+                int ai = (nop >= 3) ? 1 : 0, si = (nop >= 3) ? 2 : 1;   /* VEX: dst,src,imm */
+                if (OP(si).type != X86_OP_IMM) break;                   /* xmm count: not modeled */
+                int64_t n = OP(si).imm;
+                if (n < 0 || n > 31) break;
+                ExprP a[4];
+                if (!xmm_i_lanes(OP(ai), a)) break;
+                ExprP r[4];
+                for (int i = 0; i < 4; ++i) {
+                    if (id == X86_INS_PSLLD)
+                        r[i] = mkBinary("<<", a[i], mkConst(n, 4), 4);
+                    else if (id == X86_INS_PSRLD)   /* logical: force an unsigned shift */
+                        r[i] = mkBinary(">>", mkCast("(unsigned int)", a[i], 4, true),
+                                        mkConst(n, 4), 4, true);
+                    else                            /* psrad: arithmetic -> signed */
+                        r[i] = mkBinary(">>", mkCast("(int)", a[i], 4, false),
+                                        mkConst(n, 4), 4, false);
+                }
+                set_xmm_i4(dr, r[0], r[1], r[2], r[3], b);
+                break;
+            }
+            case X86_INS_PSLLQ: case X86_INS_PSRLQ: {
+                if (nop < 2 || OP(0).type != X86_OP_REG) break;
+                Reg dr; int dw; map_reg(OP(0).reg, dr, dw);
+                if (!is_xmm(dr)) break;
+                int ai = (nop >= 3) ? 1 : 0, si = (nop >= 3) ? 2 : 1;
+                if (OP(si).type != X86_OP_IMM) break;
+                int64_t n = OP(si).imm;
+                if (n < 0 || n > 63) break;
+                ExprP alo, ahi;
+                if (!simd_src_lanes(OP(ai), alo, ahi)) break;
+                bool left = (id == X86_INS_PSLLQ);
+                auto sh = [&](ExprP v) {
+                    return left ? mkBinary("<<", v, mkConst(n, 8), 8)
+                                : mkBinary(">>", mkCast("(unsigned long long)", v, 8, true),
+                                           mkConst(n, 8), 8, true);
+                };
+                set_xmm_lanes(dr, sh(alo), sh(ahi), b);
                 break;
             }
             case X86_INS_PSRLDQ: {
@@ -7066,6 +7525,39 @@ struct Decompiler {
                 do_dst(b, OP(0), mkCast(cast_str(w, false), src, w, false), in.addr);
                 break;
             }
+            /* packed float -> int32. The INVERSE (CVTDQ2PS, just below) was modeled but
+             * this direction never was — and since the `default:` intrinsic fallback only
+             * rescues a GPR destination, an XMM destination received NO def at all. The
+             * register then rendered as the phantom `in_XMM<n>` live-in, which a surviving
+             * `movdqu [rdx],xmm` store wrote to memory: compile-clean, plausible C holding
+             * an entry-value phantom in place of the converted data (windowscodecs.dll's
+             * pixel loop). Lane-wise, because a scalar-only model would silently drop
+             * lanes 1..3 of a genuinely vectorized convert.
+             * Rounding differs and is NOT interchangeable: CVTTPS2DQ truncates (exactly
+             * C's `(int)`), while CVTPS2DQ rounds per MXCSR — nearest-even by default,
+             * which is what nearbyintf() means. */
+            case X86_INS_CVTTPS2DQ: case X86_INS_CVTPS2DQ: {
+                if (nop < 2 || OP(0).type != X86_OP_REG) break;
+                Reg dr; int dw; map_reg(OP(0).reg, dr, dw);
+                if (!is_xmm(dr)) break;
+                ExprP f[4];
+                if (!xmm_f_lanes(OP(1), f)) break;
+                ExprP r[4];
+                for (int i = 0; i < 4; ++i) {
+                    ExprP v = f[i];
+                    if (id == X86_INS_CVTPS2DQ) {
+                        auto nb = std::make_shared<Expr>();
+                        nb->kind = EK::Call; nb->callee = "nearbyintf"; nb->width = 4;
+                        nb->ret_kind = 1; nb->is_float = true;
+                        nb->args.push_back(v);
+                        v = nb;
+                        used_nearbyint = true;
+                    }
+                    r[i] = mkCast("(int)", v, 4, false);
+                }
+                set_xmm_i4(dr, r[0], r[1], r[2], r[3], b);
+                break;
+            }
             case X86_INS_CVTDQ2PS: case X86_INS_CVTDQ2PD: {
                 /* packed int32 -> float/double. Modeled as an explicit float cast
                  * of the (scalar) source. This completes the truncate idiom
@@ -7342,6 +7834,209 @@ struct Decompiler {
                 if (arg) call->args.push_back(arg);
                 Stmt s; s.kind = SK::Call; s.rhs = call; s.addr = in.addr;
                 b.stmts.push_back(std::move(s));
+                break;
+            }
+            /* ================= x87 (the 32-bit float unit) =================
+             * See the fpu[] stack model for why this matters: unmodeled, a /arch:IA32
+             * float function decompiled to an empty `void f(void) { return; }`. */
+            case X86_INS_FLD: case X86_INS_FILD: {
+                if (nop < 1) break;
+                if (OP(0).type == X86_OP_MEM) {
+                    int sz = OP(0).size ? OP(0).size : (id == X86_INS_FILD ? 4 : 8);
+                    if (id == X86_INS_FILD) {
+                        /* integer load: x87 CONVERTS to its internal float format */
+                        ExprP c = mkCast("(double)", rvalue(OP(0)), 8);
+                        c->is_float = true;
+                        fpu_push(c);
+                    } else {
+                        fpu_push(as_float(rvalue(OP(0)), sz == 4 ? 4 : 8));
+                    }
+                } else {
+                    int i = st_index(OP(0).reg);
+                    if (i >= 0) fpu_push(fpu_get(i));
+                }
+                break;
+            }
+            case X86_INS_FLD1:  fpu_push(fpu_const(1.0)); break;
+            case X86_INS_FLDZ:  fpu_push(fpu_const(0.0)); break;
+            case X86_INS_FST: case X86_INS_FSTP: {
+                if (nop < 1) break;
+                ExprP v = fpu_get(0);
+                if (OP(0).type == X86_OP_MEM) {
+                    int sz = OP(0).size ? OP(0).size : 8;
+                    do_dst(b, OP(0), fpu_round(v, sz), in.addr);
+                } else {
+                    int i = st_index(OP(0).reg);
+                    if (i >= 0) fpu_slot(i) = v;
+                }
+                if (id == X86_INS_FSTP) fpu_pop();
+                break;
+            }
+            case X86_INS_FIST: case X86_INS_FISTP: {
+                if (nop < 1) break;
+                ExprP v = fpu_get(0);
+                if (OP(0).type == X86_OP_MEM) {
+                    /* The int store rounds per the FPU control word; MSVC sets
+                     * truncate-toward-zero around a C cast, which is what `(int)` means. */
+                    int sz = OP(0).size ? OP(0).size : 4;
+                    do_dst(b, OP(0), mkCast(cast_str(sz, false), v, sz, false), in.addr);
+                }
+                if (id == X86_INS_FISTP) fpu_pop();
+                break;
+            }
+            /* Arithmetic. OP(0) is always the destination and OP(1) the source; the R
+             * (reversed) forms compute src OP dst, which matters only for `-` and `/`.
+             *
+             * The POP is decided by the opcode byte, not the id: capstone has NO
+             * X86_INS_FADDP — its table maps X86_ADD_FPrST0 (the popping `faddp`) to
+             * plain X86_INS_FADD, unlike FSUBP/FMULP/FDIVP which do get their own ids.
+             * Every popping register form is encoded DE, so that byte is the reliable
+             * discriminator (and agrees with the ids that do exist).
+             *
+             * The D8-vs-DC encodings swap FSUB/FSUBR (and FDIV/FDIVR), but capstone
+             * decodes that quirk and reports the correct id, so keying off the id is
+             * right. Memory forms never pop. */
+            case X86_INS_FADD:  case X86_INS_FSUB: case X86_INS_FSUBR:
+            case X86_INS_FMUL:  case X86_INS_FDIV: case X86_INS_FDIVR:
+            case X86_INS_FSUBP: case X86_INS_FSUBRP:
+            case X86_INS_FMULP: case X86_INS_FDIVP: case X86_INS_FDIVRP: {
+                bool isadd = (id == X86_INS_FADD);
+                bool ismul = (id == X86_INS_FMUL || id == X86_INS_FMULP);
+                bool issub = (id == X86_INS_FSUB || id == X86_INS_FSUBR ||
+                              id == X86_INS_FSUBP || id == X86_INS_FSUBRP);
+                const char* fop = isadd ? "+" : ismul ? "*" : issub ? "-" : "/";
+                bool rev = (id == X86_INS_FSUBR || id == X86_INS_FSUBRP ||
+                            id == X86_INS_FDIVR || id == X86_INS_FDIVRP);
+                if (nop >= 1 && OP(0).type == X86_OP_MEM) {   /* ST(0) OP= mem */
+                    int sz = OP(0).size ? OP(0).size : 8;
+                    ExprP m = as_float(rvalue(OP(0)), sz == 4 ? 4 : 8);
+                    ExprP a = fpu_get(0);
+                    ExprP r = rev ? mkBinary(fop, m, a, 8) : mkBinary(fop, a, m, 8);
+                    r->is_float = true;
+                    fpu_slot(0) = r;
+                    break;
+                }
+                int di = -1, si = -1;
+                if (nop >= 2) { di = st_index(OP(0).reg); si = st_index(OP(1).reg); }
+                else if (nop == 1) { di = 0; si = st_index(OP(0).reg); }  /* `fadd st(i)` */
+                if (di < 0 || si < 0) break;
+                ExprP a = fpu_get(di), s = fpu_get(si);
+                ExprP r = rev ? mkBinary(fop, s, a, 8) : mkBinary(fop, a, s, 8);
+                r->is_float = true;
+                fpu_slot(di) = r;          /* index is relative to the CURRENT top */
+                if (x.opcode[0] == 0xDE) fpu_pop();
+                break;
+            }
+            case X86_INS_FCHS: {
+                ExprP r = mkUnary("-", fpu_get(0), 8); r->is_float = true;
+                fpu_slot(0) = r; break;
+            }
+            case X86_INS_FABS: {
+                auto c = std::make_shared<Expr>();
+                c->kind = EK::Call; c->callee = "fabs"; c->width = 8;
+                c->ret_kind = 1; c->is_float = true;
+                c->args.push_back(fpu_get(0));
+                fpu_slot(0) = c; break;
+            }
+            case X86_INS_FSQRT: {
+                auto c = std::make_shared<Expr>();
+                c->kind = EK::Call; c->callee = "sqrt"; c->width = 8;
+                c->ret_kind = 1; c->is_float = true;
+                c->args.push_back(fpu_get(0));
+                fpu_slot(0) = c; break;
+            }
+            case X86_INS_FXCH: {
+                int i = 1;
+                if (nop >= 1 && OP(0).type == X86_OP_REG) { int t = st_index(OP(0).reg); if (t >= 0) i = t; }
+                ExprP t0 = fpu_slot(0); fpu_slot(0) = fpu_slot(i); fpu_slot(i) = t0;
+                break;
+            }
+            /* The modern compares write EFLAGS directly, exactly like comiss — so they
+             * reuse the existing float-compare flag model and every jcc downstream just
+             * works. (The legacy FCOM + `fnstsw ax` idiom routes through the status
+             * word and is not modeled here.) */
+            case X86_INS_FUCOMI: case X86_INS_FUCOMPI:
+            case X86_INS_FCOMI:  case X86_INS_FCOMPI: {
+                /* capstone spells the popping forms FCOMPI/FUCOMPI (not FCOMIP/FUCOMIP) */
+                int i = 1;
+                for (int k = nop - 1; k >= 0; --k)
+                    if (OP(k).type == X86_OP_REG) { int t = st_index(OP(k).reg); if (t > 0) { i = t; break; } }
+                flags = FlagSrc();
+                flags.valid = true; flags.is_fcmp = true;
+                flags.a = fpu_get(0); flags.b = fpu_get(i); flags.width = 8;
+                if (id == X86_INS_FUCOMPI || id == X86_INS_FCOMPI) fpu_pop();
+                break;
+            }
+            /* The LEGACY compare. Unlike FCOMI it does NOT touch EFLAGS — it writes the
+             * C0/C2/C3 condition bits of the FPU STATUS WORD, which the compiler then
+             * reads back with `fnstsw ax` and tests with `test ah, imm`. Record the
+             * operands; FNSTSW below materialises the status word from them. */
+            case X86_INS_FCOM:  case X86_INS_FCOMP:  case X86_INS_FCOMPP:
+            case X86_INS_FUCOM: case X86_INS_FUCOMP: case X86_INS_FUCOMPP: {
+                ExprP ca = fpu_get(0), cb;
+                if (nop >= 1 && OP(0).type == X86_OP_MEM) {
+                    int sz = OP(0).size ? OP(0).size : 8;
+                    cb = as_float(rvalue(OP(0)), sz == 4 ? 4 : 8);
+                } else {
+                    int i = 1;
+                    if (nop >= 1 && OP(0).type == X86_OP_REG) {
+                        int t = st_index(OP(0).reg); if (t >= 0) i = t;
+                    }
+                    cb = fpu_get(i);
+                }
+                fcom_a = ca; fcom_b = cb;
+                if (id == X86_INS_FCOMP || id == X86_INS_FUCOMP) fpu_pop();
+                else if (id == X86_INS_FCOMPP || id == X86_INS_FUCOMPP) { fpu_pop(); fpu_pop(); }
+                break;
+            }
+            case X86_INS_FNSTSW: {
+                /* Materialise the status word from the pending compare:
+                 *   C0 (bit 8)  = a < b      C3 (bit 14) = a == b
+                 * which the compiler tests as `test ah, 0x41` (C0|C3 => a <= b) or
+                 * `test ah, 5` (C0|C2 => a < b or unordered). C2 (unordered/NaN) is
+                 * modeled as 0 — the ordered reading, correct for non-NaN operands. */
+                if (!fcom_a || !fcom_b) break;
+                ExprP lt = mkBinary("<",  clone(fcom_a), clone(fcom_b), 4);
+                ExprP eq = mkBinary("==", clone(fcom_a), clone(fcom_b), 4);
+                ExprP sw = mkBinary("|",
+                    mkTernary(lt, mkConst(0x100, 4),  mkConst(0, 4), 4),
+                    mkTernary(eq, mkConst(0x4000, 4), mkConst(0, 4), 4), 4);
+                if (nop >= 1 && OP(0).type == X86_OP_MEM) do_dst(b, OP(0), sw, in.addr);
+                else set_reg(R_RAX, 2, sw, b);
+                break;
+            }
+            case X86_INS_FLDCW: case X86_INS_FNSTCW: break;  /* rounding control: no value effect */
+            /* RDTSC/RDTSCP read the 64-bit timestamp counter into EDX:EAX; XGETBV reads
+             * the extended control register selected by ECX into EDX:EAX. None has an
+             * explicit destination operand, so the `default:` fallback — which requires a
+             * written REGISTER operand — never fired and BOTH halves were dropped: the
+             * AVX-support check `xgetbv; and eax,6; cmp eax,6` tested an entry-value
+             * phantom, and every timing/seed value read as a live-in. Snapshot the result
+             * to a temp so the two halves come from ONE read, not two separate calls. */
+            case X86_INS_RDTSC: case X86_INS_RDTSCP: case X86_INS_XGETBV: {
+                bool xg = (id == X86_INS_XGETBV);
+                auto call = std::make_shared<Expr>();
+                call->kind = EK::Call; call->callee = xg ? "_xgetbv" : "__rdtsc";
+                call->width = 8; call->ret_kind = 2; call->is_unsigned = true;
+                if (xg) call->args.push_back(mkCast("(unsigned int)", reg_value(R_RCX, 4), 4, true));
+                ExprP t = snapshot_to_temp(b, call, 8, in.addr);
+                set_reg(R_RAX, 4, mkCast("(unsigned int)", clone(t), 4, true), b);
+                set_reg(R_RDX, 4, mkCast("(unsigned int)",
+                        mkBinary(">>", clone(t), mkConst(32, 8, true), 8, true), 4, true), b);
+                if (xg) used_xgetbv = true; else used_rdtsc = true;
+                break;
+            }
+            case X86_INS_FFREE: break;                    /* tag-word only: no value effect */
+            case X86_INS_FINCSTP: fpu_top = (fpu_top + 1) & 7; break;
+            case X86_INS_FDECSTP: fpu_top = (fpu_top + 7) & 7; break;
+            /* rep movs -> inlined memcpy. MOVSD is NOT here: capstone spells the SSE
+             * `movsd xmm` with the same id, so the string form is split out inside that
+             * case (two MEM operands / no operands can only be the string op). */
+            case X86_INS_MOVSB: case X86_INS_MOVSW: case X86_INS_MOVSQ: {
+                bool has_rep = false;
+                for (int pi = 0; pi < 4; ++pi)
+                    if (x.prefix[pi] == X86_PREFIX_REP) { has_rep = true; break; }
+                emit_string_move(b, in, (id==X86_INS_MOVSB)?1:(id==X86_INS_MOVSW)?2:8, has_rep);
                 break;
             }
             case X86_INS_STOSB: case X86_INS_STOSW:
@@ -8864,10 +9559,111 @@ struct Decompiler {
      *   - `(a - b) ==/!= 0` -> `a ==/!= b`   (both are the same 0/1 value)
      *   - `(a + C1) ==/!= C2` -> `a ==/!= (C2 - C1)`   (offset-compare normalize)
      * All context-free (safe anywhere the expr appears). Gated DS_NO_PEEPHOLE. */
+    /* `c ? K1 : K2` with two CONSTANT arms — the shape the x87 status word is built from */
+    static bool ternary_of_consts(const ExprP& e) {
+        return e && e->kind == EK::Ternary && e->a && e->b && e->c &&
+               e->b->kind == EK::Const && e->c->kind == EK::Const &&
+               !e->b->is_float && !e->c->is_float && !e->is_float;
+    }
+    /* If `x` is `c ? nonzero : 0` (or the inverted `c ? 0 : nonzero`), return the
+     * condition under which x is TRUE — i.e. x's truth value as a plain expression. */
+    ExprP ternary_truth(const ExprP& x) {
+        if (!ternary_of_consts(x)) return nullptr;
+        bool t = (x->b->cval != 0), f = (x->c->cval != 0);
+        if (t == f) return nullptr;                       /* carries no information */
+        ExprP c = clone(x->a);
+        return t ? c : mkUnary("!", c, 4);
+    }
+
     ExprP peephole_expr(ExprP e) {
         if (!e) return e;
         e->a = peephole_expr(e->a); e->b = peephole_expr(e->b); e->c = peephole_expr(e->c);
         for (auto& ar : e->args) ar = peephole_expr(ar);
+
+        /* ---- x87 status-word collapse -------------------------------------------
+         * The legacy compare idiom `fcom; fnstsw ax; test ah,<mask>` is modeled
+         * faithfully as the FPU status word `(a<b ? 0x100 : 0) | (a==b ? 0x4000 : 0)`
+         * — correct, but unreadable. Bitwise ops distribute over shifts and masks, so
+         * pushing the shift/mask down into the constant arms collapses the whole thing
+         * back into the comparison it started as. Every rule below is generic
+         * (any ternary-of-constants) and value-identical; they are guarded to
+         * constant-ternary operands so ordinary expressions are never bloated.
+         * DS_NO_TERNFOLD. */
+        static const bool tf_off = std::getenv("DS_NO_TERNFOLD") != nullptr;
+        if (!tf_off && e->kind == EK::Binary && (e->op == ">>" || e->op == "&") && !e->is_float &&
+            e->b && e->b->kind == EK::Const && e->a) {
+            /* Every constant arm involved is a small NON-NEGATIVE status-word bit, so a
+             * widening cast over them is value-preserving and can be peeled — without
+             * this the renderer's `(uint64_t)(...)` sits between the shift and the `|`
+             * and blocks the whole collapse. all_cty() is what makes the peel safe: it
+             * admits only constants and constant-ternaries. */
+            std::function<bool(const ExprP&)> all_cty = [&](const ExprP& x) -> bool {
+                if (!x) return false;
+                if (x->kind == EK::Const) return x->cval >= 0;
+                if (ternary_of_consts(x)) return x->b->cval >= 0 && x->c->cval >= 0;
+                if (x->kind == EK::Cast) return all_cty(x->a);
+                return x->kind == EK::Binary && x->op == "|" && all_cty(x->a) && all_cty(x->b);
+            };
+            ExprP src = e->a;
+            while (src && src->kind == EK::Cast && src->a && all_cty(src)) src = src->a;
+            int64_t m = e->b->cval;
+            bool shr = (e->op == ">>");
+            auto ap = [&](int64_t v) -> int64_t {
+                return shr ? (int64_t)((uint64_t)v >> (uint64_t)(m & 63)) : (v & m);
+            };
+            /* (A|B) >> s -> (A>>s)|(B>>s) ;  (A|B) & M -> (A&M)|(B&M) */
+            if (src && src->kind == EK::Binary && src->op == "|" && all_cty(src)) {
+                auto side = [&](ExprP s) {
+                    auto n = std::make_shared<Expr>(*e); n->a = s; n->b = clone(e->b);
+                    return peephole_expr(n);
+                };
+                return peephole_expr(mkBinary("|", side(src->a), side(src->b),
+                                              e->width, e->is_unsigned));
+            }
+            /* (c ? K1 : K2) >> s / & M  ->  c ? (K1 op s) : (K2 op s) */
+            if (ternary_of_consts(src) && src->b->cval >= 0 && src->c->cval >= 0) {
+                return peephole_expr(mkTernary(clone(src->a),
+                                               mkConst(ap(src->b->cval), e->width, e->is_unsigned),
+                                               mkConst(ap(src->c->cval), e->width, e->is_unsigned),
+                                               e->width));
+            }
+        }
+        /* both arms the same constant -> that constant (the condition is dead) */
+        if (!tf_off && ternary_of_consts(e) && e->b->cval == e->c->cval)
+            return mkConst(e->b->cval, e->width, e->is_unsigned);
+        /* X | 0 -> X (same width only: returning a narrower operand would silently
+         * change the expression's width for every consumer). */
+        if (!tf_off && e->kind == EK::Binary && e->op == "|" && !e->is_float) {
+            if (e->b && e->b->kind == EK::Const && e->b->cval == 0 &&
+                e->a && e->a->width == e->width) return e->a;
+            if (e->a && e->a->kind == EK::Const && e->a->cval == 0 &&
+                e->b && e->b->width == e->width) return e->b;
+        }
+        /* a constant-ternary tested against 0 IS its condition */
+        if (!tf_off && e->kind == EK::Binary && (e->op == "!=" || e->op == "==") &&
+            e->b && e->b->kind == EK::Const && e->b->cval == 0 && !e->b->is_float) {
+            if (ExprP c = ternary_truth(e->a))
+                return (e->op == "!=") ? c : peephole_expr(mkUnary("!", c, 4));
+            /* `(c1?NZ:0) | (c2?NZ:0)` tested against 0 -> c1 || c2 */
+            if (e->a && e->a->kind == EK::Binary && e->a->op == "|") {
+                ExprP c1 = ternary_truth(e->a->a), c2 = ternary_truth(e->a->b);
+                if (c1 && c2) {
+                    ExprP o = mkBinary("||", c1, c2, 4);
+                    return (e->op == "!=") ? o : peephole_expr(mkUnary("!", o, 4));
+                }
+            }
+        }
+        /* `a<b || a==b` -> `a<=b` (and the `>` mirror) — the shape the status-word
+         * collapse leaves behind for the C0|C3 mask. Side-effect-free operands only. */
+        if (!tf_off && e->kind == EK::Binary && e->op == "||" && e->a && e->b &&
+            e->a->kind == EK::Binary && e->b->kind == EK::Binary && e->b->op == "==" &&
+            (e->a->op == "<" || e->a->op == ">") &&
+            exprEqual(e->a->a, e->b->a) && exprEqual(e->a->b, e->b->b) &&
+            !has_call(e->a) && !has_call(e->b) && !reads_mem(e->a)) {
+            auto n = std::make_shared<Expr>(*e->a);
+            n->op = (e->a->op == "<") ? "<=" : ">=";
+            return n;
+        }
 
         /* redundant nested integer cast (same domain, non-float) */
         if (e->kind == EK::Cast && e->a && e->a->kind == EK::Cast &&
@@ -8894,24 +9690,6 @@ struct Decompiler {
             if (e->a->width < e->width && e->width <= 4 &&
                 !(e->is_unsigned && !e->a->is_unsigned))
                 return peephole_expr(e->a);
-        }
-        /* MAGIC-NUMBER DIVISION: `umulh(X, M) >> s` is how the compiler spells
-         * `X / N` for a constant N. Recover and PROVE N (ds_magic_udiv verifies the
-         * identity on the quotient boundaries), then emit the real division — this
-         * is the single biggest readability win on constant division/modulo, which
-         * otherwise reads as an unintelligible 64-bit magic multiply.
-         * DS_NO_MAGICDIV. */
-        if (e->kind == EK::Binary && e->op == ">>" && e->a && e->b &&
-            e->b->kind == EK::Const && !e->is_float &&
-            e->a->kind == EK::Binary && e->a->op == "umulh" &&
-            e->a->a && e->a->b && e->a->b->kind == EK::Const &&
-            !std::getenv("DS_NO_MAGICDIV")) {
-            uint64_t N = 0;
-            if (ds_magic_udiv((uint64_t)e->a->b->cval, (int)e->b->cval, N)) {
-                ExprP d = mkBinary("/", clone(e->a->a), mkConst((int64_t)N, 8, true), 8, true);
-                d->is_unsigned = true;
-                return d;
-            }
         }
         /* a same-width, same-signedness integer cast over a plain var/mem read of that
          * width is a no-op — `(int)v1` after D1 narrowed v1 to `int`. (fold has this rule
@@ -9023,6 +9801,14 @@ struct Decompiler {
     std::vector<std::array<std::array<ExprP, 4>, R_COUNT>> entry_xmm_i;
     std::vector<std::array<bool, R_COUNT>> entry_xmm_i_real;
     std::vector<std::array<bool, R_COUNT>> reg_live_in;
+    /* x87 stack at each block's EXIT, so a successor can inherit it. regfile is reset
+     * per block and re-seeded, so the FPU stack must be too — letting it flow in raw
+     * walk order made a block read whatever stack the previously-WALKED block left,
+     * not its predecessor's (a compare after an unrelated block's pops then read an
+     * empty stack and compared 0.0 with 0.0). Mirrors block_flags_out. */
+    std::vector<std::array<ExprP, 8>> block_fpu_out;
+    std::vector<int>  block_fpu_top_out;
+    std::vector<char> block_fpu_valid;
 
     void init_entry_regs() {
         entry_reg.assign(blocks.size(), {});
@@ -9032,6 +9818,9 @@ struct Decompiler {
         entry_xmm_i.assign(blocks.size(), {});
         entry_xmm_i_real.assign(blocks.size(), {});
         block_flags_out.assign(blocks.size(), FlagSrc());
+        block_fpu_out.assign(blocks.size(), {});
+        block_fpu_top_out.assign(blocks.size(), 0);
+        block_fpu_valid.assign(blocks.size(), 0);
         /* entry block: seed argument registers from params. 32-bit cdecl passes
          * args on the stack (recovered into param_home_off by detect_cdecl_params),
          * so there is nothing to seed in registers — and seeding ecx/edx there
@@ -9921,6 +10710,11 @@ struct Decompiler {
     std::string render_const(const ExprP& e) {
         if (e->is_float) return fmt_float_lit(e->cval, e->width < 8);
         int64_t v = e->cval;
+        /* A 0 proven to be a pointer value (mark_null_consts) reads as NULL. The
+         * <stddef.h> include is flagged HERE rather than where the hint is set: a hinted
+         * const can still be folded away afterwards (`p == 0` becomes `!p`), and flagging
+         * at hint-time pulled the header into functions that never print NULL. */
+        if (e->null_hint) { used_null = true; return "NULL"; }
         /* H4: a printable-ASCII constant compared against a byte value reads as a char
          * literal in Hex-Rays (`c == 'A'` not `c == 0x41`). char_hint is set only for a
          * printable value in a byte comparison, so it never mis-renders a real number. */
@@ -9928,6 +10722,14 @@ struct Decompiler {
             char b[8];
             if (v == '\\' || v == '\'') { b[0]='\''; b[1]='\\'; b[2]=(char)v; b[3]='\''; b[4]=0; }
             else { b[0]='\''; b[1]=(char)v; b[2]='\''; b[3]=0; }
+            return b;
+        }
+        /* A recovered magic-number DIVISOR reads as a decimal count (`x / 10`), never
+         * `x / 0xa` — it is an arithmetic quantity, not a bitmask. */
+        if (e->dec_hint && !e->is_float) {
+            char b[24];
+            std::snprintf(b, sizeof b, e->is_unsigned ? "%llu" : "%lld",
+                          e->is_unsigned ? (unsigned long long)v : (long long)v);
             return b;
         }
         /* A bitmask/magic in a bitwise op reads far better in hex (Hex-Rays style):
@@ -14557,8 +15359,12 @@ struct Decompiler {
                 keep.reserve(b.stmts.size());
                 for (auto& s : b.stmts) {
                     bool drop = false;
+                    /* An unread assignment whose RHS is a PURE computation is dead, even
+                     * when that RHS contains an intrinsic (`v = _rotl(x,n)`, `v = __umulh(..)`)
+                     * — dropping it cannot change behaviour. has_impure_call (not has_call)
+                     * still pins anything that writes memory or may not return. */
                     if (s.kind == SK::Assign && s.lhs && s.lhs->kind == EK::Var &&
-                        !has_call(s.rhs)) {
+                        !has_impure_call(s.rhs)) {
                         const std::string& nm = s.lhs->name;
                         if (reads.find(nm) == reads.end()) { drop = true; }
                     }
@@ -15862,7 +16668,9 @@ struct Decompiler {
             if (q && q->kind == EK::Binary && q->op == "/" && q->b && q->b->kind == EK::Const &&
                 q->b->cval == d && q->a && exprEqual(md_strip(e->a), md_strip(q->a))) {
                 bool uns = q->is_unsigned; int w = q->width ? q->width : 8;
-                e = mkBinary("%", clone(q->a), mkConst(d, w, uns), w, uns);
+                ExprP dv = mkConst(d, w, uns);
+                dv->dec_hint = true;              /* a recovered divisor reads as `% 10` */
+                e = mkBinary("%", clone(q->a), dv, w, uns);
                 return true;
             }
         }
@@ -15876,7 +16684,12 @@ struct Decompiler {
         if (md_try_modulo(e)) { md_changed = true; return; }
         ExprP x; int64_t d; bool uns; int wb;
         if (md_match_quotient(e, x, d, uns, wb)) {
-            e = mkBinary("/", x, mkConst(d, wb, uns), wb, uns);
+            /* A divisor recovered from a magic multiply is a human-scale number the
+             * source wrote in decimal (`/ 10`, `/ 100`), never a bit pattern — so
+             * force decimal rendering rather than inheriting the hex default. */
+            ExprP dv = mkConst(d, wb, uns);
+            dv->dec_hint = true;
+            e = mkBinary("/", x, dv, wb, uns);
             md_changed = true;
         }
     }
@@ -17280,6 +18093,10 @@ struct Decompiler {
             }
         }
 
+        /* pointer-vs-0 -> NULL. MUST run before the body is rendered below (the pointer
+         * types it consults are already final from propagate_pointer_types). */
+        mark_null_consts();
+
         /* ---- emit body ---- */
         std::string body;
         indent_lvl = 1;
@@ -17509,6 +18326,8 @@ struct Decompiler {
                 ret_t = typ_str(ret_ptr_elem_w, ret_ptr_elem_uns, false) + "*";
             else ret_t = "long long";
         } else ret_t = typ_str(ret_width >= 8 ? 8 : 4, ret_is_unsigned, false);
+
+        compute_bool_vars();   /* flag locals -> `bool` (needs the FINAL var widths) */
 
         /* Prune TRAILING unused parameters from the signature. ABI/register
          * recovery over-counts args (a float-only `acosf(float)` gets phantom
@@ -17775,6 +18594,8 @@ struct Decompiler {
          * is include-guarded, so it is safe when many pair-files concatenate into one
          * TU. (A no-op in C++.) */
         if (used_while_true) protos += "#include <stdbool.h>\n";
+        /* NULL is not declared by <stdint.h>; <stddef.h> is its C home. */
+        if (used_null) protos += "#include <stddef.h>\n";
         /* recovered struct layouts for pointer params: one packed typedef each, emitted
          * before the body so `struct s_aN* aN` and `aN->field_N` resolve. */
         /* forward-declare every tag first so a `struct <nested>*` field resolves regardless
@@ -17883,6 +18704,35 @@ struct Decompiler {
             protos += "void __stosw(unsigned short*, unsigned short, unsigned long long);\n";
             protos += "void __stosd(unsigned long*, unsigned long, unsigned long long);\n";
             protos += "void __stosq(unsigned long long*, unsigned long long, unsigned long long);\n";
+        }
+        /* The _rotl/_rotr family is declared by MSVC's <stdlib.h>, but including it would
+         * also drag in abs/div/exit/... any of which a recovered function name could
+         * collide with. Declare just the used forms, matching <stdlib.h>'s signatures
+         * exactly — the same approach the self-declared __stos and __movs intrinsics
+         * below already take. */
+        for (const auto& rf : used_rot_fns) {
+            if (rf == "_rotl8")       protos += "unsigned char _rotl8(unsigned char, unsigned char);\n";
+            else if (rf == "_rotr8")  protos += "unsigned char _rotr8(unsigned char, unsigned char);\n";
+            else if (rf == "_rotl16") protos += "unsigned short _rotl16(unsigned short, unsigned char);\n";
+            else if (rf == "_rotr16") protos += "unsigned short _rotr16(unsigned short, unsigned char);\n";
+            else if (rf == "_rotl")   protos += "unsigned int _rotl(unsigned int, int);\n";
+            else if (rf == "_rotr")   protos += "unsigned int _rotr(unsigned int, int);\n";
+            else if (rf == "_rotl64") protos += "unsigned long long _rotl64(unsigned long long, int);\n";
+            else if (rf == "_rotr64") protos += "unsigned long long _rotr64(unsigned long long, int);\n";
+        }
+        if (used_fastfail) protos += "void __fastfail(unsigned int);\n";
+        if (used_nearbyint) protos += "float nearbyintf(float);\n";
+        if (used_rdtsc)  protos += "unsigned long long __rdtsc(void);\n";
+        if (used_xgetbv) protos += "unsigned long long _xgetbv(unsigned int);\n";
+        if (used_shift128) {
+            protos += "unsigned long long __shiftright128(unsigned long long, unsigned long long, unsigned char);\n";
+            protos += "unsigned long long __shiftleft128(unsigned long long, unsigned long long, unsigned char);\n";
+        }
+        if (used_movs) {
+            protos += "void __movsb(unsigned char*, const unsigned char*, unsigned long long);\n";
+            protos += "void __movsw(unsigned short*, const unsigned short*, unsigned long long);\n";
+            protos += "void __movsd(unsigned long*, const unsigned long*, unsigned long long);\n";
+            protos += "void __movsq(unsigned long long*, const unsigned long long*, unsigned long long);\n";
         }
         std::set<std::string> seen_proto;
         for (auto& kv : extern_callees) {
@@ -18188,6 +19038,17 @@ void build_sig_table(ds_engine* e, std::map<uint64_t, FuncSig>& tab) {
                                          * return — excluded from the ret-proximity test. */
         bool xmm0_live_at_ret = false;
         int  ret_xmm0_w = 0;       /* widest scalar-FP width live at a ret (8>4) */
+        /* x87 (32-bit /arch:IA32) float return: the value comes back on the FPU STACK in
+         * ST(0), never in xmm0/rax — so both tests above saw nothing and typed the
+         * function `void`, which is why every x87 float function decompiled to an empty
+         * `void f(void) { return; }`. Track the stack DEPTH instead: a ret reached with a
+         * non-empty stack is returning ST(0). MSVC rounds the result through memory and
+         * reloads it (`fstp dword [x]; fld dword [x]; ret`), so the width of the last FLD
+         * is the return's real width. */
+        int  x87_depth = 0;
+        bool x87_live_at_ret = false;
+        int  x87_ret_w = 0;
+        int  last_fld_w = 0;
         /* A forward in-range `jmp` is the "set return value then branch to the
          * shared epilogue" idiom ONLY when the target actually reaches a `ret`
          * without REDEFINING rax/eax. A loop-exit / if-else forward jmp whose
@@ -18270,8 +19131,39 @@ void build_sig_table(ds_engine* e, std::map<uint64_t, FuncSig>& tab) {
                     }
                 }
             }
+            /* ---- x87 stack depth (see x87_depth above) ---------------------------
+             * The popping arithmetic forms are identified by their DE opcode byte, not
+             * by id: capstone has NO X86_INS_FADDP (it maps the popping `faddp` to plain
+             * X86_INS_FADD), so an id-only test would miscount the stack. */
+            switch (c.id) {
+                case X86_INS_FLD: case X86_INS_FILD:
+                case X86_INS_FLD1: case X86_INS_FLDZ:
+                    ++x87_depth;
+                    if (c.id == X86_INS_FLD && x.op_count >= 1 && x.operands[0].type == X86_OP_MEM)
+                        last_fld_w = x.operands[0].size ? x.operands[0].size : 8;
+                    break;
+                case X86_INS_FSTP: case X86_INS_FISTP:
+                case X86_INS_FCOMP: case X86_INS_FUCOMP:
+                case X86_INS_FCOMPI: case X86_INS_FUCOMPI:
+                    if (x87_depth > 0) --x87_depth;
+                    break;
+                case X86_INS_FCOMPP: case X86_INS_FUCOMPP:
+                    x87_depth -= 2; if (x87_depth < 0) x87_depth = 0;
+                    break;
+                case X86_INS_FADD:  case X86_INS_FSUB: case X86_INS_FSUBR:
+                case X86_INS_FMUL:  case X86_INS_FDIV: case X86_INS_FDIVR:
+                case X86_INS_FSUBP: case X86_INS_FSUBRP:
+                case X86_INS_FMULP: case X86_INS_FDIVP: case X86_INS_FDIVRP:
+                    if (x.opcode[0] == 0xDE && x87_depth > 0) --x87_depth;   /* popping form */
+                    break;
+                default: break;
+            }
             if (c.id == X86_INS_RET || c.id == X86_INS_RETF) {
                 has_ret = true;
+                if (x87_depth > 0) {
+                    x87_live_at_ret = true;
+                    if (last_fld_w) x87_ret_w = last_fld_w;
+                }
                 /* the return value lives in whichever value register was set
                  * CLOSEST to the ret: rax (int/ptr) or xmm0 (float/double, the SSE
                  * return ABI). The /Od epilogue loads it right before add rsp/ret.
@@ -18909,6 +19801,10 @@ void build_sig_table(ds_engine* e, std::map<uint64_t, FuncSig>& tab) {
         else if (xmm0_live_at_ret && saw_fp_ret_tail) sig.ret_kind = (ret_xmm0_w >= 8) ? 4 : 3;
         else if (rax_live_at_ret) sig.ret_kind = (ret_rax_w >= 8) ? 2 : 1;
         else if (xmm0_live_at_ret) sig.ret_kind = (ret_xmm0_w >= 8) ? 4 : 3; /* float/double */
+        /* x87 ST(0) return (32-bit /arch:IA32). Deliberately ranked BELOW the rax test:
+         * the depth tracking can only fail to notice a return, never invent one over a
+         * real integer return. */
+        else if (x87_live_at_ret) sig.ret_kind = (x87_ret_w >= 8) ? 4 : 3;
         else if (tail_ret_inherit) sig.ret_kind = tail_ret_inherit;  /* tail-call thunk returns its target's value */
         else if (rax_param_copy >= 0) sig.ret_kind = 2;  /* lone `mov rax,argreg` = returns that pointer (memcpy dst) */
         else sig.ret_kind = 0;                       /* void */
