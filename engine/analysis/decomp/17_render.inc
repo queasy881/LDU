@@ -99,6 +99,51 @@
         };
         /* bare deref of a typed pointer => `*base` */
         if (is_ptr_base(addr)) { out = "*" + rsub(addr, 14); return true; }
+
+        /* SUBSCRIPT ON A STRUCT-POINTER FIELD: `*(T*)((char*)a1->field_8 + i*sizeof(T))`
+         * -> `a1->field_8[i]`. The plain-variable form above already collapses; a FIELD base
+         * (a1->field_8, an EK::Mem) never reached is_ptr_base, which is Var-only, so 1900+
+         * such accesses on NullWare stayed raw pointer arithmetic.
+         *
+         * Strictly gated, because a wrong stride corrupts every element:
+         *   - the base must be a field the engine ALREADY PROVED is a pointer
+         *     (is_struct_ptr_field -> it declared the field `void*`);
+         *   - the address must be exactly `field + <index-scaled-by-esize>` or
+         *     `field + <const multiple of esize>` -- the SAME shape the Var path accepts,
+         *     and esize is the access width, which IS the element size here;
+         *   - byte accesses keep their explicit cast (the sign-extension hazard the Var path
+         *     documents applies identically), so esize>=2 only.
+         * DS_NO_FIELDSUB. */
+        if (!std::getenv("DS_NO_FIELDSUB") && esize >= 2 && addr->kind == EK::Binary &&
+            addr->op == "+" && addr->a && addr->b) {
+            /* the field base is the (char*)-cast side; the other operand is the index */
+            auto field_base = [&](const ExprP& x) -> ExprP {
+                ExprP m = x;
+                while (m && m->kind == EK::Cast && m->a) m = m->a;   /* peel (char*) */
+                return (m && is_struct_ptr_field(m)) ? m : nullptr;
+            };
+            ExprP fb = field_base(addr->a), other = addr->b;
+            if (!fb) { fb = field_base(addr->b); other = addr->a; }
+            if (fb) {
+                ExprP o = strip_index_cast(other);
+                ExprP index;
+                if (o && o->kind == EK::Const && o->cval >= 0 && o->cval % esize == 0)
+                    index = mkConst(o->cval / esize, 4);           /* const offset -> [k] */
+                else if (o && o->kind == EK::Binary && o->op == "*") {
+                    if (isConst(o->b) && o->b->cval == esize) index = strip_index_cast(o->a);
+                    else if (isConst(o->a) && o->a->cval == esize) index = strip_index_cast(o->b);
+                }
+                if (index) {
+                    /* the field renders `a1->field_8`; cast a pointer-typed index to int */
+                    std::string istr = expr_is_pointer(index) ? "(long long)" + rsub(index, 14)
+                                                              : rsub(index, 15);
+                    out = "((" + (mem->is_float ? std::string(esize >= 8 ? "double" : "float")
+                                                : typ_str(esize, mem->is_unsigned, false)) +
+                          "*)" + rsub(fb, 14) + ")[" + istr + "]";
+                    return true;
+                }
+            }
+        }
         if (addr->kind != EK::Binary || addr->op != "+") return false;
         /* stack-array base: one operand is a `char buf[N]` local — it is the BASE
          * (the other operand the byte offset), even though such locals are not

@@ -77,6 +77,12 @@ CHECKS = [
      [r'__pcmpeqb'], [r'__pmovmskb\(0\)']),
     ('feat_c', 'f_stackstr', 'stack strings: immediate bytes -> char array',
      [r'char \w+\[|ABCD|0x44434241'], []),
+    # Subscript on a STRUCT-POINTER FIELD: `(char*)a1->field_8 + i*4` -> `a1->field_8[i]`.
+    # Separate fixture (feat_fieldsub.dll) -- see below.
+    ('feat_fieldsub', 'fs_const', 'field subscript: (char*)field+k*sz -> field[k]',
+     [r'\)\[\d+\]'], [r'\(char\*\)\w+->field_\w+ \+ 0x']),
+    ('feat_fieldsub', 'fs_sum', 'field subscript: variable index -> field[i]',
+     [r'\)\[\w+\]'], []),
     # Compound assignment. The forbidden pattern is the point: `v = v + x` must NOT survive.
     ('feat_c', 'f_compound', 'compound assign: v = v op x  ->  v op= x',
      [r'\w+\s(\+|\^|\||&|-|\*)= '], [r'(\b\w+) = \1 [-+^|&*] ']),
