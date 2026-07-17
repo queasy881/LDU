@@ -1450,8 +1450,71 @@ struct Decompiler {
      * loop-switch dispatch: `int __state = entry; while(1) switch(__state){...}`.
      * Each block is a `case <id>:`; `goto X` becomes `__state = X; break;` (the
      * outer-switch break re-enters the while), and a `ret`/tail-call exits the
-     * loop. Used as the LAST RESORT when the recursive structurer would otherwise
-     * leave a `goto`/label — so the output never contains one. */
+     * loop. Böhm-Jacopini: this represents ANY control flow with ZERO gotos, because
+     * the edges become DATA (the __state variable) instead of goto statements.
+     *
+     * OPT-IN ONLY (DS_FORCE_SM). It is NOT the default because it is strictly harder to
+     * read than a few honest gotos: it flattens the whole function into a dispatch loop,
+     * destroying the natural loops/ifs that structured correctly. Restored 2026-07-17 as
+     * a user-selectable toggle -- "make every goto a state machine" vs "leave plain
+     * gotos" -- after being removed as a mandatory pass. */
+    void emit_state_machine(std::string& dst) {
+        int entry = entry_block();
+        dst += ind() + "int __state = " + std::to_string(entry) + ";\n";
+        used_while_true = true;
+        dst += ind() + "while (true) {\n";
+        indent_lvl++;
+        dst += ind() + "switch (__state) {\n";
+        indent_lvl++;
+        std::vector<int> order(blocks.size());
+        for (size_t i = 0; i < blocks.size(); ++i) order[i] = (int)i;
+        std::sort(order.begin(), order.end(),
+                  [&](int a, int c){ return blocks[a].addr < blocks[c].addr; });
+        for (int id : order) {
+            Block& b = blocks[id];
+            if (merged_blocks.count(id)) continue;   /* folded into a predecessor */
+            dst += ind() + "case " + std::to_string(id) + ":\n";
+            indent_lvl++;
+            emit_stmts(id, dst);
+            if (b.ends_ret) {
+                dst += ind() + ret_text(id) + "\n";
+            } else if (b.is_switch && b.switch_var) {
+                dst += ind() + "switch (" + switch_sel(b.switch_var) + ") {\n";
+                indent_lvl++;
+                for (size_t i = 0; i < b.case_succ.size(); ++i) {
+                    if (b.case_succ[i] < 0) continue;
+                    dst += ind() + "case " + std::to_string(i) + ": __state = " +
+                           std::to_string(b.case_succ[i]) + "; break;\n";
+                }
+                if (b.default_succ >= 0)
+                    dst += ind() + "default: __state = " +
+                           std::to_string(b.default_succ) + "; break;\n";
+                indent_lvl--;
+                dst += ind() + "}\n";
+                dst += ind() + "break;\n";
+            } else if (b.ends_jcc && b.taken >= 0 && b.fall >= 0) {
+                dst += ind() + "__state = " + render(b.cond ? b.cond : mkConst(1, 4)) +
+                       " ? " + std::to_string(b.taken) + " : " +
+                       std::to_string(b.fall) + ";\n";
+                dst += ind() + "break;\n";
+            } else if (b.ends_jmp) {
+                if (b.taken >= 0) {
+                    dst += ind() + "__state = " + std::to_string(b.taken) + ";\n";
+                    dst += ind() + "break;\n";
+                } else dst += ind() + ret_text(id) + "\n";   /* tail / extern jmp */
+            } else if (b.fall >= 0) {
+                dst += ind() + "__state = " + std::to_string(b.fall) + ";\n";
+                dst += ind() + "break;\n";
+            } else {
+                dst += ind() + ret_text(id) + "\n";
+            }
+            indent_lvl--;
+        }
+        indent_lvl--;
+        dst += ind() + "}\n";   /* switch */
+        indent_lvl--;
+        dst += ind() + "}\n";   /* while(1) */
+    }
 
     /* =================================================================== */
     /*  Type inference for declarations                                     */
@@ -4799,17 +4862,20 @@ struct Decompiler {
             goto_tgts.insert(body.substr(gp, e - gp));
             ++goto_n;
         }
-        /* The `while(1) switch(__state)` machine used to take over here for any function
-         * whose gotos survived structuring. REMOVED. It guaranteed zero gotos by turning
-         * the whole function into a dispatch loop — every block a `case`, every edge a
-         * `__state = N; break;`. That is not a decompilation of the function; it is a
-         * re-encoding of its CFG as data, and it is strictly harder to read than the gotos
-         * it replaced. It also destroyed the loops and conditionals that HAD structured
-         * correctly, since the rewrite is all-or-nothing per function. 9 NullWare functions
-         * were emitted this way.
-         *
-         * goto_n / goto_tgts are still counted above: they feed the confidence header. */
-        (void)goto_n;
+        /* THE STATE-MACHINE TOGGLE. Default OFF: a function's gotos stay plain gotos, which
+         * read far better than flattening the whole thing into a dispatch loop (that was the
+         * mandatory behaviour removed in 8cb9097). DS_FORCE_SM turns it ON: EVERY function that
+         * still has a goto is re-emitted as `while(1) switch(__state)` with ZERO gotos.
+         * This is the "make every goto a state machine forever" option -- the UI wires a
+         * persistent checkbox to this env var. It is always POSSIBLE (Böhm-Jacopini); it is
+         * just less readable, which is why it is a choice, not the default.
+         * goto_n / goto_tgts are also counted above for the confidence header. */
+        if (goto_n > 0 && std::getenv("DS_FORCE_SM")) {
+            std::string sm;
+            indent_lvl = 1;
+            emit_state_machine(sm);
+            body = sm;
+        }
 
         /* Hex-Rays-style else-if chains: fold `} else {\n if(...){...} \n}` staircases
          * (we otherwise emit ZERO else-if). Runs on the FINAL body (structured or SM). */
@@ -6847,9 +6913,31 @@ extern "C" char* ds_decompile(ds_engine* e, uint64_t func_rva) {
 
     std::string result;
     try {
-        std::map<uint64_t, FuncSig> sigtab;
-        build_sig_table(e, sigtab);
-        Decompiler dc(e, f, &sigtab);
+        /* CACHE THE SIG TABLE PER ENGINE. build_sig_table scans EVERY function (prologue
+         * disasm, call-graph fixpoints), so calling it once per ds_decompile makes a whole-DLL
+         * dump O(functions^2) -- measured 2 fns/s on ntdll (4598 fns), a full dump ~40 min. The
+         * table is a pure function of the engine's (unchanging) function set, so it is computed
+         * ONCE per engine and reused. Keyed by (engine, func_len) so a rebuilt/extended engine
+         * recomputes. Mutex-guarded: the dump tool decompiles across N threads.
+         * DS_NO_SIGCACHE forces the old per-call build (for A/B). */
+        static std::mutex sc_mtx;
+        static std::map<ds_engine*, std::pair<size_t, std::shared_ptr<std::map<uint64_t,FuncSig>>>> sc;
+        std::shared_ptr<std::map<uint64_t, FuncSig>> sig;
+        if (std::getenv("DS_NO_SIGCACHE")) {
+            sig = std::make_shared<std::map<uint64_t, FuncSig>>();
+            build_sig_table(e, *sig);
+        } else {
+            std::lock_guard<std::mutex> lk(sc_mtx);
+            auto it = sc.find(e);
+            if (it != sc.end() && it->second.first == e->func_len) {
+                sig = it->second.second;
+            } else {
+                sig = std::make_shared<std::map<uint64_t, FuncSig>>();
+                build_sig_table(e, *sig);
+                sc[e] = {e->func_len, sig};
+            }
+        }
+        Decompiler dc(e, f, sig.get());
         result = dc.run();
     } catch (...) {
         std::string fname = (f->name[0] ? sani(std::string(f->name))
