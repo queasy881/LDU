@@ -59,6 +59,14 @@ CHECKS = [
     # fixture is the only oracle for it.
     ('feat_c', 'f_get_base', 'cross-fn types: wrapper returns HMODULE, not int64_t',
      [r'^HMODULE f_get_base\(void\)'], [r'^int64_t f_get_base\(void\)']),
+    # Name the local after the API that produced it -- the same contract that gave it its
+    # TYPE also gives it the name a reader greps for.
+    # Asserted on f_apiname, NOT f_get_base: autoname's `result` rule runs FIRST and claims the
+    # single RETURNED local -- correctly, `result` is the right name for a returned value -- so
+    # f_get_base structurally cannot exercise API naming. Asserting it there reported a working
+    # feature as broken.
+    ('feat_c', 'f_apiname', 'API naming: GetModuleHandleW result -> hModule',
+     [r'\bhModule\b'], []),
     ('feat_c', 'f_get_base2', 'cross-fn types: through a TAIL-CALL THUNK (jmp, no call/ret)',
      [r'^HMODULE f_get_base2\(void\)'], []),
     ('feat_c', 'f_use_base', 'cross-fn types: the CALLER\'s prototype agrees with the callee',
@@ -72,8 +80,12 @@ CHECKS = [
     # Compound assignment. The forbidden pattern is the point: `v = v + x` must NOT survive.
     ('feat_c', 'f_compound', 'compound assign: v = v op x  ->  v op= x',
      [r'\w+\s(\+|\^|\||&|-|\*)= '], [r'(\b\w+) = \1 [-+^|&*] ']),
-    ('feat_c', 'f_incr', 'increment: v = v + 1  ->  ++v',
-     [r'\+\+\w+|\w+ \+= 1'], [r'(\b\w+) = \1 \+ 1;']),
+    # `++\w` does NOT match `++*a1` -- `*` is not a word char, and a deref is the common shape.
+    # That regex reported a working feature as broken (the 4th such test bug this session; all
+    # of them failed in the "green code looks red" direction, which is the safe one but still
+    # a lie). Match the operator, not an assumed operand shape.
+    ('feat_c', 'f_incr', 'increment: v = v + 1  ->  ++v  (incl. ++*p)',
+     [r'\+\+[\w*(]'], [r'(\b[\w*]+) = \1 \+ 1;']),
 
     # ---- feat_cpp.dll : type / class recoveries ---------------------------------------
     ('feat_cpp', 'mk_rect', 'RTTI: class recovered + named',

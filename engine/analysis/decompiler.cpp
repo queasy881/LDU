@@ -1038,6 +1038,15 @@ struct FuncSig {
      *     fun_00001310("[NullWare] Game module found at 0x%p\n", v2, 4, 0)
      * one %p, three arguments. See trim_format_args(). */
     bool is_variadic = false;
+    /* This function NEVER RETURNS: it contains no `ret` at all and its range ends in a trap
+     * (int3/ud2). A caller's code after such a call is UNREACHABLE, and today we print it:
+     *     fun_00005ef0();     <- never returns
+     *     fun_00005e60();     <- dead
+     *     return 0;           <- dead
+     * The trap requirement is not decoration -- "no ret" alone is also what a function with
+     * WRONG BOUNDS looks like, and claiming that one never returns would delete live code.
+     * Filled by build_sig_table; consumed by emit_stmts. */
+    bool is_noreturn = false;
     /* The Win32 type this function RETURNS, propagated across the call graph. A local wrapper
      * that hands back an API's result returns that API's type, and so does a wrapper of that
      * wrapper -- which is the only way `HMODULE dll = GetDllBase();` can be recovered, since
@@ -2014,6 +2023,9 @@ struct Decompiler {
      * Read by decl_type, so it wins over the width/pointer inference for that variable. */
     std::map<std::string, std::string> var_api_type;
     std::set<std::string> api_types_used;   /* every Win32 name emitted -> its typedef prelude */
+    /* every symbolic API constant emitted -> its #define prelude. The dumped units compile
+     * /TC standalone with no windows.h, so MEM_COMMIT is a C2065 unless we define it. */
+    std::map<std::string,long long> api_consts_used;
 
     /* Callee NAME -> its function rva. The existing sig lookups all do
      * `strtoull(c.c_str() + 4, ...)`, which silently assumes every local callee is spelled
@@ -2110,6 +2122,18 @@ struct Decompiler {
                             uint64_t a = (uint64_t)e->args[i]->cval;
                             uint64_t r = (this->e && a >= this->e->base) ? a - this->e->base : a;
                             if (read_wstring(r, ws)) e->args[i] = mkText("L\"" + ws + "\"", 8);
+                        }
+                        /* SYMBOLIC CONSTANTS. The API's contract fixes what this parameter's
+                         * bits mean, so a magic number in it is decidably nameable:
+                         *   VirtualAlloc(v10, 0x1000, 0x3000, 0x40)
+                         *   VirtualAlloc(v10, 0x1000, MEM_COMMIT|MEM_RESERVE, PAGE_EXECUTE_READWRITE)
+                         * api_const_str declines unless it can name the value EXACTLY (every
+                         * flag bit covered), so a partial match never renders a half-truth. */
+                        if (e->args[i] && e->args[i]->kind == EK::Const && !e->args[i]->is_float) {
+                            std::string cs = api_const_str(e->callee, (int)i,
+                                                           (long long)e->args[i]->cval,
+                                                           api_consts_used);
+                            if (!cs.empty()) e->args[i] = mkText(cs, e->args[i]->width);
                         }
                     }
                 }
@@ -5355,6 +5379,17 @@ struct Decompiler {
          * functions each emit their own. */
         for (const std::string& t : api_types_used)
             full += std::string("typedef ") + api_type_backing(t) + " " + t + ";\n";
+        /* The symbolic API constants this function actually used. #define, not an enum: the
+         * value must stay EXACTLY the integer the call site had (an enum would be int-typed and
+         * a 0x80000000 GENERIC_READ would not fit), and a repeated identical #define is legal C
+         * -- which is what keeps a combined-TU recompile clean when many functions emit their
+         * own. Hex-format so it reads like the SDK header it mirrors. */
+        for (auto& kv : api_consts_used) {
+            char buf[80];
+            std::snprintf(buf, sizeof buf, "#define %s 0x%llx\n", kv.first.c_str(),
+                          (unsigned long long)kv.second);
+            full += buf;
+        }
         full += build_confidence_comment(body, referenced);
         if (!protos.empty()) full += protos;
         full += head + eh_annotation() + lock_annotation() + decls;
@@ -5737,8 +5772,10 @@ void build_sig_table(ds_engine* e, std::map<uint64_t, FuncSig>& tab) {
             }
             return false;
         };
+        unsigned last_id = 0;          /* the range's final instruction -- the noreturn trap test */
         for (size_t i = 0; i < count; ++i) {
             cs_insn& c = ci[i];
+            last_id = c.id;
             if (!c.detail) continue;
             cs_x86& x = c.detail->x86;
             /* Track each xmm's scalar-FP width. A scalar-FP op (fp_scalar_width!=0)
@@ -6542,6 +6579,15 @@ void build_sig_table(ds_engine* e, std::map<uint64_t, FuncSig>& tab) {
         sig.saw_real_value_ret = saw_real_value_ret;
         sig.saw_prior_call = saw_prior_call;
         sig.ret_call_target = ret_call_target;
+        /* NORETURN. Three conditions, all required:
+         *   no `ret` anywhere      -- it never hands control back
+         *   no tail JMP out        -- a tail call CAN return; that is a thunk, not a trap
+         *   the range ENDS IN A TRAP (int3/ud2) -- the guard that makes this safe. "No ret"
+         *     alone is ALSO what a function with wrong bounds looks like, and calling that
+         *     noreturn would DELETE LIVE CODE at every caller. Costs nothing: all 12 real
+         *     candidates in NullWare end in int3 (verified: 0x5e60, 0x5ef0, 0x74590, ...). */
+        sig.is_noreturn = !has_ret && !tail_target &&
+                          (last_id == X86_INS_INT3 || last_id == X86_INS_UD2);
         /* LOCK RECOVERY: only a TINY one-call body is the lock primitive itself.
          * Without the size guard a real function whose single call happens to be
          * `__acrt_lock(n)` would be tagged an acquire thunk, and every one of ITS

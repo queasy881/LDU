@@ -470,6 +470,102 @@
         return "unsigned long long";
     }
 
+    /* SYMBOLIC CONSTANTS for Win32 API parameters.
+     *
+     * `VirtualAlloc(v10, 0x1000, 0x3000, 0x40)` is the single most important line in a lot of
+     * binaries and it says nothing. It means
+     *     VirtualAlloc(v10, 0x1000, MEM_COMMIT|MEM_RESERVE, PAGE_EXECUTE_READWRITE)
+     * i.e. "allocate committed RWX memory" -- the shellcode tell. The magic numbers are not
+     * ambiguous: the API's own contract fixes what each parameter's bits mean, so this is the
+     * type library again, spent on values instead of types.
+     *
+     * FLAGS  = OR-able bits; every bit must be covered by a name or the whole thing is
+     *          declined (a leftover bit would make the rendering a LIE about the value).
+     * ENUM   = one exact value; no partial match.
+     * Keyed by (base API name, parameter index). The A/W suffix is stripped by the caller.
+     * Only parameters whose constants are unambiguous are listed -- a size, a count or a
+     * pointer is absent on purpose. */
+    enum ConstKind { CK_NONE = 0, CK_FLAGS, CK_ENUM };
+    struct ApiConst { const char* api; int pidx; int kind; const char* names[10]; long long vals[10]; };
+    static const ApiConst* api_const_table(const std::string& base, int pidx) {
+        static const ApiConst T[] = {
+            /* VirtualAlloc(lpAddress, dwSize, flAllocationType, flProtect) */
+            {"VirtualAlloc", 2, CK_FLAGS,
+             {"MEM_COMMIT","MEM_RESERVE","MEM_DECOMMIT","MEM_RELEASE","MEM_RESET","MEM_TOP_DOWN",0},
+             {0x1000,0x2000,0x4000,0x8000,0x80000,0x100000,0}},
+            {"VirtualAlloc", 3, CK_FLAGS,
+             {"PAGE_NOACCESS","PAGE_READONLY","PAGE_READWRITE","PAGE_WRITECOPY","PAGE_EXECUTE",
+              "PAGE_EXECUTE_READ","PAGE_EXECUTE_READWRITE","PAGE_EXECUTE_WRITECOPY","PAGE_GUARD",0},
+             {0x01,0x02,0x04,0x08,0x10,0x20,0x40,0x80,0x100,0}},
+            /* VirtualProtect(lpAddress, dwSize, flNewProtect, lpflOldProtect) */
+            {"VirtualProtect", 2, CK_FLAGS,
+             {"PAGE_NOACCESS","PAGE_READONLY","PAGE_READWRITE","PAGE_WRITECOPY","PAGE_EXECUTE",
+              "PAGE_EXECUTE_READ","PAGE_EXECUTE_READWRITE","PAGE_EXECUTE_WRITECOPY","PAGE_GUARD",0},
+             {0x01,0x02,0x04,0x08,0x10,0x20,0x40,0x80,0x100,0}},
+            /* VirtualFree(lpAddress, dwSize, dwFreeType) */
+            {"VirtualFree", 2, CK_FLAGS, {"MEM_DECOMMIT","MEM_RELEASE",0}, {0x4000,0x8000,0}},
+            /* GetStdHandle(nStdHandle) */
+            {"GetStdHandle", 0, CK_ENUM,
+             {"STD_INPUT_HANDLE","STD_OUTPUT_HANDLE","STD_ERROR_HANDLE",0}, {-10,-11,-12,0}},
+            /* WaitForSingleObject(hHandle, dwMilliseconds) */
+            {"WaitForSingleObject", 1, CK_ENUM, {"INFINITE",0}, {0xFFFFFFFFLL,0}},
+            /* CreateFile(lpFileName, dwDesiredAccess, dwShareMode, lpSA, dwCreationDisposition, ..) */
+            {"CreateFile", 1, CK_FLAGS, {"GENERIC_READ","GENERIC_WRITE","GENERIC_EXECUTE","GENERIC_ALL",0},
+             {0x80000000LL,0x40000000LL,0x20000000LL,0x10000000LL,0}},
+            {"CreateFile", 2, CK_FLAGS, {"FILE_SHARE_READ","FILE_SHARE_WRITE","FILE_SHARE_DELETE",0},
+             {0x1,0x2,0x4,0}},
+            {"CreateFile", 4, CK_ENUM,
+             {"CREATE_NEW","CREATE_ALWAYS","OPEN_EXISTING","OPEN_ALWAYS","TRUNCATE_EXISTING",0},
+             {1,2,3,4,5,0}},
+            /* HeapAlloc(hHeap, dwFlags, dwBytes) */
+            {"HeapAlloc", 1, CK_FLAGS, {"HEAP_NO_SERIALIZE","HEAP_GENERATE_EXCEPTIONS","HEAP_ZERO_MEMORY",0},
+             {0x1,0x4,0x8,0}},
+            /* OpenProcess(dwDesiredAccess, bInheritHandle, dwProcessId) */
+            {"OpenProcess", 0, CK_FLAGS,
+             {"PROCESS_TERMINATE","PROCESS_CREATE_THREAD","PROCESS_VM_OPERATION","PROCESS_VM_READ",
+              "PROCESS_VM_WRITE","PROCESS_QUERY_INFORMATION","SYNCHRONIZE",0},
+             {0x1,0x2,0x8,0x10,0x20,0x400,0x100000,0}},
+            {0,0,0,{0},{0}},
+        };
+        for (const ApiConst* p = T; p->api; ++p)
+            if (pidx == p->pidx && base == p->api) return p;
+        return nullptr;
+    }
+    /* Render `v` for (api, pidx) as symbolic names, or "" when it cannot be done EXACTLY.
+     * Every name used is reported via `used` so the caller can emit its #define -- the dumped
+     * units compile /TC standalone with no windows.h, so an undefined MEM_COMMIT is a C2065. */
+    static std::string api_const_str(const std::string& nm, int pidx, long long v,
+                                     std::map<std::string,long long>& used) {
+        static const bool off = std::getenv("DS_NO_APICONST") != nullptr;
+        if (off) return "";
+        std::string base = nm;
+        if (base.size() > 1 && (base.back() == 'A' || base.back() == 'W')) {
+            char pc = base[base.size() - 2];
+            if (pc >= 'a' && pc <= 'z') base.pop_back();
+        }
+        const ApiConst* t = api_const_table(base, pidx);
+        if (!t) return "";
+        if (t->kind == CK_ENUM) {
+            for (int i = 0; t->names[i]; ++i)
+                if (t->vals[i] == v) { used[t->names[i]] = t->vals[i]; return t->names[i]; }
+            return "";                                  /* not a value we know: say nothing */
+        }
+        /* FLAGS: every set bit must be named, else the render would drop information. */
+        if (v == 0) return "";                          /* 0 is just 0 -- naming it adds nothing */
+        long long left = v; std::string out;
+        std::map<std::string,long long> mine;
+        for (int i = 0; t->names[i]; ++i) {
+            long long b = t->vals[i];
+            if (b && (left & b) == b) {
+                if (!out.empty()) out += "|";
+                out += t->names[i]; mine[t->names[i]] = b; left &= ~b;
+            }
+        }
+        if (left != 0 || out.empty()) return "";        /* an unnamed bit remains -> decline */
+        for (auto& kv : mine) used[kv.first] = kv.second;
+        return out;
+    }
+
     /* Win32 RETURN types — the other half of the type library, and the one that actually
      * types the reader's VARIABLES rather than just a prototype:
      *     v7 = CreateFileW(...)      ->  HANDLE v7 = CreateFileW(...)

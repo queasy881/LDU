@@ -4,11 +4,43 @@
  * This is a pure text partition of a 14.4k-line class: the preprocessor reassembles
  * the identical translation unit, so it is behaviour-neutral by construction.
  */
+    /* Does this statement CALL something that never returns? Everything after it in the block
+     * is then unreachable, and printing it asserts the program does things it cannot:
+     *     __fastfail(5);          <- int 0x29, the process is gone
+     *     fun_0005d820();         <- dead
+     *     a1->field_0 = NULL;     <- dead
+     * Three sources, all facts rather than guesses: the fail-fast intrinsic; an IMPORT the SDK
+     * really marks DECLSPEC_NORETURN; and a LOCAL that build_sig_table proved has no `ret` and
+     * ends in a trap. DS_NO_NORETURN. */
+    bool stmt_calls_noreturn(const Stmt& s) {
+        if (std::getenv("DS_NO_NORETURN")) return false;
+        if (s.kind != SK::Call || !s.rhs || s.rhs->kind != EK::Call) return false;
+        const std::string& c = s.rhs->callee;
+        if (c == "__fastfail") return true;
+        static const char* NR[] = {"ExitProcess","ExitThread","FreeLibraryAndExitThread",
+                                   "RaiseFailFastException","abort","exit","_exit","_Exit",
+                                   "quick_exit","longjmp","_invoke_watson","RtlRaiseStatus",
+                                   "TerminateProcess", nullptr};
+        for (int i = 0; NR[i]; ++i) if (c == NR[i]) return true;
+        uint64_t crva = 0;
+        if (sigtab && callee_rva_of(c, crva)) {
+            auto it = sigtab->find(crva);
+            if (it != sigtab->end() && it->second.is_noreturn) return true;
+        }
+        return false;
+    }
     void emit_stmts(int id, std::string& dst) {
-        if (iv_suppressed_stmts.empty()) { for (auto& s : blocks[id].stmts) emit_stmt(s, dst); return; }
+        if (iv_suppressed_stmts.empty()) {
+            for (auto& s : blocks[id].stmts) {
+                emit_stmt(s, dst);
+                if (stmt_calls_noreturn(s)) return;   /* the rest of this block is unreachable */
+            }
+            return;
+        }
         for (size_t i = 0; i < blocks[id].stmts.size(); ++i) {
             if (iv_suppressed_stmts.count({id, (int)i})) continue;   /* for-loop init/incr */
             emit_stmt(blocks[id].stmts[i], dst);
+            if (stmt_calls_noreturn(blocks[id].stmts[i])) return;
         }
     }
 
@@ -124,6 +156,11 @@
                 }
                 std::string r = render(arhs);
                 if (l == r) break;     /* drop self-assign */
+                /* The UNRECONCILED renderings. Everything below may wrap `l` or `r` in a cast
+                 * to make the assignment legal C; the compound fold at the bottom re-renders
+                 * from the AST and would silently DROP that cast. Keeping the originals lets it
+                 * detect "a cast was added here" and decline. */
+                const std::string l_plain = l, r_plain = r;
                 if (s.lhs && s.rhs) {
                     auto wrapstr = [&](const std::string& x) {
                         return (s.rhs->kind == EK::Binary || s.rhs->kind == EK::Ternary)
@@ -202,6 +239,64 @@
                         if (!vraw.empty()) {
                             std::string sym = sani(vraw) + "__vftable";
                             r = "&" + sym; referenced_vtables.insert(sym);
+                        }
+                    }
+                }
+                /* COMPOUND ASSIGNMENT / INCREMENT. `v1 = v1 + *v2` is what the machine does;
+                 * `v1 += *v2` is what the source said, and every loop body in the binary is
+                 * full of the long form (measured: 1031 `v = v <op> x` and 827 `v = v + 1`).
+                 *
+                 * Done on the FINAL RENDERED TEXT, deliberately. Everything above this point
+                 * reconciles pointer/float/struct types and may have wrapped either side in a
+                 * cast; folding earlier would have to re-derive all of that. Here the only
+                 * question left is whether the destination text is repeated verbatim as the
+                 * first operand -- if it is, `l op= rest` is the same statement by definition,
+                 * for any l, including `a1->field_8` and `*(int*)(x)`.
+                 *
+                 * REQUIRES the RHS to be a top-level Binary whose left operand rendered to
+                 * EXACTLY the destination string. `l` must have no side effects to be written
+                 * once instead of twice -- it is an lvalue we just rendered, so it cannot, but
+                 * a CALL inside it could, hence the has_call guard.
+                 * Only the operators where `x op= y` is identical to `x = x op y` in C: the
+                 * shift/arith/bitwise set. NOT `-` with a pointer dest (`p = p - n` is fine as
+                 * `p -= n`, but the renderer may have integerized it, so the text test decides).
+                 * DS_NO_COMPOUND. */
+                if (!std::getenv("DS_NO_COMPOUND") && s.rhs && s.rhs->kind == EK::Binary &&
+                    s.rhs->a && s.rhs->b && !has_call(s.rhs->a) &&
+                    /* A CAST WAS ADDED ABOVE -> do not fold, it would be dropped. Measured:
+                     *     v21 = (int32_t*)(v21 & 0x7f)      <- the cast is what makes it legal
+                     *     v21 &= 0x7f                       <- C2296 on fn_00084b90
+                     * The reconciliation above knows things the AST does not (it compares
+                     * RENDERED pointer-ness), so if it decided a cast was needed, the long form
+                     * is the only correct output. */
+                    l == l_plain && r == r_plain) {
+                    static const char* OPS[] = {"+","-","*","/","%","&","|","^","<<",">>",nullptr};
+                    bool ok = false;
+                    for (int i = 0; OPS[i]; ++i) if (s.rhs->op == OPS[i]) { ok = true; break; }
+                    /* A POINTER destination only accepts += and -=. `p &= m` / `p |= m` /
+                     * `p *= n` are C2296 regardless of any cast: C has no such operator for a
+                     * pointer. The long form survives because the renderer casts the whole RHS
+                     * back to the pointer type. */
+                    if (ok && renders_as_pointer(s.lhs) && s.rhs->op != "+" && s.rhs->op != "-")
+                        ok = false;
+                    if (ok) {
+                        std::string la = render(s.rhs->a);
+                        if (la == l) {
+                            std::string rb = render(s.rhs->b);
+                            /* `x = x + 1` -> `++x`; `x = x - 1` -> `--x`. Only for a plain
+                             * integer destination: `p = p + 1` on a TYPED pointer advances by
+                             * sizeof(*p), which is what the C already says, so ++ is equally
+                             * correct there -- but a float `f = f + 1` is not an increment
+                             * idiom a reader expects, so it keeps the long form. */
+                            bool int_dst = !(s.lhs->kind == EK::Var &&
+                                             (decl_type(s.lhs->name) == "float" ||
+                                              decl_type(s.lhs->name) == "double"));
+                            if (int_dst && rb == "1" && (s.rhs->op == "+" || s.rhs->op == "-")) {
+                                dst += ind() + (s.rhs->op == "+" ? "++" : "--") + l + ";\n";
+                                break;
+                            }
+                            dst += ind() + l + " " + s.rhs->op + "= " + rb + ";\n";
+                            break;
                         }
                     }
                 }

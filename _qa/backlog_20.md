@@ -184,6 +184,12 @@ the next jcc renders a confidently-wrong condition. Every one of these is a real
 #   - `cargo ... | grep -c "error C"` must be CHECKED, not printed: a failing build leaves the
 #     OLD exe in place and its output reads exactly like a working feature. Gate commands are
 #     now `E=$(...); [ "$E" = "0" ] && <run>`.
+#   - AND `error C` DOES NOT CATCH LINKER FAILURES. Building while a gate is running gives
+#     `LINK : fatal error LNK1104: cannot open file dump_pairs-<hash>.exe` -- the exe is locked
+#     by the running dump -- and `grep -c "error C"` reports 0. The C++ compiles, the .lib
+#     updates, the EXE DOES NOT, and the next run silently uses the old binary. Grep
+#     `error C[0-9]{4}|LNK[0-9]{4}|^error` and never build while a gate holds the exe.
+#     (Confirmed 2026-07-17: exe mtime 17 minutes stale while "BUILD_ERRORS=0".)
 #   - Anchor greps. `grep '\bgoto '` also matches the confidence header ("1 residual goto") and
 #     inflated a whole-binary count 568 -> 637. `grep WSTR` matches LPCWSTR and faked a stale
 #     binary. Count `goto [A-Za-z0-9_]*;` with the semicolon.

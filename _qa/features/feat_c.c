@@ -93,6 +93,18 @@ __declspec(dllexport) int f_use_base(void) {
 __declspec(noinline) __declspec(dllexport) HMODULE f_get_base2(void) { return f_get_base(); }
 __declspec(dllexport) int f_use_base2(void) { HMODULE m = f_get_base2(); return m != 0; }
 
+/* --- NAME A LOCAL AFTER THE API THAT PRODUCED IT -> hModule.
+ *     The local must NOT be the return value: autoname's `result` rule runs first and claims
+ *     the single returned local, which is correct for a returned value and means f_get_base
+ *     can never exercise this. Storing through a volatile global forces the handle to be a
+ *     real local that lives across a call and is not the return. */
+static volatile HMODULE g_saved;
+__declspec(dllexport) void f_apiname(void) {
+    HMODULE m = GetModuleHandleW(L"user32.dll");
+    Sleep(0);            /* forces m to survive across a call, so it stays a local */
+    g_saved = m;
+}
+
 /* --- sret: >8-byte struct return. The return TYPE must follow the returned struct pointer
  *     (that is the decidable half; the phantom-arg half is proven undecidable — see
  *     _qa/sret/srettest.c). */
@@ -108,20 +120,22 @@ __declspec(dllexport) int f_pcmpeqb(const char* p) {
 }
 
 /* --- compound assignment: `v = v + x` is what the machine does; `v += x` is what the source
- *     said. Every loop body in the binary carries the long form. */
-__declspec(dllexport) int f_compound(int* a, int n) {
-    int s = 0;
+ *     said. Every loop body in the binary carries the long form.
+ *     VOLATILE IS LOAD-BEARING: with a plain local, /O2 FUSES `s += a[i]; s ^= a[i]>>3;` into
+ *     one expression (`s = (s + a[i]) ^ (a[i] >> 3)`) and there is no `v = v op x` statement
+ *     left to fold -- the first cut of this fixture tested nothing. volatile forces a real
+ *     read-modify-write per statement, which is the shape the binary actually contains. */
+__declspec(dllexport) void f_compound(volatile int* acc, const int* a, int n) {
     for (int i = 0; i < n; i++) {
-        s += a[i];          /* must read `s += ...`, not `s = s + ...` */
-        s ^= a[i] >> 3;     /* must read `s ^= ...` */
+        *acc += a[i];       /* must read `*acc += ...`, not `*acc = *acc + ...` */
+        *acc ^= a[i] >> 3;  /* must read `*acc ^= ...` */
+        *acc |= 1;          /* must read `*acc |= 1` */
     }
-    return s;
 }
-/* --- ++ / -- : `v = v + 1` must read `++v`. */
-__declspec(dllexport) int f_incr(volatile int* p, int n) {
-    int c = 0;
-    while (n--) { c++; }
-    return c;
+/* --- ++ / -- : `v = v + 1` must read `++v`. Volatile again: a plain counter loop is folded
+ *     to a closed form (`return n != 0 ? n : 0`) and never increments anything. */
+__declspec(dllexport) void f_incr(volatile int* p, int n) {
+    for (int i = 0; i < n; i++) { (*p)++; }
 }
 
 /* --- stack string: bytes built from immediates must be recovered as a char array. */

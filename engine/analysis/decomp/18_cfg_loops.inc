@@ -204,6 +204,61 @@
             std::string want = (p.first < (int)POOL.size()) ? POOL[p.first] : std::string("i");
             assign(p.second, want, POOL);
         }
+        /* (c) NAME A LOCAL AFTER THE API THAT PRODUCED IT.
+         *     v7 = CreateFileW(..)      ->  hFile   = CreateFileW(..)
+         *     v3 = GetModuleHandleW(..) ->  hModule = GetModuleHandleW(..)
+         * The API already told us what the value IS -- propagate_api_types spends that on the
+         * TYPE; this spends it on the NAME, which is what the reader actually greps for. It is
+         * the same contract, not a new guess, and it is what Hex-Rays does here.
+         *
+         * Rides the SAME machinery as result/i/j/k: a pure display alias through `autoname`,
+         * `used` guarantees no collision with a parameter, a live name or a callee, and only
+         * v<N>/t<N> locals are ever renamed. A second CreateFile in one function gets hFile2
+         * from the pool rather than shadowing the first.
+         * Only APIs whose product has an obvious, conventional name -- an API returning a
+         * count or a BOOL is deliberately absent; `v5` beats a wrong name. DS_NO_AUTONAME. */
+        struct AN { const char* api; const char* nm; };
+        static const AN ANAMES[] = {
+            {"GetModuleHandle","hModule"}, {"LoadLibrary","hModule"}, {"LoadLibraryEx","hModule"},
+            {"GetProcAddress","pfn"},
+            {"CreateFile","hFile"},        {"FindFirstFile","hFind"},
+            {"CreateThread","hThread"},    {"OpenThread","hThread"},
+            {"CreateMutex","hMutex"},      {"CreateEvent","hEvent"},
+            {"CreateSemaphore","hSemaphore"},
+            {"OpenProcess","hProcess"},    {"GetCurrentProcess","hProcess"},
+            {"GetCurrentThread","hThread"},{"GetStdHandle","hStd"},
+            {"CreateToolhelp32Snapshot","hSnap"}, {"GetProcessHeap","hHeap"},
+            {"HeapAlloc","pMem"},          {"HeapReAlloc","pMem"},
+            {"VirtualAlloc","pMem"},       {"VirtualAllocEx","pMem"},
+            {"LocalAlloc","pMem"},         {"GlobalAlloc","pMem"},
+            {"MapViewOfFile","pView"},
+            {"CreateWindowEx","hWnd"},     {"FindWindow","hWnd"},
+            {"GetForegroundWindow","hWnd"},{"GetActiveWindow","hWnd"},
+            {"GetDesktopWindow","hWnd"},   {"WindowFromPoint","hWnd"},
+            {"GetDC","hdc"},               {"BeginPaint","hdc"},
+            {"GetLastError","dwError"},    {"GetTickCount","dwTick"},
+            {"GetCurrentProcessId","dwPid"}, {"GetCurrentThreadId","dwTid"},
+        };
+        for (auto& b : blocks) {
+            for (auto& s : b.stmts) {
+                if (s.kind != SK::Assign || !s.lhs || s.lhs->kind != EK::Var || !s.rhs) continue;
+                ExprP r = s.rhs;
+                while (r && r->kind == EK::Cast && r->a) r = r->a;
+                if (!r || r->kind != EK::Call || r->callee.empty()) continue;
+                std::string base = r->callee;                 /* strip the A/W suffix */
+                if (base.size() > 1 && (base.back() == 'A' || base.back() == 'W')) {
+                    char pc = base[base.size() - 2];
+                    if (pc >= 'a' && pc <= 'z') base.pop_back();
+                }
+                for (const AN& a : ANAMES) {
+                    if (base != a.api && r->callee != a.api) continue;
+                    std::vector<std::string> pool;            /* hFile2, hFile3, ... */
+                    for (int k = 2; k <= 6; ++k) pool.push_back(std::string(a.nm) + std::to_string(k));
+                    assign(s.lhs->name, a.nm, pool);
+                    break;
+                }
+            }
+        }
     }
 
     /* D1: TEMP-WIDTH NARROWING via a VALUE-RANGE FIXPOINT (kill `(int)tN` cast noise).
