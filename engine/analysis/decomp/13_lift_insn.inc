@@ -1045,6 +1045,57 @@
             case X86_INS_CDQ:   /* EDX:EAX = sign-extend(EAX); EDX = EAX>>31 */
                 set_reg(R_RDX, 4, mkBinary(">>", reg_value(R_RAX, 4), mkConst(31, 4), 4), b);
                 break;
+            /* ---- BIT SCANS: keep the opaque value, ADD the flags.
+             * bsf/bsr/lzcnt/tzcnt were unmodeled, so they fell to the default: opaque path.
+             * That path gives a correct-enough VALUE (`eax = __bsr(x)`) but sets NO FLAGS —
+             * and these instructions DO write ZF. The `flags` state therefore kept an
+             * earlier, unrelated compare and the following jcc rendered a confidently WRONG
+             * condition. 48 real sites in NullWare (bsr 34, bsf 7, lzcnt 6, tzcnt 1), and in
+             * fn_000849f0 the stale-ZF `jne` is always-taken, which makes the structurer DROP
+             * AN ENTIRE LOOP.
+             *
+             * The ZF semantics differ between the two families and getting them backwards
+             * would just be a different lie:
+             *   bsf/bsr    ZF = (SRC == 0)      -- "no bit was found"; dest is undefined then
+             *   lzcnt/tzcnt ZF = (RESULT == 0)  -- a real count; CF (unmodelled) is the src==0 flag
+             * so bsf/bsr build a cmp against 0 on the SOURCE, not on the result.
+             *
+             * Embedding a memory src in flags.a is safe here (8 of the bsr sites have one):
+             * bsf/bsr do not write their source, so re-evaluating it at render time yields the
+             * same value — the hazard set_flags_dst warns about does not apply.
+             * DS_NO_BITSCAN. */
+            case X86_INS_BSF: case X86_INS_BSR:
+            case X86_INS_TZCNT: case X86_INS_LZCNT: {
+                if (nop < 2) break;
+                int w = OP(0).size ? OP(0).size : 4;
+                ExprP src = rvalue(OP(1));
+                if (!src) break;
+                auto call = std::make_shared<Expr>();
+                call->kind = EK::Call;
+                call->callee = "__" + sani(in.mnem);   /* __bsf/__bsr/__tzcnt/__lzcnt — the
+                                                        * names the default: path already
+                                                        * synthesised, so no output churn */
+                int cw = (w >= 8) ? 8 : 4;
+                call->width = cw; call->ret_kind = (cw >= 8) ? 2 : 1;
+                call->args.push_back(clone(src));
+                extern_callees[call->callee] = call->ret_kind;
+                opaque_ops[call->callee]++;            /* keep the confidence header honest */
+                do_dst(b, OP(0), call, in.addr);
+                if (!std::getenv("DS_NO_BITSCAN")) {
+                    flags = FlagSrc();
+                    flags.valid = true;
+                    flags.width = w;
+                    if (id == X86_INS_BSF || id == X86_INS_BSR) {
+                        flags.is_cmp = true;           /* ZF = (src == 0) */
+                        flags.a = clone(src);
+                        flags.b = mkConst(0, w);
+                    } else {
+                        flags.is_arith = true;         /* ZF = (result == 0) */
+                        flags.a = clone(call);
+                    }
+                }
+                break;
+            }
             case X86_INS_CQO:   /* RDX:RAX = sign-extend(RAX); RDX = RAX>>63 */
                 set_reg(R_RDX, 8, mkBinary(">>", reg_value(R_RAX, 8), mkConst(63, 8), 8), b);
                 break;
