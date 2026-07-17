@@ -470,7 +470,9 @@
                 auto rd = std::make_shared<Expr>();
                 rd->kind = EK::Call; rd->callee = gs ? "__readgsqword" : "__readfsqword";
                 rd->width = 8; rd->ret_kind = 2;
-                rd->args.push_back(mkConst(m.disp, 8, true));
+                const char* tf = (gs && !std::getenv("DS_NO_TEB")) ? teb_field_name(m.disp) : nullptr;
+                if (tf) { rd->args.push_back(mkText(tf, 8)); teb_fields_used[tf] = m.disp; }
+                else rd->args.push_back(mkConst(m.disp, 8, true));
                 used_segread = true;
                 if (m.index == X86_REG_INVALID) return rd;   /* scalar TEB/TLS field */
                 /* indexed: `*(T*)(__readgsqword(disp) + idx*scale)` */

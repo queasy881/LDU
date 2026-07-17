@@ -1747,6 +1747,16 @@
                                      : (e->width >= 8) ? "qword" : (e->width == 4) ? "dword"
                                      : (e->width == 2) ? "word" : "byte";
                     char nm[40];
+                    /* TLS INDEX: a dword global used as the index into the thread's TLS array
+                     * (`__readgsqword(0x58) + G*8`) is the compiler's `_tls_index`. tls_index_addr
+                     * is recorded by detect_tls_index() from that exact pattern -- decidable, one
+                     * global. Naming it says "this is thread-local storage" at a glance. */
+                    if (!e->is_float && tls_index_addr && (uint64_t)a->cval == tls_index_addr) {
+                        char d2[96]; std::snprintf(d2, sizeof d2, "(*(unsigned long*)0x%llx)",
+                                                   (unsigned long long)a->cval);
+                        named_globals["_tls_index"] = d2;
+                        return "_tls_index";
+                    }
                     std::snprintf(nm, sizeof nm, "%s_%llx", pfx, (unsigned long long)a->cval);
                     char def[96];
                     std::snprintf(def, sizeof def, "(*(%s*)0x%llx)", t.c_str(),

@@ -16,6 +16,11 @@
         std::string qual_name;               /* RAW qualified RTTI name (game::Entity) for the namespace block */
         bool is_vector = false;              /* MSVC std::vector {_Myfirst,_Mylast,_Myend} range struct */
         bool is_stdstring = false;           /* MSVC std::string {_Bx,_Mysize,_Myres} SSO struct */
+        /* offset -> {C type, byte size} for a field an API contract names exactly, e.g. a
+         * CRITICAL_SECTION field whose address is passed to InitializeCriticalSection. Rendered
+         * as that type with `size` bytes reserved; the code never touches its internals (the
+         * API does), so it does not overlap a recovered field. */
+        std::map<int64_t,std::pair<std::string,int>> ftype;
     };
     std::map<std::string, ParamStruct> param_structs;   /* param name -> layout */
     std::map<std::string, std::set<int64_t>> struct_field_ptr;  /* param -> offsets whose value is used as an address */
@@ -697,12 +702,28 @@
          * (emitted once per TU by the caller) keeps the /TC recompile valid — members are all-public
          * so class/struct are identical. */
         std::string kw = (L.is_class && !L.cls_kw_struct) ? "class" : "struct";
+        /* RTTI-recovered direct base, as a comment (`: Base` is C++, units compile /TC). */
+        std::string base_cmt;
+        if (L.is_class) { std::string bb = class_base_of(L.tag); if (!bb.empty()) base_cmt = " /* : " + bb + " */"; }
         /* build the field-body interior ONCE (padding + fields; field_0 of a class -> `void* __vftable`). */
         std::string body; int64_t pos = 0;
-        for (auto& kv : L.fw) {
+        /* Merge the width-recovered fields (fw) with the API-typed fields (ftype, e.g. a
+         * CRITICAL_SECTION), in offset order. An ftype field reserves its full byte size and
+         * suppresses any fw entries that fall inside it. */
+        std::map<int64_t,int> merged;
+        for (auto& kv : L.fw) merged[kv.first] = kv.second;
+        for (auto& kv : L.ftype) merged[kv.first] = kv.second.second;   /* size wins at that offset */
+        for (auto& kv : merged) {
             int64_t off = kv.first; int w = kv.second;
+            if (off < pos) continue;                          /* inside a wider (ftype) field */
             if (off > pos) body += "    char _pad_" + hex(pos).substr(2) + "[" +
                                    std::to_string((long long)(off - pos)) + "];\n";
+            auto ftit = L.ftype.find(off);
+            if (ftit != L.ftype.end()) {                      /* API-named field (CRITICAL_SECTION) */
+                body += "    " + ftit->second.first + " " + fld(L, off) + ";\n";
+                pos = off + ftit->second.second;
+                continue;
+            }
             if (L.is_class && off == 0 && w == 8) { body += "    void* __vftable;\n"; pos = w; continue; }
             std::string ty;
             if (L.fptr_tag.count(off)) ty = "struct " + L.fptr_tag.at(off) + "*";
@@ -718,7 +739,7 @@
         if (L.is_vector) s += "/* std::vector — _Myfirst=begin, _Mylast=end, _Myend=capacity; size()=(_Mylast-_Myfirst)/sizeof(T) */\n";
         if (L.is_stdstring) s += "/* std::string (MSVC SSO) — _Myres <= 15: _Bx is the inline char[16]; else _Bx is a char* to the heap block. _Mysize=length */\n";
         if (!guard.empty()) s += "#ifndef " + guard + "\n#define " + guard + "\n";
-        auto flat = [&]{ return "#pragma pack(push, 1)\n" + kw + " " + L.tag + " {\n" + body + "};\n#pragma pack(pop)\n"; };
+        auto flat = [&]{ return "#pragma pack(push, 1)\n" + kw + " " + L.tag + base_cmt + " {\n" + body + "};\n#pragma pack(pop)\n"; };
         /* NAMESPACE: a namespaced RTTI name (game::Entity) dual-emits — a REAL
          * `namespace game { class Entity {...}; }` block under #ifdef __cplusplus (for reading / a
          * /TP recompile), and the flat `<kw> <tag> {...}` under #else which is what the /TC gate

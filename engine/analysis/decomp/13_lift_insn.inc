@@ -381,6 +381,7 @@
     bool used_null = false;   /* `NULL` was rendered -> pull in <stddef.h> */
     bool used_fastfail = false; /* __fastfail appears (int 0x29) -> emit prototype */
     bool used_nearbyint = false; /* nearbyintf appears (cvtps2dq rounding) -> prototype */
+    std::set<std::string> used_mathfn;  /* floorf/ceilf/truncf/nearbyint/sqrtf from round/rsqrt -> protos */
     bool used_shift128 = false;  /* __shiftright128/__shiftleft128 (64-bit shrd/shld) */
     bool used_rdtsc = false;     /* __rdtsc (rdtsc/rdtscp) -> prototype */
     bool used_xgetbv = false;    /* _xgetbv (xgetbv) -> prototype */
@@ -919,6 +920,25 @@
             case X86_INS_SHL: case X86_INS_SAL: arith2(b, x, "<<", in.addr); break;
             case X86_INS_SHR: arith2(b, x, ">>", in.addr, true); break;
             case X86_INS_SAR: sar_or_div(b, x, in.addr); break;
+            /* BMI2 variable shifts: SHRX/SHLX/SARX dst, src, count. Three-operand, and
+             * crucially they set NO FLAGS (that is the entire reason they exist over SHR/SHL) --
+             * so unlike the plain shifts there is no flag state to model, just the value. They
+             * were hitting the opaque fallback (__shrx/__shlx) and dropping the shift. */
+            case X86_INS_SHRX: case X86_INS_SHLX: case X86_INS_SARX: {
+                if (nop < 3) break;
+                int w = OP(0).size ? OP(0).size : 8;
+                ExprP src = rvalue(OP(1)), cnt = rvalue(OP(2));
+                if (!src || !cnt) break;
+                const char* op = (id == X86_INS_SHLX) ? "<<" : ">>";
+                bool logical = (id == X86_INS_SHRX);   /* SHRX unsigned; SARX signed */
+                ExprP val = mkBinary(op,
+                              logical ? mkCast(w >= 8 ? "(unsigned long long)" : "(unsigned int)", src, w, true)
+                              : (id == X86_INS_SARX) ? mkCast(w >= 8 ? "(long long)" : "(int)", src, w, false)
+                              : src,
+                              cnt, w, logical);
+                do_dst(b, OP(0), val, in.addr);
+                break;
+            }
             /* `lock inc [m]` is _InterlockedExchangeAdd(&m, 1). The x86 form discards the old
              * value, and _InterlockedIncrement returns the NEW one, so ExchangeAdd keeps ONE
              * shape across the whole locked-RMW family and lets the flags be rebuilt exactly.
@@ -1799,6 +1819,60 @@
             }
             /* unpcklpd dst,src = {dst.lo, src.lo} — the low doubles interleaved (it is how
              * a {x,y} pair is assembled). unpckhpd takes the HIGH lanes: {dst.hi, src.hi}. */
+            /* PACKED DOUBLE arithmetic: dst[i] = a[i] OP b[i] over the two 64-bit doubles.
+             * The 2x64 lane view (simd_src_lanes) IS the double representation the engine
+             * already uses for unpcklpd/movsd, so this is exact, not opaque. */
+            case X86_INS_ADDPD: case X86_INS_SUBPD: case X86_INS_MULPD: case X86_INS_DIVPD:
+            case X86_INS_MAXPD: case X86_INS_MINPD:
+            case X86_INS_VADDPD: case X86_INS_VSUBPD: case X86_INS_VMULPD: case X86_INS_VDIVPD:
+            case X86_INS_VMAXPD: case X86_INS_VMINPD: {
+                if (nop < 2 || OP(0).type != X86_OP_REG) break;
+                Reg dr; int dw; map_reg(OP(0).reg, dr, dw);
+                if (!is_xmm(dr)) break;
+                int ai = (nop >= 3) ? 1 : 0, bi = (nop >= 3) ? 2 : 1;
+                ExprP alo, ahi, blo, bhi;
+                if (!simd_src_lanes(OP(ai), alo, ahi) || !simd_src_lanes(OP(bi), blo, bhi)) break;
+                bool ismax = (id==X86_INS_MAXPD||id==X86_INS_VMAXPD);
+                bool ismin = (id==X86_INS_MINPD||id==X86_INS_VMINPD);
+                const char* fop =
+                    (id==X86_INS_MULPD||id==X86_INS_VMULPD) ? "*" :
+                    (id==X86_INS_ADDPD||id==X86_INS_VADDPD) ? "+" :
+                    (id==X86_INS_SUBPD||id==X86_INS_VSUBPD) ? "-" : "/";
+                auto dlane = [&](ExprP x, ExprP y) -> ExprP {
+                    x->is_float = true; y->is_float = true;
+                    if (ismax || ismin) {   /* x86 max/min: `(a OP b) ? a : b` */
+                        ExprP c = mkBinary(ismax ? ">" : "<", clone(x), clone(y), 8);
+                        ExprP t = mkTernary(c, x, y, 8); t->is_float = true; return t;
+                    }
+                    ExprP e = mkBinary(fop, x, y, 8); e->is_float = true; return e;
+                };
+                set_xmm_lanes(dr, dlane(alo, blo), dlane(ahi, bhi), b);
+                break;
+            }
+            /* PACKED QWORD compare-equal: dst[qw] = (a==b) ? -1 : 0, over the two 64-bit lanes. */
+            case X86_INS_PCMPEQQ: case X86_INS_VPCMPEQQ: {
+                if (nop < 2 || OP(0).type != X86_OP_REG) break;
+                Reg dr; int dw; map_reg(OP(0).reg, dr, dw);
+                if (!is_xmm(dr)) break;
+                int ai = (nop >= 3) ? 1 : 0, bi = (nop >= 3) ? 2 : 1;
+                ExprP alo, ahi, blo, bhi;
+                if (!simd_src_lanes(OP(ai), alo, ahi) || !simd_src_lanes(OP(bi), blo, bhi)) break;
+                set_xmm_lanes(dr, mkUnary("-", mkBinary("==", alo, blo, 8), 8),
+                                  mkUnary("-", mkBinary("==", ahi, bhi, 8), 8), b);
+                break;
+            }
+            /* PUNPCKLDQ: interleave the low two 32-bit lanes -> {a0, b0, a1, b1}. Pure lane
+             * rearrange over the 4x32 int model, exact. */
+            case X86_INS_PUNPCKLDQ: case X86_INS_VPUNPCKLDQ: {
+                if (nop < 2 || OP(0).type != X86_OP_REG) break;
+                Reg dr; int dw; map_reg(OP(0).reg, dr, dw);
+                if (!is_xmm(dr)) break;
+                int ai = (nop >= 3) ? 1 : 0, bi = (nop >= 3) ? 2 : 1;
+                ExprP a[4], bb[4];
+                if (!xmm_i_lanes(OP(ai), a) || !xmm_i_lanes(OP(bi), bb)) break;
+                set_xmm_i4(dr, a[0], bb[0], a[1], bb[1], b);
+                break;
+            }
             case X86_INS_UNPCKLPD: case X86_INS_VUNPCKLPD:
             case X86_INS_UNPCKHPD: case X86_INS_VUNPCKHPD: {
                 if (nop < 2 || OP(0).type != X86_OP_REG) break;
@@ -1814,7 +1888,9 @@
             }
             case X86_INS_PSRLDQ: {
                 /* byte-granular logical right shift. The horizontal-reduction idiom
-                 * `psrldq xmm,8` moves lane1 into lane0 (lane1<-0); model only that. */
+                 * `psrldq xmm,8` moves lane1 into lane0 (lane1<-0); model only that.
+                 * (VPSRLDQ's VEX form has a separate source operand, so it is not just a
+                 * label here; it falls to the opaque SIMD fallback, 1 site.) */
                 if (nop < 2 || OP(0).type != X86_OP_REG || OP(1).type != X86_OP_IMM) break;
                 Reg dr; int dw; map_reg(OP(0).reg, dr, dw);
                 if (!is_xmm(dr)) break;
@@ -1836,7 +1912,8 @@
                 if (shb == 8 && hi) set_xmm_lanes(dr, hi, mkConst(0, 8), b);
                 break;
             }
-            case X86_INS_PMOVSXDQ: case X86_INS_PMOVZXDQ: {
+            case X86_INS_PMOVSXDQ: case X86_INS_PMOVZXDQ:
+            case X86_INS_VPMOVSXDQ: case X86_INS_VPMOVZXDQ: {
                 /* widen 2 packed int32 -> 2 int64 (sign/zero extend). The head of an
                  * auto-vectorized int->int64 sum reduction: `pmovsxdq xmm,[p]; paddq
                  * acc,xmm`. Lane 0 = (i64)*(int*)p, lane 1 = (i64)*(int*)(p+4). */
@@ -1895,16 +1972,20 @@
                 break;
             }
             /* ---- packed 32-bit INTEGER arithmetic (4 lanes) ---- */
-            case X86_INS_PMULLD: case X86_INS_PADDD: case X86_INS_PSUBD: {
-                /* dst = dst OP src, lane-wise over the four ints. Only commits when BOTH
-                 * sources yield 4 int lanes (a movdqu load / prior packed-int op). */
+            case X86_INS_PMULLD: case X86_INS_PADDD: case X86_INS_PSUBD:
+            case X86_INS_VPMULLD: case X86_INS_VPADDD: case X86_INS_VPSUBD: {
+                /* dst = src1 OP src2, lane-wise over the four ints. Only commits when BOTH
+                 * sources yield 4 int lanes (a movdqu load / prior packed-int op).
+                 * SSE: dst is src1 (2 operands). VEX: dst,src1,src2 (3 operands) -- read the
+                 * sources from ai/bi so the VEX form does not shift the wrong lanes. */
                 if (nop < 2 || OP(0).type != X86_OP_REG) break;
                 Reg dr; int dw; map_reg(OP(0).reg, dr, dw);
                 if (!is_xmm(dr)) break;
-                const char* iop = (id==X86_INS_PMULLD) ? "*" :
-                                  (id==X86_INS_PADDD)  ? "+" : "-";
+                int ai = (nop >= 3) ? 1 : 0, bi = (nop >= 3) ? 2 : 1;
+                const char* iop = (id==X86_INS_PMULLD || id==X86_INS_VPMULLD) ? "*" :
+                                  (id==X86_INS_PADDD  || id==X86_INS_VPADDD)  ? "+" : "-";
                 ExprP a[4], bb[4];
-                if (xmm_i_lanes(OP(0), a) && xmm_i_lanes(OP(1), bb)) {
+                if (xmm_i_lanes(OP(ai), a) && xmm_i_lanes(OP(bi), bb)) {
                     ExprP r[4];
                     for (int i = 0; i < 4; ++i) r[i] = mkBinary(iop, a[i], bb[i], 4);
                     set_xmm_i4(dr, r[0], r[1], r[2], r[3], b);
@@ -1912,16 +1993,17 @@
                 }
                 /* 2-wide (8-byte movq) remainder: only lanes 0,1 are live. */
                 ExprP a2[2], b2[2];
-                if (xmm_i_lanes2(OP(0), a2) && xmm_i_lanes2(OP(1), b2)) {
+                if (xmm_i_lanes2(OP(ai), a2) && xmm_i_lanes2(OP(bi), b2)) {
                     ExprP r0 = mkBinary(iop, a2[0], b2[0], 4);
                     ExprP r1 = mkBinary(iop, a2[1], b2[1], 4);
                     set_xmm_i2(dr, r0, r1, b);
                 }
                 break;
             }
-            case X86_INS_PSHUFD: {
+            case X86_INS_PSHUFD: case X86_INS_VPSHUFD: {
                 /* pshufd dst, src, imm: dst[i] = src[(imm >> 2*i) & 3]. `pshufd x,x,0`
-                 * broadcasts lane 0 (the scalar splat after `movd xmm,reg`). */
+                 * broadcasts lane 0 (the scalar splat after `movd xmm,reg`). The VEX form
+                 * has the SAME dst,src,imm layout, so it shares the body directly. */
                 if (nop < 3 || OP(0).type != X86_OP_REG || OP(2).type != X86_OP_IMM) break;
                 Reg dr; int dw; map_reg(OP(0).reg, dr, dw);
                 if (!is_xmm(dr)) break;
@@ -1993,6 +2075,42 @@
                     set_xmm_f4(dr, clone(d[0]), clone(d[1]), clone(s[0]), clone(s[1]), b);
                 else /* MOVHLPS */
                     set_xmm_f4(dr, clone(s[2]), clone(s[3]), clone(d[2]), clone(d[3]), b);
+                break;
+            }
+            /* SCALAR ROUND: roundss dst, src, imm -- imm[1:0] picks the mode. Model as the C
+             * function that mode really is, so the value is exact, not opaque:
+             *   0 nearbyint  1 floor  2 ceil  3 trunc. (imm bit 2 = "use MXCSR" -> nearbyint) */
+            case X86_INS_ROUNDSS: case X86_INS_VROUNDSS:
+            case X86_INS_ROUNDSD: case X86_INS_VROUNDSD: {
+                if (nop < 2) break;
+                bool dbl = (id==X86_INS_ROUNDSD||id==X86_INS_VROUNDSD);
+                int w = dbl ? 8 : 4;
+                int si = (nop >= 3) ? 1 : (nop >= 2 ? 1 : 0);
+                int imm = (nop >= 3 && OP(nop-1).type==X86_OP_IMM) ? (int)OP(nop-1).imm : 0;
+                const char* fn = (imm & 4) ? (dbl?"nearbyint":"nearbyintf")
+                               : (imm & 3) == 1 ? (dbl?"floor":"floorf")
+                               : (imm & 3) == 2 ? (dbl?"ceil":"ceilf")
+                               : (imm & 3) == 3 ? (dbl?"trunc":"truncf") : (dbl?"nearbyint":"nearbyintf");
+                auto call = std::make_shared<Expr>();
+                call->kind = EK::Call; call->callee = fn; call->width = w; call->ret_kind = dbl?4:3;
+                call->args.push_back(fp_src(OP(si), w));
+                call->is_float = true;
+                used_mathfn.insert(fn);
+                do_dst(b, OP(0), call, in.addr);
+                break;
+            }
+            /* RSQRTSS: approximate 1/sqrt(x). Model as 1.0f/sqrtf(x) -- the exact function it
+             * approximates; the ~11-bit HW approximation is not observable in decompiled C. */
+            case X86_INS_RSQRTSS: case X86_INS_VRSQRTSS: {
+                if (nop < 1) break;
+                int si = (nop >= 2) ? 1 : 0;
+                auto sq = std::make_shared<Expr>();
+                sq->kind = EK::Call; sq->callee = "sqrtf"; sq->width = 4; sq->ret_kind = 3;
+                sq->args.push_back(fp_src(OP(si), 4)); sq->is_float = true;
+                used_mathfn.insert("sqrtf");
+                ExprP one = mkConst(0x3f800000LL, 4); one->is_float = true;   /* bits of 1.0f */
+                ExprP r = mkBinary("/", one, sq, 4); r->is_float = true;
+                do_dst(b, OP(0), r, in.addr);
                 break;
             }
             case X86_INS_ADDSS: case X86_INS_ADDSD: case X86_INS_SUBSS:
@@ -2395,6 +2513,37 @@
             case X86_INS_TEST:
                 if (nop >= 2) set_flags_test(x);
                 break;
+            /* PTEST/VPTEST set ZF = ((a & b) == 0) and CF = ((~a & b) == 0). The overwhelming
+             * use is `ptest x,x; jz/jnz` = "is the whole 128-bit value zero", and unmodeled it
+             * left `flags` holding an EARLIER compare so the branch read a stale condition. Model
+             * the ZF as a test of the two operands' low 64 bits (the scalar view the rest of the
+             * engine carries), which is exact for the `x,x` all-zero test and the common
+             * mask-nonzero test. Keeps this out of the stale-flag class. */
+            case X86_INS_PTEST: case X86_INS_VPTEST: {
+                if (nop < 2) break;
+                /* Only the 128-bit form is modelable: a 256-bit vptest reads a ymm the engine
+                 * cannot represent, and forcing its low half would surface an undeclared
+                 * in_YMM placeholder (C2065 on fn_0005f200). For any non-xmm operand, INVALIDATE
+                 * the flags so the following jcc renders a disclosed unknown rather than a stale,
+                 * unrelated compare -- honest, not a lie, and never a compile break. */
+                auto lo = [&](const cs_x86_op& op, bool& ok) -> ExprP {
+                    ok = false;
+                    if (op.type == X86_OP_REG) {
+                        Reg r; int w; map_reg(op.reg, r, w);
+                        if (!is_xmm(r)) return nullptr;      /* ymm/zmm -> unrepresentable */
+                        ok = true; return xmm_lo(r);
+                    }
+                    if (op.type == X86_OP_MEM) { ok = true; return rvalue(op); }
+                    return nullptr;
+                };
+                bool oka = false, okb = false;
+                ExprP a = lo(OP(0), oka), bb = lo(OP(1), okb);
+                if (!oka || !okb || !a || !bb) { flags = FlagSrc(); break; }  /* invalidate, don't lie */
+                flags = FlagSrc();
+                flags.valid = true; flags.is_test = true;
+                flags.a = a; flags.b = exprEqual(a, bb) ? clone(a) : bb; flags.width = 8;
+                break;
+            }
             case X86_INS_CALL:
                 lift_call(b, in);
                 break;
@@ -2883,11 +3032,21 @@
                     (OP(0).access & CS_AC_WRITE) && !in.mnem.empty()) {
                     Reg dr; int dw; map_reg(OP(0).reg, dr, dw);
                     bool gpr = (dr >= R_RAX && dr <= R_R15);
-                    if (gpr) {
+                    /* An unmodeled op that writes an XMM destination is DROPPED today, not made
+                     * opaque: the GPR fallback below is GPR-only, so every packed op the lane
+                     * model does not cover (addpd, cvtpd2dq, pcmpeqw, punpcklbw, the SSE4.2
+                     * string ops, ...) silently lost its result and any read of that xmm fell
+                     * back to a stale/backstop value. A correct 4x32 lane model cannot express
+                     * a 256-bit shuffle or an 8x16 word compare, so the honest floor is the
+                     * same as the GPR case: DEFINE the dest with an opaque intrinsic of the
+                     * mnemonic, carrying the sources, so the value dependency survives, nothing
+                     * is dropped, and the confidence header discloses it. DS_NO_SIMDOPAQUE. */
+                    bool xmm = is_xmm(dr) && !std::getenv("DS_NO_SIMDOPAQUE");
+                    if (gpr || xmm) {
                         auto call = std::make_shared<Expr>();
                         call->kind = EK::Call;
                         call->callee = "__" + sani(in.mnem);
-                        int cw = (dw >= 8) ? 8 : 4;
+                        int cw = gpr ? ((dw >= 8) ? 8 : 4) : 8;   /* xmm: carry as an 8-byte view */
                         call->width = cw; call->ret_kind = (cw >= 8) ? 2 : 1;
                         /* A read-modify-write dest (rol/ror/adc/sbb: OP(0) is BOTH
                          * source and destination) contributes its CURRENT value as

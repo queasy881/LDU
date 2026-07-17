@@ -132,6 +132,18 @@ CHECKS = [
     ('feat_cpp', 'list_sum', 'linked list: self-referential struct -> struct Node* next',
      [r'struct \w+\s*\*'], []),
 
+    # ---- feat_thread.dll : thread / sync / class hierarchy ----------------------------
+    ('feat_thread', 'th_add', 'mutex: CRITICAL_SECTION struct field recovered',
+     [r'CRITICAL_SECTION \w+;'], []),
+    ('feat_thread', 'th_tls_get', 'TEB: gs:[0x58] -> TEB_ThreadLocalStoragePointer',
+     [r'TEB_ThreadLocalStoragePointer|__readgsqword\(0x58\)'], []),
+    ('feat_thread', 'th_spawn', 'thread: CreateThread result types as HANDLE',
+     [r'HANDLE'], []),
+    ('feat_thread', 'mk_derived', 'RTTI hierarchy: Derived recovered with : Base',
+     [r'Derived.*:.*Base|/\* : \w*Base'], []),
+    ('feat_thread', 'th_tls_get', 'TLS: _tls_index global named',
+     [r'_tls_index|TEB_ThreadLocalStoragePointer'], []),
+
     # ---- feat_x87.dll : 32-bit x87 ----------------------------------------------------
     ('feat_x87', 'x87_add', 'x87: double add survives (was an EMPTY void fn)',
      [r'a1 \+ a2|a2 \+ a1'], [r'void x87_add\(void\)']),

@@ -25,6 +25,23 @@
         return "";
     }
 
+    /* The DIRECT BASE of a recovered class tag, from the `<Class>__extends__<Base>` marker
+     * rtti.cpp seeded off the RTTIClassHierarchyDescriptor -> BaseClassArray. "" if none.
+     * Rendered as a comment on the struct header (a real `: Base` clause is C++ and the dumped
+     * units compile /TC), which still gives the reader the inheritance and a catch its type. */
+    std::string class_base_of(const std::string& tag) {
+        if (!e || tag.empty() || std::getenv("DS_NO_RTTIBASE")) return "";
+        static const char* MK = "__extends__";
+        for (size_t i = 0; i < e->symbol_len; ++i) {
+            const char* nm = e->symbols[i].name;
+            if (!nm || !nm[0]) continue;
+            std::string n = nm;
+            size_t p = n.find(MK);
+            if (p == std::string::npos) continue;
+            if (sani(n.substr(0, p)) == tag) return n.substr(p + std::strlen(MK));
+        }
+        return "";
+    }
     /* class TAG (sani'd) -> its vtable RVA, by matching the `<Class>__vftable` /
      * `<Class>__vfstruct` symbol rtti.cpp seeded. Used to resolve virtual calls. */
     uint64_t vtable_rva_for_tag(const std::string& tag) {

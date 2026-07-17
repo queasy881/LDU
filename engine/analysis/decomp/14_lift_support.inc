@@ -470,6 +470,30 @@
         return "unsigned long long";
     }
 
+    /* TEB (Thread Environment Block) field at a gs-relative offset. `__readgsqword(0x58)` is
+     * raw and decidable: the x64 TEB layout is FIXED, so every constant offset names a specific
+     * thread-context field. Recovering it turns thread-local machinery from pointer arithmetic
+     * into what it is. Returns "" for an offset we do not have a name for (kept as the number).
+     * Every name is recorded so its #define prelude is emitted (the units compile /TC with no
+     * winnt.h). */
+    static const char* teb_field_name(int64_t off) {
+        switch (off) {
+            case 0x00: return "TEB_ExceptionList";        /* NT_TIB.ExceptionList */
+            case 0x08: return "TEB_StackBase";
+            case 0x10: return "TEB_StackLimit";
+            case 0x30: return "TEB_Self";                 /* NtCurrentTeb() */
+            case 0x40: return "TEB_ProcessEnvironmentBlock";
+            case 0x48: return "TEB_ProcessId";            /* ClientId.UniqueProcess */
+            case 0x50: return "TEB_ThreadId";             /* ClientId.UniqueThread */
+            case 0x58: return "TEB_ThreadLocalStoragePointer";
+            case 0x60: return "TEB_PEB";
+            case 0x68: return "TEB_LastErrorValue";
+            case 0x1480: return "TEB_TlsSlots";           /* TlsSlots[0] */
+            case 0x2C: return "TEB_TlsExpansionSlots";
+            default: return nullptr;
+        }
+    }
+
     /* SYMBOLIC CONSTANTS for Win32 API parameters.
      *
      * `VirtualAlloc(v10, 0x1000, 0x3000, 0x40)` is the single most important line in a lot of

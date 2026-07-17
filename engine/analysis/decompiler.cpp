@@ -2026,6 +2026,8 @@ struct Decompiler {
     /* every symbolic API constant emitted -> its #define prelude. The dumped units compile
      * /TC standalone with no windows.h, so MEM_COMMIT is a C2065 unless we define it. */
     std::map<std::string,long long> api_consts_used;
+    /* TEB field names emitted (name -> its byte offset) -> #define prelude. */
+    std::map<std::string,long long> teb_fields_used;
 
     /* Callee NAME -> its function rva. The existing sig lookups all do
      * `strtoull(c.c_str() + 4, ...)`, which silently assumes every local callee is spelled
@@ -2066,6 +2068,77 @@ struct Decompiler {
      * Costs nothing at the call sites: every typedef here is INTEGER-backed by design
      * (api_type_backing), so a typed local occupies the identical register slot and no
      * existing cast changes. DS_NO_APITYPES (shared with the prototype half). */
+    /* CRITICAL_SECTION struct field: a field whose ADDRESS is passed to a CriticalSection API
+     * IS a CRITICAL_SECTION (40 bytes on x64). The code never touches its internals -- the API
+     * does -- so it does not overlap a recovered field. Turns
+     *     EnterCriticalSection((char*)a1 + 8)  +  the guarded Enter..Leave region
+     * into a named lock, the concurrency structure a reader actually needs.
+     * Runs AFTER recover_struct_layouts -- it reads param_structs, which does not exist during
+     * propagate_api_types (that runs first, on locals). DS_NO_LOCKFIELD. */
+    /* The global address of `_tls_index`, or 0. Set by detect_tls_index. */
+    uint64_t tls_index_addr = 0;
+    /* TLS INDEX RECOVERY: find the dword global G in `__readgsqword(0x58) + G*8` -- the array
+     * index the compiler uses to reach this module's thread-local storage. That global IS the
+     * linker-generated `_tls_index`. One global, decidable, and it labels the whole thread-local
+     * access chain. DS_NO_TLS. */
+    void detect_tls_index() {
+        if (std::getenv("DS_NO_TLS") || tls_index_addr) return;
+        std::function<void(const ExprP&)> scan = [&](const ExprP& e) {
+            if (!e || tls_index_addr) return;
+            /* look for  <readgsqword(0x58)>  +  <G * 8>  */
+            if (e->kind == EK::Binary && e->op == "+" && e->a && e->b) {
+                auto is_gs58 = [](const ExprP& x) {
+                    ExprP m = x; while (m && m->kind == EK::Cast && m->a) m = m->a;
+                    if (!m || m->kind != EK::Call || m->callee != "__readgsqword" || m->args.empty())
+                        return false;
+                    ExprP arg = m->args[0];
+                    /* TEB_ThreadLocalStoragePointer (0x58), whether named or raw */
+                    return (arg->kind == EK::Const && arg->cval == 0x58) ||
+                           (arg->kind == EK::Str && arg->text.find("ThreadLocalStorage") != std::string::npos);
+                };
+                ExprP gs = is_gs58(e->a) ? e->a : is_gs58(e->b) ? e->b : nullptr;
+                ExprP idx = (gs == e->a) ? e->b : e->a;
+                if (gs && idx && idx->kind == EK::Binary && idx->op == "*" && idx->a && idx->b) {
+                    ExprP g = nullptr;
+                    if (idx->b->kind == EK::Const && idx->b->cval == 8) g = idx->a;
+                    else if (idx->a->kind == EK::Const && idx->a->cval == 8) g = idx->b;
+                    while (g && g->kind == EK::Cast && g->a) g = g->a;
+                    if (g && g->kind == EK::Mem && g->a && g->a->kind == EK::Const &&
+                        (uint64_t)g->a->cval > 0x1000)
+                        tls_index_addr = (uint64_t)g->a->cval;
+                }
+            }
+            scan(e->a); scan(e->b); scan(e->c);
+            for (auto& ar : e->args) scan(ar);
+        };
+        for (auto& b : blocks) {
+            for (auto& s : b.stmts) { scan(s.lhs); scan(s.rhs); }
+            scan(b.cond); scan(b.ret_value); scan(b.ret_raw); scan(b.switch_var); scan(b.tail_call);
+        }
+    }
+    void detect_lock_fields() {
+        if (std::getenv("DS_NO_LOCKFIELD")) return;
+        std::function<void(const ExprP&)> scan = [&](const ExprP& e) {
+            if (!e) return;
+            if (e->kind == EK::Call && !e->args.empty() &&
+                (e->callee == "InitializeCriticalSection" || e->callee == "EnterCriticalSection" ||
+                 e->callee == "InitializeCriticalSectionAndSpinCount")) {
+                ExprP a0 = e->args[0];
+                while (a0 && a0->kind == EK::Cast && a0->a) a0 = a0->a;
+                std::string p; int64_t off;
+                if (a0 && struct_base_offset(a0, p, off) && param_structs.count(p) &&
+                    !param_structs[p].ftype.count(off))
+                    param_structs[p].ftype[off] = {"CRITICAL_SECTION", 40};
+            }
+            scan(e->a); scan(e->b); scan(e->c);
+            for (auto& ar : e->args) scan(ar);
+        };
+        for (auto& b : blocks) {
+            for (auto& s : b.stmts) { scan(s.lhs); scan(s.rhs); }
+            scan(b.cond); scan(b.ret_value); scan(b.ret_raw); scan(b.switch_var); scan(b.tail_call);
+        }
+    }
+
     void propagate_api_types() {
         if (std::getenv("DS_NO_APITYPES")) return;
         std::set<std::string> bad;                 /* saw two incompatible claims -> say nothing */
@@ -4520,6 +4593,8 @@ struct Decompiler {
         /* recover per-function struct layouts for pointer params (conservative, with
          * raw fallback) so `*(int*)((char*)a1 + 0x140)` renders `a1->field_140`. */
         recover_struct_layouts();
+        detect_lock_fields();   /* CRITICAL_SECTION struct fields (needs param_structs) */
+        detect_tls_index();     /* name the _tls_index global from the gs:[0x58]+G*8 pattern */
         detect_stl_vectors();            /* _Mylast-_Myfirst range idiom -> name a std::vector's fields */
         detect_stl_strings();            /* _Myres-vs-15 SSO discriminator -> name a std::string's fields */
         recover_operator_new();          /* alloc-then-vtable-store callee -> operator_new / void*(size_t) */
@@ -5201,6 +5276,17 @@ struct Decompiler {
         }
         if (used_fastfail) protos += "void __fastfail(unsigned int);\n";
         if (used_nearbyint) protos += "float nearbyintf(float);\n";
+        for (const std::string& fn : used_mathfn) {
+            if (fn == "floorf")     protos += "float floorf(float);\n";
+            else if (fn == "ceilf") protos += "float ceilf(float);\n";
+            else if (fn == "truncf")protos += "float truncf(float);\n";
+            else if (fn == "nearbyintf") protos += "float nearbyintf(float);\n";
+            else if (fn == "floor") protos += "double floor(double);\n";
+            else if (fn == "ceil")  protos += "double ceil(double);\n";
+            else if (fn == "trunc") protos += "double trunc(double);\n";
+            else if (fn == "nearbyint") protos += "double nearbyint(double);\n";
+            else if (fn == "sqrtf") protos += "float sqrtf(float);\n";
+        }
         if (used_rdtsc)  protos += "unsigned long long __rdtsc(void);\n";
         if (used_xgetbv) protos += "unsigned long long _xgetbv(unsigned int);\n";
         if (used_syscall) protos += "unsigned long long __syscall(unsigned int);\n";
@@ -5379,6 +5465,12 @@ struct Decompiler {
          * functions each emit their own. */
         for (const std::string& t : api_types_used)
             full += std::string("typedef ") + api_type_backing(t) + " " + t + ";\n";
+        /* CRITICAL_SECTION is an opaque 40-byte lock -- emitted when a struct field was typed
+         * as one (the lock-field recovery). Guarded so a combined-TU recompile stays clean. */
+        { bool any = false;
+          for (auto& kv : param_structs) if (!kv.second.ftype.empty()) { any = true; break; }
+          if (any) full += "#ifndef __DS_CRITSEC\n#define __DS_CRITSEC\n"
+                           "typedef struct { char _cs[40]; } CRITICAL_SECTION;\n#endif\n"; }
         /* The symbolic API constants this function actually used. #define, not an enum: the
          * value must stay EXACTLY the integer the call site had (an enum would be int-typed and
          * a 0x80000000 GENERIC_READ would not fit), and a repeated identical #define is legal C
@@ -5387,6 +5479,12 @@ struct Decompiler {
         for (auto& kv : api_consts_used) {
             char buf[80];
             std::snprintf(buf, sizeof buf, "#define %s 0x%llx\n", kv.first.c_str(),
+                          (unsigned long long)kv.second);
+            full += buf;
+        }
+        for (auto& kv : teb_fields_used) {
+            char buf[96];
+            std::snprintf(buf, sizeof buf, "#define %s 0x%llx  /* TEB */\n", kv.first.c_str(),
                           (unsigned long long)kv.second);
             full += buf;
         }
