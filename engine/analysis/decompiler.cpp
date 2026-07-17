@@ -1427,63 +1427,6 @@ struct Decompiler {
      * outer-switch break re-enters the while), and a `ret`/tail-call exits the
      * loop. Used as the LAST RESORT when the recursive structurer would otherwise
      * leave a `goto`/label — so the output never contains one. */
-    void emit_state_machine(std::string& dst) {
-        int entry = entry_block();
-        dst += ind() + "int __state = " + std::to_string(entry) + ";\n";
-        used_while_true = true;
-        dst += ind() + "while (true) {\n";
-        indent_lvl++;
-        dst += ind() + "switch (__state) {\n";
-        indent_lvl++;
-        std::vector<int> order(blocks.size());
-        for (size_t i = 0; i < blocks.size(); ++i) order[i] = (int)i;
-        std::sort(order.begin(), order.end(),
-                  [&](int a, int c){ return blocks[a].addr < blocks[c].addr; });
-        for (int id : order) {
-            Block& b = blocks[id];
-            if (merged_blocks.count(id)) continue;   /* folded into a predecessor */
-            dst += ind() + "case " + std::to_string(id) + ":\n";
-            indent_lvl++;
-            emit_stmts(id, dst);
-            if (b.ends_ret) {
-                dst += ind() + ret_text(id) + "\n";
-            } else if (b.is_switch && b.switch_var) {
-                dst += ind() + "switch (" + switch_sel(b.switch_var) + ") {\n";
-                indent_lvl++;
-                for (size_t i = 0; i < b.case_succ.size(); ++i) {
-                    if (b.case_succ[i] < 0) continue;
-                    dst += ind() + "case " + std::to_string(i) + ": __state = " +
-                           std::to_string(b.case_succ[i]) + "; break;\n";
-                }
-                if (b.default_succ >= 0)
-                    dst += ind() + "default: __state = " +
-                           std::to_string(b.default_succ) + "; break;\n";
-                indent_lvl--;
-                dst += ind() + "}\n";
-                dst += ind() + "break;\n";
-            } else if (b.ends_jcc && b.taken >= 0 && b.fall >= 0) {
-                dst += ind() + "__state = " + render(b.cond ? b.cond : mkConst(1, 4)) +
-                       " ? " + std::to_string(b.taken) + " : " +
-                       std::to_string(b.fall) + ";\n";
-                dst += ind() + "break;\n";
-            } else if (b.ends_jmp) {
-                if (b.taken >= 0) {
-                    dst += ind() + "__state = " + std::to_string(b.taken) + ";\n";
-                    dst += ind() + "break;\n";
-                } else dst += ind() + ret_text(id) + "\n";   /* tail / extern jmp */
-            } else if (b.fall >= 0) {
-                dst += ind() + "__state = " + std::to_string(b.fall) + ";\n";
-                dst += ind() + "break;\n";
-            } else {
-                dst += ind() + ret_text(id) + "\n";
-            }
-            indent_lvl--;
-        }
-        indent_lvl--;
-        dst += ind() + "}\n";   /* switch */
-        indent_lvl--;
-        dst += ind() + "}\n";   /* while(1) */
-    }
 
     /* =================================================================== */
     /*  Type inference for declarations                                     */
@@ -1976,9 +1919,23 @@ struct Decompiler {
         };
         std::function<void(ExprP&)> visit = [&](ExprP& e) {
             if (!e) return;
-            if (e->kind == EK::Call)
+            if (e->kind == EK::Call) {
+                /* trailing phantoms: safe for ANY callee — a uniform arity reduction */
                 while (!e->args.empty() && is_phantom(e->args.back()))
                     e->args.pop_back();
+                /* An OPAQUE intrinsic (the stand-in for an unmodeled op) is declared
+                 * old-style — `int32_t __vpmovmskb();` — so it has no prototype to desync
+                 * from and its arguments are documentation, not an ABI. Drop a phantom from
+                 * ANY position there: an unmapped ymm/zmm operand has no value we can name,
+                 * and printing a name for it would be inventing one. Trailing-only trimming
+                 * left `__vpmovmskb(in_YMM1)` standing whenever a real operand followed.
+                 * A REAL callee keeps its positional arguments — dropping a middle one would
+                 * desync the call from its prototype (the C2197/C2198 class). */
+                if (opaque_ops.count(e->callee))
+                    e->args.erase(std::remove_if(e->args.begin(), e->args.end(),
+                                                 [&](const ExprP& a) { return is_phantom(a); }),
+                                  e->args.end());
+            }
             visit(e->a); visit(e->b); visit(e->c);
             for (auto& ar : e->args) visit(ar);
         };
@@ -4312,22 +4269,28 @@ struct Decompiler {
         recover_stack_strings();   /* annotate `char sN[]` decls whose bytes were built from immediates */
         late_peephole();      /* final value-identical readability folds (nested casts, x+-K, cmp-normalize) */
 
-        /* cross-joins: >=2-pred blocks that post-dominate no single branch
-         * (ipdom[idom[J]] != J) — the joins normal structuring must goto. Precomputed
-         * so emit_if_else lifts the proper region at its OUTERMOST dominating if. */
+        /* REACHING-FLAG STRUCTURING: REMOVED. The cross-join set stays empty, so
+         * emit_if_else never lifts a proper region and no `__at_<addr>` flag is emitted.
+         *
+         * Boehm-Jacopini says any reducible CFG can be rendered goto-free with enough
+         * boolean flags, and that is what this did — driving NullWare's goto count down to
+         * ~142. The flags are a LIE OF PROVENANCE though: `__at_1f80` does not exist in the
+         * binary. A function came out as
+         *     char __at_1f80 = 0, __at_1ff9 = 0, __at_215d = 0, __at_21b1 = 0, ...;
+         *     ... __at_1f80 = 1; ... if (__at_1f80) { ...
+         * i.e. eight invented booleans standing in for control flow the machine expresses
+         * directly. Hex-Rays — the parity target — never does this: it emits a real `goto`
+         * and lets the reader see the edge. A goto is IN the binary; `__at_1f80` is not.
+         *
+         * Measured cost of removing it, whole-binary A/B: gotos 142 -> 637 across 53 -> 154
+         * of 1497 functions, chars +0.4% (10,526,333 -> 10,567,583). So ~120 functions of
+         * invented control flow become ~101 functions with honest gotos, at no size cost.
+         * The GOTO_TOTAL gate threshold moved with it — see _qa/fast_gate.sh. That metric
+         * was always a readability PROXY, and this is the case where the proxy and the goal
+         * disagree: optimising it further meant printing flags instead of edges. */
         cross_joins.clear();
         in_flag_region = false;
-        flag_trial_budget = 300;   /* bound total proper-region trials per function */
-        if (!std::getenv("DS_NO_ACYCFLAG")) {
-            for (auto& bb : blocks) {
-                int J = bb.id;
-                if ((int)bb.pred.size() < 2) continue;
-                if (J >= (int)idom.size() || idom[J] < 0) continue;
-                int idm = idom[J];
-                if (idm < 0 || idm >= (int)ipdom.size()) continue;
-                if (ipdom[idm] != J) cross_joins.insert(J);
-            }
-        }
+        flag_trial_budget = 0;
 
         /* pointer-vs-0 -> NULL. MUST run before the body is rendered below (the pointer
          * types it consults are already final from propagate_pointer_types). */
@@ -4398,43 +4361,12 @@ struct Decompiler {
             if (!std::getenv("DS_LEGACY_SM"))
                 tmp = strip_unreachable_after_terminator(tmp);
             body = tmp;
-            /* Whole-function reaching-flag fallback: if structuring still left reducible
-             * gotos, re-emit the entire function as a flag chain (reducible => provably
-             * driven to 0 gotos, no duplication). Kept last-resort (soupier than the
-             * scoped lift). Only when the CFG is reducible and it actually removes gotos. */
-            if (!std::getenv("DS_NO_FNFLAG") && body.find("goto ") != std::string::npos &&
-                cfg_is_reducible()) {
-                std::string save_body = body;
-                need_label.clear();
-                reset_emit();
-                std::string fb;
-                bool ok = false;
-                try { ok = emit_function_flagged(fb); } catch (...) { ok = false; }
-                if (!std::getenv("DS_LEGACY_SM") && ok) fb = strip_unreachable_after_terminator(fb);
-                /* Soup guard: the whole-function chain flags EVERY >=2-pred join, incl.
-                 * clean if/else merges that structure fine on their own. Accept it only
-                 * when it is not flagging many CLEAN joins beyond the genuine cross-joins
-                 * (a clean-ish function keeps its readable gotos instead of flag soup). */
-                int fb_flags = 0;
-                { size_t p = 0;
-                  while ((p = fb.find("__at_", p)) != std::string::npos) {
-                      size_t e = p + 5;
-                      while (e < fb.size() && isxdigit((unsigned char)fb[e])) ++e;
-                      if (fb.compare(e, 4, " = 0") == 0) ++fb_flags;   /* a declaration */
-                      p += 5;
-                  } }
-                int clean_flagged = fb_flags - (int)cross_joins.size();
-                /* Accept when the extra (clean-join) flags don't dominate the genuine
-                 * cross-join flags — scales with the function's real tangledness so a
-                 * complex fn gets headroom while a mostly-clean one keeps its gotos. */
-                int soup_budget = (int)cross_joins.size() + 2;
-                if (ok && fb.find("goto ") == std::string::npos && labels_consistent(fb) &&
-                    !struct_bailed && clean_flagged <= soup_budget) {
-                    body = fb;
-                } else {
-                    body = save_body;
-                }
-            }
+            /* The whole-function reaching-flag fallback lived here and is REMOVED for the
+             * same reason as the scoped lift above: it re-emitted a function whose gotos
+             * survived structuring as one flag chain, which is provably goto-free and
+             * provably unreadable. It even needed a "soup guard" to decide when its own
+             * output was too soupy to accept — a tell that the mechanism was fighting the
+             * goal. A residual goto now simply stays a goto. */
             /* A tripped struct_guard means the structured body DROPPED a region
              * (emitted `/* structurer bailout *\/` and returned) — it is incomplete
              * and must NOT be accepted, however label-consistent the truncated text
@@ -4494,25 +4426,17 @@ struct Decompiler {
             goto_tgts.insert(body.substr(gp, e - gp));
             ++goto_n;
         }
-        /* Readability is gated by DISTINCT targets (following `goto cleanup` a few
-         * times is fine; 88 distinct labels is a tangle) more than raw count. Keep
-         * the structured-goto form when EITHER the total is small OR it targets only
-         * a few shared labels (the C `goto cleanup/error` idiom Hex-Rays emits).
-         * A `while(1) switch(__state)` machine only for the genuinely-tangled rest
-         * (typically the flat emit_goto_cfg fallback, !ok_struct). */
-        int max_goto = 8, max_tgts = 6;
-        if (const char* mg = std::getenv("DS_MAX_GOTO")) max_goto = atoi(mg);
-        if (const char* mt = std::getenv("DS_MAX_GOTO_TGT")) max_tgts = atoi(mt);
-        bool keep_goto = ok_struct && goto_n > 0 &&
-                         (goto_n <= max_goto || (int)goto_tgts.size() <= max_tgts) &&
-                         !std::getenv("DS_FORCE_SM");
-        if (body.find("goto ") != std::string::npos && !std::getenv("DS_SHOW_GOTO") &&
-            !keep_goto) {
-            indent_lvl = 1;
-            std::string sm;
-            emit_state_machine(sm);
-            body = sm;
-        }
+        /* The `while(1) switch(__state)` machine used to take over here for any function
+         * whose gotos survived structuring. REMOVED. It guaranteed zero gotos by turning
+         * the whole function into a dispatch loop — every block a `case`, every edge a
+         * `__state = N; break;`. That is not a decompilation of the function; it is a
+         * re-encoding of its CFG as data, and it is strictly harder to read than the gotos
+         * it replaced. It also destroyed the loops and conditionals that HAD structured
+         * correctly, since the rewrite is all-or-nothing per function. 9 NullWare functions
+         * were emitted this way.
+         *
+         * goto_n / goto_tgts are still counted above: they feed the confidence header. */
+        (void)goto_n;
 
         /* Hex-Rays-style else-if chains: fold `} else {\n if(...){...} \n}` staircases
          * (we otherwise emit ZERO else-if). Runs on the FINAL body (structured or SM). */
