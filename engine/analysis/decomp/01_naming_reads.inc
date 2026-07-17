@@ -106,6 +106,36 @@
         }
         return false;   /* unterminated within MAXLEN */
     }
+    /* The UTF-16 twin of read_cstring. A wide literal is invisible to read_cstring by
+     * construction: `L"VALORANT-Win64-Shipping.exe"` is the bytes 56 00 41 00 4c 00 ..., so a
+     * byte-wise reader sees 'V' then a NUL and gives up -- which is why every LPCWSTR argument
+     * in the output was a bare address:
+     *     GetModuleHandleW(0x87718)
+     *     GetModuleHandleW(L"VALORANT-Win64-Shipping.exe")
+     * Returns the text C-escaped and WITHOUT the quotes or the L prefix; the caller adds them.
+     *
+     * Deliberately conservative: BMP-range, printable, even-length, read-only data only. A
+     * non-ASCII code point has no safe single-byte escape here, so anything outside 0x20..0x7e
+     * REJECTS the whole run rather than guessing a transliteration -- an address is a less
+     * wrong answer than a mangled string. */
+    bool read_wstring(uint64_t rva, std::string& out) {
+        if (!in_data_rva(rva) || addr_writable(rva)) return false;   /* read-only data only */
+        if (rva & 1) return false;                                   /* wide literals are aligned */
+        const int MINLEN = CSTR_MINLEN, MAXLEN = 2048;
+        std::string s;
+        for (int i = 0; i < MAXLEN; ++i) {
+            uint8_t lo, hi;                              /* UTF-16LE, built from read_u8: the
+                                                          * class has no 16-bit reader and one
+                                                          * is not worth inventing for this */
+            if (!read_u8(rva + (uint64_t)i * 2, lo)) return false;
+            if (!read_u8(rva + (uint64_t)i * 2 + 1, hi)) return false;
+            uint16_t w = (uint16_t)lo | ((uint16_t)hi << 8);
+            if (w == 0) { if ((int)s.size() < MINLEN) return false; out.swap(s); return true; }
+            if (w > 0x7f) return false;                  /* not representable as a plain escape */
+            if (!cstr_escape_byte((uint8_t)w, s)) return false;
+        }
+        return false;   /* unterminated within MAXLEN */
+    }
     /* Is `rva` inside a readable, NON-executable segment (.rdata/.data)? Used to
      * recognize a static-array access whose module-base register was lost. */
     bool in_data_rva(uint64_t rva) {

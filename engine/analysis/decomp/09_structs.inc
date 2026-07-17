@@ -720,11 +720,14 @@
         if (L.is_stdstring) {     /* std::string -> MSVC _Bx/_Mysize/_Myres */
             switch (off) { case 0: return "_Bx"; case 0x10: return "_Mysize"; case 0x18: return "_Myres"; }
         }
-        if (L.shared_typedef) {   /* Vec2/3/4 -> x/y/z/w */
-            switch (off) { case 0: return "x"; case 4: return "y"; case 8: return "z"; case 12: return "w"; }
-        }
+        /* BEFORE the shared_typedef branch: a vector now SETS shared_typedef (to get the
+         * one-definition-per-TU guard, exactly like std_string), and that branch's Vec2/3/4
+         * x/y/z/w mapping would otherwise rename _Myfirst to `x`. */
         if (L.is_vector) {        /* std::vector -> MSVC _Myfirst/_Mylast/_Myend */
             switch (off) { case 0: return "_Myfirst"; case 8: return "_Mylast"; case 16: return "_Myend"; }
+        }
+        if (L.shared_typedef) {   /* Vec2/3/4 -> x/y/z/w */
+            switch (off) { case 0: return "x"; case 4: return "y"; case 8: return "z"; case 12: return "w"; }
         }
         return "field_" + hex(off).substr(2);
     }
@@ -808,7 +811,30 @@
                 scan_cmp(b.switch_var); scan_cmp(b.tail_call);
             }
         }
-        for (auto& p : vecs) param_structs[p].is_vector = true;
+        /* NAME THE TYPE, don't leave it an anonymous per-function bag.
+         * The fields were already recovered as _Myfirst/_Mylast/_Myend, but the TYPE still
+         * rendered `struct s_rf_iter_a1` — so every function that touched a vector invented
+         * its own name for the same std::vector, and a signature said nothing:
+         *     int32_t rf_sum(struct s_rf_sum_a1* a1)      <- what IS that?
+         *     int32_t rf_sum(struct std_vector* a1)       <- a vector, in the signature
+         * This is exactly what detect_stl_strings already does for std::string (tag
+         * "std_string" + shared_typedef), so vectors now match that convention rather than
+         * having a second one.
+         *
+         * NOT literally `std::vector<int>`: the dumped units are gated by compiling all 1497
+         * of them with cl /TC, and that oracle is what caught the ymm store, both bool bugs
+         * and milestone 24's six silent bugs. `std::vector<int>` is not C. The struct already
+         * carries a "std::vector" banner comment above its definition, so the reader gets the
+         * real name anyway -- see struct_comment.
+         *
+         * shared_typedef makes the definition __DS_TY_std_vector-guarded, so the ONE
+         * definition is emitted once per TU even when several params are vectors. */
+        for (auto& p : vecs) {
+            ParamStruct& L = param_structs[p];
+            L.is_vector = true;
+            L.tag = "std_vector";       /* read at RENDER time, so retagging after mktag is safe */
+            L.shared_typedef = true;
+        }
     }
     /* Recognize an MSVC std::string: _Bx{char _Buf[16]; char* _Ptr}, _Mysize, _Myres. The
      * SSO discriminator IS the signature — _Myres (+0x18) compared against 15/16 is what

@@ -1028,6 +1028,16 @@ struct Block {
 
 struct FuncSig {
     int  param_count = 0;   /* 0..4 params (integer + float positions) */
+    /* MSVC x64 va_start: a variadic callee homes ALL FOUR integer arg registers to their
+     * shadow-space slots in the prologue -- rcx->[rsp+8], rdx->[rsp+0x10], r8->[rsp+0x18],
+     * r9->[rsp+0x20] -- so va_arg can walk them as one array. A NON-variadic function homes
+     * only the parameters it actually has, and /O2 usually homes none at all, which is what
+     * makes all-four a signature rather than a guess.
+     * Without this the engine has no arity for such a callee, falls back to "all four arg
+     * registers are live", and prints whatever residue they held:
+     *     fun_00001310("[NullWare] Game module found at 0x%p\n", v2, 4, 0)
+     * one %p, three arguments. See trim_format_args(). */
+    bool is_variadic = false;
     unsigned char float_mask = 0; /* bit p set => param position p is an XMM float/double arg */
     unsigned char double_mask = 0; /* bit p set (within float_mask) => that arg is DOUBLE (8B), else float (4B) */
     unsigned char float_typed_mask = 0; /* float params whose scalar WIDTH is known (4/8) — safe to type in a proto */
@@ -1942,6 +1952,209 @@ struct Decompiler {
         for (auto& b : blocks) {
             for (auto& s : b.stmts) { visit(s.lhs); visit(s.rhs); }
             visit(b.cond); visit(b.ret_value); visit(b.tail_call);
+        }
+    }
+
+    /* How many ARGUMENTS a printf-style format string consumes. Returns -1 when the string
+     * contains no conversion at all — i.e. it is not a format string and says nothing about
+     * arity. That distinction is the whole safety of the pass: `memcmp(a, "abc", 3)` has a
+     * string argument too, and treating it as a format would delete the `3`.
+     *
+     * Handles what MSVC actually emits: %% (a literal percent, consumes nothing), flags,
+     * `*` width/precision (each consumes an extra int), length modifiers, and the MSVC-only
+     * I/I32/I64 sizes. Anything it cannot parse ends the scan rather than guessing. */
+    static int format_arg_count(const std::string& f) {
+        int n = 0; bool any = false;
+        for (size_t i = 0; i + 1 < f.size(); ++i) {
+            if (f[i] != '%') continue;
+            if (f[i + 1] == '%') { ++i; continue; }          /* %% -> a literal '%' */
+            size_t j = i + 1;
+            while (j < f.size() && std::strchr("-+ #0'", f[j])) ++j;          /* flags */
+            if (j < f.size() && f[j] == '*') { ++n; ++j; }                    /* width from an arg */
+            else while (j < f.size() && isdigit((unsigned char)f[j])) ++j;
+            if (j < f.size() && f[j] == '.') {                               /* precision */
+                ++j;
+                if (j < f.size() && f[j] == '*') { ++n; ++j; }
+                else while (j < f.size() && isdigit((unsigned char)f[j])) ++j;
+            }
+            while (j < f.size() && std::strchr("hlLqjzt", f[j])) ++j;         /* length */
+            if (j < f.size() && (f[j] == 'I' || f[j] == 'w')) {               /* MSVC I32/I64/w */
+                ++j; while (j < f.size() && isdigit((unsigned char)f[j])) ++j;
+            }
+            if (j >= f.size()) break;
+            if (std::strchr("diouxXeEfgGaAcspn", f[j])) { ++n; any = true; }
+            else break;                       /* not a conversion we understand — stop */
+            i = j;
+        }
+        return any ? n : -1;
+    }
+
+    /* name -> a Win32 type recovered from an API contract (HANDLE/HMODULE/DWORD/LPVOID/...).
+     * Read by decl_type, so it wins over the width/pointer inference for that variable. */
+    std::map<std::string, std::string> var_api_type;
+    std::set<std::string> api_types_used;   /* every Win32 name emitted -> its typedef prelude */
+
+    /* WIN32 TYPES ON THE READER'S VARIABLES, not just on prototypes.
+     *
+     * The type library already knew `CreateFileW` returns a HANDLE and `HeapFree` takes
+     * (HANDLE, DWORD, LPVOID) -- but it only ever spent that on the imported function's own
+     * prototype. The LOCALS stayed anonymous, which is where a reader actually needs them:
+     *     int64_t v7 = CreateFileW(...);  ...  HeapFree(v3, 0, v9);
+     *     HANDLE  v7 = CreateFileW(...);  ...  HeapFree(v3, 0, v9);
+     * Both directions are contracts, not guesses:
+     *   RETURN  `v = CreateFileW(..)`  =>  v IS a HANDLE. The API says so.
+     *   PARAM   `HeapFree(v, 0, p)`    =>  v IS a HANDLE, p IS an LPVOID, or the call would
+     *                                      not compile in the original source.
+     *
+     * CONFLICTS ARE DROPPED, NEVER RESOLVED. If one site says a variable is a HANDLE and
+     * another says DWORD, we do not know which -- one of the two inferences is wrong, and
+     * picking either would be a confident lie. The variable keeps its untyped rendering.
+     * Recorded in a `bad` set so a later site cannot re-type it.
+     *
+     * Costs nothing at the call sites: every typedef here is INTEGER-backed by design
+     * (api_type_backing), so a typed local occupies the identical register slot and no
+     * existing cast changes. DS_NO_APITYPES (shared with the prototype half). */
+    void propagate_api_types() {
+        if (std::getenv("DS_NO_APITYPES")) return;
+        std::set<std::string> bad;                 /* saw two incompatible claims -> say nothing */
+        auto claim = [&](const std::string& v, const std::string& ty) {
+            if (v.empty() || ty.empty() || bad.count(v)) return;
+            /* NEVER OVERRIDE A PROVEN POINTER. Every typedef here is integer-backed
+             * (api_type_backing) -- that is what makes a typed local free at the call sites --
+             * but an integer cannot be subscripted. A variable the engine already proved is a
+             * pointer, because the code DEREFERENCES it, must keep its pointer type:
+             *     LPCRITICAL_SECTION j;      <- claimed from EnterCriticalSection(j)
+             *     if (!(j[0x38] & 1))        <- C2109: subscript requires array or pointer
+             * fn_0007f17c, caught by the cl gate. The API contract and the dereference are
+             * BOTH true -- LPCRITICAL_SECTION really is a pointer -- so the honest reading is
+             * that the integer-backed spelling is the wrong tool for this variable, not that
+             * the dereference is wrong. Keep the type that renders correctly and say nothing.
+             * Checked on the raw pointer facts, not decl_type: decl_type consults
+             * var_api_type first, so it would answer with a claim already made. */
+            if (array_locals.count(v)) return;
+            { auto pw = ptr_elem_width.find(v);
+              if (pw != ptr_elem_width.end() && pw->second > 1) return; }
+            { auto vp = var_pointer.find(v);
+              if (vp != var_pointer.end() && vp->second) return; }
+            auto it = var_api_type.find(v);
+            if (it == var_api_type.end()) { var_api_type[v] = ty; return; }
+            if (it->second != ty) { var_api_type.erase(it); bad.insert(v); }
+        };
+        /* only a BARE variable can be claimed: `HeapFree(a1->field_8, ..)` says something
+         * about a struct field, not about a local, and field typing is a separate pass. */
+        auto bare = [](const ExprP& e) -> std::string {
+            ExprP m = e;
+            while (m && m->kind == EK::Cast && m->a) m = m->a;
+            return (m && m->kind == EK::Var) ? m->name : std::string();
+        };
+        std::function<void(const ExprP&)> scan = [&](const ExprP& e) {
+            if (!e) return;
+            if (e->kind == EK::Call) {
+                std::vector<std::string> pt;
+                if (api_param_types(e->callee, pt)) {
+                    for (size_t i = 0; i < pt.size() && i < e->args.size(); ++i) {
+                        if (pt[i] != "int") claim(bare(e->args[i]), pt[i]);
+                        /* WIDE STRING LITERALS. The type library says this parameter is a
+                         * LPCWSTR, so a constant address in it addresses a UTF-16 literal --
+                         * a decidable fact from the API contract, not a guess about the
+                         * bytes. read_cstring cannot find these (it sees 'V' then a NUL), so
+                         * every wide literal in the binary was a bare number:
+                         *     GetModuleHandleW(0x87718)
+                         *     GetModuleHandleW(L"VALORANT-Win64-Shipping.exe")
+                         * Only for the W-typed params; an LPCSTR arg is already handled by
+                         * the byte-wise reader. */
+                        if ((pt[i] == "LPCWSTR" || pt[i] == "LPWSTR") &&
+                            e->args[i] && e->args[i]->kind == EK::Const &&
+                            !e->args[i]->is_float && e->args[i]->cval > 0) {
+                            std::string ws;
+                            uint64_t a = (uint64_t)e->args[i]->cval;
+                            uint64_t r = (this->e && a >= this->e->base) ? a - this->e->base : a;
+                            if (read_wstring(r, ws)) e->args[i] = mkText("L\"" + ws + "\"", 8);
+                        }
+                    }
+                }
+            }
+            scan(e->a); scan(e->b); scan(e->c);
+            for (auto& ar : e->args) scan(ar);
+        };
+        for (auto& b : blocks) {
+            for (auto& s : b.stmts) {
+                /* `v = <api>(...)` : the API's return type IS v's type */
+                if (s.kind == SK::Assign && s.lhs && s.lhs->kind == EK::Var && s.rhs) {
+                    ExprP r = s.rhs;
+                    while (r && r->kind == EK::Cast && r->a) r = r->a;
+                    if (r && r->kind == EK::Call)
+                        claim(s.lhs->name, api_ret_type(r->callee));
+                }
+                scan(s.lhs); scan(s.rhs);
+            }
+            scan(b.cond); scan(b.ret_value); scan(b.ret_raw);
+            scan(b.switch_var); scan(b.tail_call);
+        }
+        for (const std::string& v : bad) var_api_type.erase(v);
+        for (auto& kv : var_api_type) api_types_used.insert(kv.second);
+    }
+
+    /* THE FORMAT STRING IS A DECIDABLE ORACLE FOR A VARIADIC CALL'S REAL ARITY.
+     *
+     * A variadic callee has no prototype to read an argument count from, so the engine falls
+     * back to the x64 ABI and assumes all four integer arg registers are live. Whatever
+     * happened to be in the leftovers gets printed as an argument. Measured, verbatim:
+     *     fun_00001310("[NullWare] Game module found at 0x%p\n", v2, 4, 0)
+     *     fun_00001310("[NullWare] Game base: 0x%llX\n", qword_173fb0, s1, 0x18)
+     * One %p, three arguments. `4, 0` and `s1, 0x18` are register RESIDUE from a nearby call
+     * — they are not arguments, they were never passed, and they read as though the program
+     * does something it does not. The callee is genuinely variadic: its prologue is the
+     * textbook MSVC va_start (rcx/rdx/r8/r9 all homed to shadow space before the frame, then
+     * `lea rdi, [rsp+0x58]` = the va_arg area).
+     *
+     * The format string states exactly how many arguments the SOURCE passed, so the residue
+     * is decidably removable. Only ever TRIMS: it never invents an argument it cannot see,
+     * and a call already at or below the stated arity is untouched.
+     *
+     * Safe against the prototype-desync class (C2197/C2198) because a callee reached this way
+     * is emitted old-style — `int32_t fun_00001310();` — which accepts any arity. It does not
+     * touch known_api callees, whose argc comes from the type library and is authoritative.
+     * DS_NO_FMTARITY. */
+    void trim_format_args() {
+        if (std::getenv("DS_NO_FMTARITY")) return;
+        std::function<void(ExprP&)> visit = [&](ExprP& e) {
+            if (!e) return;
+            int _ac = 0, _rk = 0;
+            if (e->kind == EK::Call && e->args.size() > 1 &&
+                !known_api(e->callee, _ac, _rk)) {
+                /* Is the callee a PROVEN variadic (build_sig_table saw the va_start home-spill)?
+                 * That upgrades the format string from "at least this many" to EXACTLY this
+                 * many, which is the only way to trim a call whose format has NO conversions:
+                 *     fun_00001310("[NullWare] Waiting for VALORANT...\n", 0, 4, 0)
+                 * has zero %-specs, so nc == 0 says nothing on its own -- a plain
+                 * `memcmp(a, "abc", 3)` looks identical. Proven-variadic is what separates them. */
+                bool vararg_callee = false;
+                if (sigtab && e->callee.rfind("fun_", 0) == 0) {
+                    uint64_t crva = strtoull(e->callee.c_str() + 4, nullptr, 16);
+                    auto si = sigtab->find(crva);
+                    if (si != sigtab->end()) vararg_callee = si->second.is_variadic;
+                }
+                for (size_t i = 0; i + 1 < e->args.size(); ++i) {
+                    const ExprP& a = e->args[i];
+                    if (!a || a->kind != EK::Str) continue;
+                    int nc = format_arg_count(a->text);
+                    if (nc < 0) {                         /* no conversions at all */
+                        if (!vararg_callee) continue;     /* says nothing -- could be memcmp */
+                        nc = 0;                           /* proven variadic: exactly the format */
+                    }
+                    size_t want = i + 1 + (size_t)nc;
+                    if (e->args.size() > want) e->args.resize(want);
+                    break;                                /* the first format string wins */
+                }
+            }
+            visit(e->a); visit(e->b); visit(e->c);
+            for (auto& ar : e->args) visit(ar);
+        };
+        for (auto& b : blocks) {
+            for (auto& s : b.stmts) { visit(s.lhs); visit(s.rhs); }
+            visit(b.cond); visit(b.ret_value); visit(b.ret_raw);
+            visit(b.switch_var); visit(b.tail_call);
         }
     }
 
@@ -4134,6 +4347,7 @@ struct Decompiler {
         dead_store_elim();
         global_dead_store_elim();
         trim_phantom_call_args();
+        trim_format_args();   /* a format string states a variadic call's real arity */
         demote_void_call_returns();
         simplify_unused_call_temps();
         canonicalize_branch_after_assign();
@@ -4183,6 +4397,17 @@ struct Decompiler {
          * here. The pass is idempotent (clears + recomputes), so the second run just
          * refines with the final names (`t2 = a4` now recognizes a4). */
         mark_type_conflict_raw();
+
+        /* AFTER the pointer/float inference, NOT before it. This reads var_pointer /
+         * ptr_elem_width to refuse overriding a proven pointer, and at its first (natural-
+         * looking) home right after trim_format_args those maps do not exist yet:
+         * collect_var_info + propagate_pointer_types run ~5 lines LATER. An empty map answers
+         * "not a pointer" to every question, so the guard passed everything and typed
+         * `int8_t* j` as LPCRITICAL_SECTION -- the cl gate caught it as C2109 on fn_0007f17c.
+         * This is the THIRD pass this session placed before the state it consults (see
+         * ret_struct_ty, computed lazily for the same reason). When adding a pass here,
+         * check where its inputs are FILLED, not where the call site reads well. */
+        propagate_api_types();  /* Win32 types from API contracts onto the locals */
 
         /* collapse boolean-value diamonds `if(c)X=1;else X=0;` -> `X = c;` BEFORE the
          * short-circuit merge (removes arm blocks that would otherwise fragment it). */
@@ -4896,11 +5121,34 @@ struct Decompiler {
         /* The _Interlocked* intrinsics are declared, not #included: <intrin.h> drags in the
          * whole MSVC intrinsic surface and the dumped units are compiled /TC standalone.
          * Signatures match intrin.h exactly, so a real build that DOES include it agrees. */
+        /* _byteswap_* : declared, not #included -- same reasoning as the _Interlocked block
+         * below. Signatures match intrin.h exactly, so a real build that DOES include it
+         * agrees, and MSVC still lowers each back to a single bswap. */
+        for (const std::string& bs : used_byteswap) {
+            if (bs == "_byteswap_ushort")
+                protos += "unsigned short _byteswap_ushort(unsigned short);\n";
+            else if (bs == "_byteswap_ulong")
+                protos += "unsigned long _byteswap_ulong(unsigned long);\n";
+            else if (bs == "_byteswap_uint64")
+                protos += "unsigned long long _byteswap_uint64(unsigned long long);\n";
+        }
         for (const std::string& il : used_interlocked) {
             if (il == "_InterlockedExchangeAdd")
                 protos += "long _InterlockedExchangeAdd(volatile long*, long);\n";
             else if (il == "_InterlockedExchangeAdd64")
                 protos += "long long _InterlockedExchangeAdd64(volatile long long*, long long);\n";
+            else if (il == "_InterlockedOr")
+                protos += "long _InterlockedOr(volatile long*, long);\n";
+            else if (il == "_InterlockedOr64")
+                protos += "long long _InterlockedOr64(volatile long long*, long long);\n";
+            else if (il == "_InterlockedAnd")
+                protos += "long _InterlockedAnd(volatile long*, long);\n";
+            else if (il == "_InterlockedAnd64")
+                protos += "long long _InterlockedAnd64(volatile long long*, long long);\n";
+            else if (il == "_InterlockedXor")
+                protos += "long _InterlockedXor(volatile long*, long);\n";
+            else if (il == "_InterlockedXor64")
+                protos += "long long _InterlockedXor64(volatile long long*, long long);\n";
         }
         if (used_movs) {
             protos += "void __movsb(unsigned char*, const unsigned char*, unsigned long long);\n";
@@ -4923,7 +5171,9 @@ struct Decompiler {
             else if (sf == "__scasq_eq") protos += "unsigned long long __scasq_eq(const unsigned long long*, unsigned long long, unsigned long long);\n";
         }
         std::set<std::string> seen_proto;
-        std::set<std::string> api_types_used;   /* only these get a typedef prelude */
+        /* api_types_used is a MEMBER (not a local here) because propagate_api_types fills it
+         * too: a Win32 type can now reach the output via a typed LOCAL and not just via an
+         * imported function's prototype, and every name used still needs its typedef. */
         for (auto& kv : extern_callees) {
             const std::string& c = kv.first;
             if (c == fname) continue;
@@ -5002,7 +5252,21 @@ struct Decompiler {
                     }
                 }
             }
-            protos += std::string(rt) + " " + c + "(" + pp + ");\n";
+            /* The API's REAL return type, when the library knows one:
+             *     int64_t GetModuleHandleW(LPCWSTR);   ->   HMODULE GetModuleHandleW(LPCWSTR);
+             * `rt` is derived from ret_kind (0 void / 1 int / 2 long long / ...), which is a
+             * register-width fact and says nothing about what the value IS. Only override a
+             * width-derived integer spelling -- never a void, float or double, where ret_kind
+             * carries information the table does not (an API typed here that the engine
+             * proved void would otherwise regain a phantom return). Integer-backed, so the
+             * call sites are byte-identical. */
+            std::string rtv = rt;
+            { std::string art = api_ret_type(c);
+              bool int_rt = (rtv == "int32_t" || rtv == "int64_t" || rtv == "uint32_t" ||
+                             rtv == "uint64_t" || rtv == "int" || rtv == "long long" ||
+                             rtv == "unsigned int" || rtv == "unsigned long long");
+              if (!art.empty() && int_rt) { rtv = art; api_types_used.insert(art); } }
+            protos += rtv + " " + c + "(" + pp + ");\n";
         }
 
         std::string head = ret_t + " " + fname + "(" + params + ") {\n";
@@ -5305,6 +5569,12 @@ void build_sig_table(ds_engine* e, std::map<uint64_t, FuncSig>& tab) {
         bool seen_write[4] = {false,false,false,false};
         bool used_arg[4] = {false,false,false,false};
         bool homed_arg[4] = {false,false,false,false};
+        /* Homed BEFORE `sub rsp`, i.e. at the very top of the prologue. All four of these is
+         * the MSVC x64 va_start idiom and nothing else: a variadic callee must spill rcx/rdx/
+         * r8/r9 to their shadow slots so va_arg can walk them as one array, and it does that
+         * before it owns a frame. All-four-homed ALONE is not enough — an /Od 4-parameter
+         * function also homes all four, but only AFTER `push rbp; mov rbp,rsp; sub rsp,N`. */
+        bool homed_presub[4] = {false,false,false,false};
         bool xmm_seen_write[4] = {false,false,false,false};
         bool xmm_used[4] = {false,false,false,false};   /* xmm0-3 read before written => float arg */
         int  xmm_w[4]    = {0,0,0,0};                    /* its scalar-FP width: 4 float / 8 double */
@@ -5854,7 +6124,10 @@ void build_sig_table(ds_engine* e, std::map<uint64_t, FuncSig>& tab) {
                 int pidx = (s==R_RCX)?0:(s==R_RDX)?1:(s==R_R8)?2:(s==R_R9)?3:-1;
                 if (base == R_RSP && m.index == X86_REG_INVALID && pidx >= 0) {
                     int64_t expect = 8 + 8 * pidx;
-                    if (m.disp == expect) { used_arg[pidx] = true; homed_arg[pidx] = true; }
+                    if (m.disp == expect) {
+                        used_arg[pidx] = true; homed_arg[pidx] = true;
+                        if (!sub_done) homed_presub[pidx] = true;   /* va_start shape */
+                    }
                 }
             }
             /* A param that is FORWARDED to a callee (`f(int a){ return g(a); }`)
@@ -6095,6 +6368,15 @@ void build_sig_table(ds_engine* e, std::map<uint64_t, FuncSig>& tab) {
          * the highest contiguous homed arg index is the parameter count. Only
          * when nothing is homed do we fall back to the read-before-write
          * heuristic (which can over-count scratch uses of rdx/r8). */
+        /* VARIADIC: all four integer arg registers homed to shadow space before the frame
+         * exists. See homed_presub. This is what lets a caller trust a format string's arity
+         * even when the string has NO conversions -- `f("hello")` passes exactly one argument,
+         * but nothing in the machine code says so, and the engine otherwise assumes all four
+         * arg registers are live and prints the residue:
+         *     fun_00001310("[NullWare] Waiting for VALORANT...\n", 0, 4, 0)
+         * See trim_format_args. */
+        sig.is_variadic = homed_presub[0] && homed_presub[1] &&
+                          homed_presub[2] && homed_presub[3];
         bool any_home = homed_arg[0]||homed_arg[1]||homed_arg[2]||homed_arg[3];
         int pc = 0;
         if (any_home) {

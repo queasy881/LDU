@@ -598,6 +598,16 @@
                          * against gotos. Re-A/B it (chars + the long-line histogram, never
                          * line count) before changing it in either direction. */
                         static int cap = [](){ const char* e = getenv("DS_DUP_MAX"); return e ? atoi(e) : 30; }();
+                        /* MEASURED AND REJECTED (2026-07-17): raising the cap for a fan-in-2
+                         * target (the "one-goto cross join" — reached from the path that
+                         * already emitted it plus exactly ONE other edge, so a copy removes
+                         * that goto and appears exactly twice). Whole-binary A/B at cap 30->60
+                         * for fan-in 2: gotos 568 -> 542 (-26) for +229KB (+2.2% chars) across
+                         * 852 duplicated regions. -26 gotos is a measured near-zero and the
+                         * size cost is real, so the cap stays. Do not retry without new
+                         * evidence; the census (DS_GOTO_WHY) says 287 of 508 surviving gotos
+                         * have fan-in 2, which LOOKS like headroom and is not — most of those
+                         * regions already duplicate at cap=30 or exceed 60 lines. */
                         if (dl <= cap) {
                             dst += db;
                             if (stop >= 0) { b = stop; continue; }

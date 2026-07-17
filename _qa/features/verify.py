@@ -70,6 +70,14 @@ CHECKS = [
      [r'_Myfirst', r'_Mylast'], []),
     ('feat_cpp', 'vec_range_sum', 'std::vector: begin/end ITERATION signature (no size())',
      [r'_Myfirst', r'_Mylast'], []),
+    # The TYPE must be in the SIGNATURE, not an anonymous per-function bag. Every function
+    # touching the SAME std::vector used to invent its own name for it (s_vec_size_a1,
+    # s_rf_iter_a1, ...), so the signature said nothing about what it took. Mirrors what
+    # detect_stl_strings already did for std_string.
+    ('feat_cpp', 'vec_size', 'std::vector: named type IN THE SIGNATURE (not s_<fn>_a1)',
+     [r'struct std_vector\s*\*'], [r'struct s_vec_size_a1']),
+    ('feat_cpp', 'vec_range_sum', 'std::vector: named type on the range-only form too',
+     [r'struct std_vector\s*\*'], [r'struct s_vec_range_sum_a1']),
     # SSO is asserted on str_first, NOT str_len: `s.size()` is a bare load of _Mysize with no
     # SSO logic at all (it decompiles to `return a1[2];`), so the _Myres-vs-15 discriminator
     # the detector keys on is genuinely absent there. Asserting it on str_len was MY bug and

@@ -9,6 +9,13 @@
      * as `T*` so `base[i]` subscripts compile; otherwise pointers fall back to
      * the 64-bit-int model (`long long`). */
     std::string decl_type(const std::string& nm) {
+        /* A Win32 type recovered from an API CONTRACT (propagate_api_types): the variable was
+         * returned by an API with a named return type, or handed to a parameter with one.
+         * That is what the API says the value IS, so it outranks every inference below --
+         * those reconstruct a type from how the bits were used, this one read it off the
+         * contract. Integer-backed, so it never changes what any expression compiles to. */
+        { auto ai = var_api_type.find(nm);
+          if (ai != var_api_type.end()) return ai->second; }
         /* a flag local whose every assignment is 0/1 (compute_bool_vars) */
         if (bool_vars.count(nm)) return "bool";
         /* a recovered struct param renders `struct s_aN* aN` (or `class <Class>* aN` for an

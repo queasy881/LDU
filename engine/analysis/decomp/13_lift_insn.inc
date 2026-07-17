@@ -377,6 +377,7 @@
     bool used_stos = false;   /* __stosb/w/d/q appears (rep stos fill) -> emit prototypes */
     bool used_movs = false;   /* __movsb/w/d/q appears (rep movs copy) -> emit prototypes */
     std::set<std::string> used_interlocked;  /* _Interlocked* named -> emit prototypes */
+    std::set<std::string> used_byteswap;      /* _byteswap_* named -> emit prototypes */
     bool used_null = false;   /* `NULL` was rendered -> pull in <stddef.h> */
     bool used_fastfail = false; /* __fastfail appears (int 0x29) -> emit prototype */
     bool used_nearbyint = false; /* nearbyintf appears (cvtps2dq rounding) -> prototype */
@@ -494,6 +495,47 @@
         for (int pi = 0; pi < 4; ++pi)
             if (x.prefix[pi] == X86_PREFIX_LOCK) return true;
         return false;
+    }
+
+    /* `lock <op> [mem], src` IS an _Interlocked* intrinsic. Handles the read-modify-writes
+     * that DISCARD the old value and keep only the flags (lock or/and/xor/add/inc/dec — 48 of
+     * NullWare's 66 lock sites); `lock xadd` and `lock cmpxchg` have their own cases because
+     * they hand the old value to a register.
+     *
+     * Every one of these renders today as an ordinary non-atomic statement. The VALUE is
+     * right; what is missing is that the operation is indivisible, which is the only reason
+     * the surrounding code is correct. `_InterlockedOr(&flags, 4)` and `flags |= 4` are the
+     * same arithmetic and completely different programs.
+     *
+     * The old value is bound to a temp even when only the flags are wanted, because that is
+     * what the intrinsic RETURNS -- rebuilding the new value from it keeps the following jcc
+     * exact instead of leaving the flags holding an earlier, unrelated compare. The temp is
+     * never dead-stripped: _Interlocked* starts with ONE underscore, so is_pure_callee treats
+     * it as impure and DSE must keep the call.
+     * `cop` is the C operator; `nm` the intrinsic base name. DS_NO_INTERLOCKED. */
+    bool try_interlocked_rmw(Block& b, const Insn& in, const cs_x86& x,
+                             const char* cop, const char* nm, ExprP src_override = nullptr) {
+        if (std::getenv("DS_NO_INTERLOCKED")) return false;
+        if (!has_lock(x)) return false;
+        if (x.op_count < 1 || x.operands[0].type != X86_OP_MEM) return false;
+        int w = x.operands[0].size ? x.operands[0].size : 4;
+        if (w != 4 && w != 8) return false;          /* only the widths with an intrinsic */
+        ExprP src = src_override ? src_override
+                                 : (x.op_count >= 2 ? rvalue(x.operands[1]) : nullptr);
+        if (!src) return false;
+        auto call = std::make_shared<Expr>();
+        call->kind = EK::Call;
+        call->callee = std::string(nm) + (w == 8 ? "64" : "");
+        call->width = w;
+        call->ret_kind = (w == 8) ? 2 : 1;
+        call->args.push_back(mkCast(w == 8 ? "(volatile long long*)" : "(volatile long*)",
+                                    addr_of_mem(x.operands[0]), 8, true));
+        call->args.push_back(clone(src));
+        used_interlocked.insert(call->callee);
+        ExprP oldv = snapshot_to_temp(b, call, w, in.addr);   /* the call, emitted exactly once */
+        /* flags come from the NEW value = old <op> src */
+        set_flags_arith(mkBinary(cop, clone(oldv), clone(src), w), w);
+        return true;
     }
 
     /* `repne scas` is an inlined strlen/memchr (scan UNTIL al matches), `repe scas` an
@@ -769,13 +811,19 @@
             case X86_INS_NOP: case X86_INS_ENDBR64: case X86_INS_ENDBR32:
             case X86_INS_INT3:
                 break;
-            case X86_INS_ADD: arith2(b, x, "+", in.addr); break;
+            case X86_INS_ADD:
+                if (try_interlocked_rmw(b, in, x, "+", "_InterlockedExchangeAdd")) break;
+                arith2(b, x, "+", in.addr); break;
             case X86_INS_SUB:
                 /* drop `sub rsp,N` / `add rsp,N` housekeeping */
                 if (is_rsp_adjust(x)) break;
                 arith2(b, x, "-", in.addr); break;
-            case X86_INS_AND: arith2(b, x, "&", in.addr); break;
-            case X86_INS_OR:  arith2(b, x, "|", in.addr); break;
+            case X86_INS_AND:
+                if (try_interlocked_rmw(b, in, x, "&", "_InterlockedAnd")) break;
+                arith2(b, x, "&", in.addr); break;
+            case X86_INS_OR:
+                if (try_interlocked_rmw(b, in, x, "|", "_InterlockedOr")) break;
+                arith2(b, x, "|", in.addr); break;
             case X86_INS_XOR: {
                 if (nop >= 2 && OP(0).type == X86_OP_REG && OP(1).type == X86_OP_REG &&
                     OP(0).reg == OP(1).reg) {
@@ -871,8 +919,20 @@
             case X86_INS_SHL: case X86_INS_SAL: arith2(b, x, "<<", in.addr); break;
             case X86_INS_SHR: arith2(b, x, ">>", in.addr, true); break;
             case X86_INS_SAR: sar_or_div(b, x, in.addr); break;
-            case X86_INS_INC: incdec(b, x, "+", in.addr); break;
-            case X86_INS_DEC: incdec(b, x, "-", in.addr); break;
+            /* `lock inc [m]` is _InterlockedExchangeAdd(&m, 1). The x86 form discards the old
+             * value, and _InterlockedIncrement returns the NEW one, so ExchangeAdd keeps ONE
+             * shape across the whole locked-RMW family and lets the flags be rebuilt exactly.
+             * `lock dec` is the same with -1. */
+            case X86_INS_INC:
+                if (try_interlocked_rmw(b, in, x, "+", "_InterlockedExchangeAdd",
+                        mkConst(1, x.op_count >= 1 && x.operands[0].size ? x.operands[0].size : 4)))
+                    break;
+                incdec(b, x, "+", in.addr); break;
+            case X86_INS_DEC:
+                if (try_interlocked_rmw(b, in, x, "+", "_InterlockedExchangeAdd",
+                        mkConst(-1, x.op_count >= 1 && x.operands[0].size ? x.operands[0].size : 4)))
+                    break;
+                incdec(b, x, "-", in.addr); break;
             case X86_INS_NEG: {
                 if (nop < 1) break;
                 int w = OP(0).size ? OP(0).size : 4;
@@ -922,6 +982,26 @@
                 if (nop < 1) break;
                 int w = OP(0).size ? OP(0).size : 4;
                 ExprP x = rvalue(OP(0));
+                /* ONE instruction deserves ONE call. The shuffle below is CORRECT but it
+                 * renders a single bswap as a 4- or 8-term bit assembly — the 64-bit form is
+                 * a 400+ character line — and the reader has to decode it back into "this is
+                 * a byte swap". _byteswap_* is exactly what the source said and what
+                 * Hex-Rays emits; MSVC recognises it as the intrinsic, so the recompiled
+                 * form is the same instruction again. It is also the htons/htonl reading.
+                 * Only the widths that HAVE an intrinsic (2/4/8); anything else keeps the
+                 * shuffle. DS_NO_BSWAPFN. */
+                if ((w == 2 || w == 4 || w == 8) && !std::getenv("DS_NO_BSWAPFN")) {
+                    auto call = std::make_shared<Expr>();
+                    call->kind = EK::Call;
+                    call->callee = (w == 2) ? "_byteswap_ushort"
+                                 : (w == 4) ? "_byteswap_ulong" : "_byteswap_uint64";
+                    call->width = w;
+                    call->ret_kind = (w >= 8) ? 2 : 1;
+                    call->args.push_back(clone(x));
+                    used_byteswap.insert(call->callee);
+                    do_dst(b, OP(0), call, in.addr);
+                    break;
+                }
                 ExprP acc = nullptr;
                 for (int i = 0; i < w; ++i) {
                     int srcsh = 8 * i, dstsh = 8 * (w - 1 - i);

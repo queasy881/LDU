@@ -164,8 +164,18 @@
         for (auto& kv : unknown_reg_name)
             if (referenced.count(kv.second)) ++n_phantom;
 
+        /* Count REAL goto STATEMENTS: `goto <label>;`. A bare "goto " substring also matches
+         * any COMMENT that says the word — the one-goto duplication note does — and the
+         * header then reports "2 residual gotos" for a function containing one. The header
+         * exists to make the output trustworthy, so it does not get to be sloppy about its
+         * own arithmetic. (The same unanchored pattern fooled a hand grep during this work
+         * and inflated a whole-binary count by 69.) */
         int n_goto = 0;
-        for (size_t gp = 0; (gp = body.find("goto ", gp)) != std::string::npos; gp += 5) ++n_goto;
+        for (size_t gp = 0; (gp = body.find("goto ", gp)) != std::string::npos; gp += 5) {
+            size_t q = gp + 5;
+            while (q < body.size() && (isalnum((unsigned char)body[q]) || body[q] == '_')) ++q;
+            if (q > gp + 5 && q < body.size() && body[q] == ';') ++n_goto;
+        }
 
         bool sm = body.find("switch (__state") != std::string::npos ||
                   body.find("switch(__state")  != std::string::npos;

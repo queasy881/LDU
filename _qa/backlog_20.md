@@ -157,6 +157,31 @@ the next jcc renders a confidently-wrong condition. Every one of these is a real
 #   (a placeholder does not fold where 0 did). Measure CHARS + the long-line histogram, not
 #   line count. Kill switch DS_NO_REGPLACEHOLDER.
 
+# 22. PASS ORDERING IS THE RECURRING TRAP — read this before adding a pass (3 hits in one night)
+#
+# A pass placed where its call site READS WELL, rather than where its INPUTS ARE FILLED, sees
+# empty maps. An empty map answers "no" to every question, so the pass either silently never
+# fires or — worse — its safety guard passes everything.
+#   1. ret_struct_ty : read param_structs, which recover_struct_layouts() fills ~50 lines LATER.
+#      Silently never fired. Fixed by computing it LAZILY at render time instead of as a pass.
+#   2. detect_stl_vectors' 2nd signature : looked like the same bug; was actually a stale binary.
+#   3. propagate_api_types : read var_pointer / ptr_elem_width to refuse overriding a proven
+#      pointer, but sat BEFORE collect_var_info + propagate_pointer_types. The guard therefore
+#      passed everything and typed `int8_t* j` as LPCRITICAL_SECTION -> `j[0x38]` -> C2109 on
+#      fn_0007f17c. The cl gate caught it; nothing else would have.
+# RULE: before inserting a pass, grep where each map it reads is WRITTEN, and put the pass after
+# the LAST writer. If that is awkward, compute lazily at render time — by then everything is final.
+#
+# 23. STALE-BINARY / BAD-GREP DISCIPLINE (cost several cycles this night)
+#   - `cargo ... | grep -c "error C"` must be CHECKED, not printed: a failing build leaves the
+#     OLD exe in place and its output reads exactly like a working feature. Gate commands are
+#     now `E=$(...); [ "$E" = "0" ] && <run>`.
+#   - Anchor greps. `grep '\bgoto '` also matches the confidence header ("1 residual goto") and
+#     inflated a whole-binary count 568 -> 637. `grep WSTR` matches LPCWSTR and faked a stale
+#     binary. Count `goto [A-Za-z0-9_]*;` with the semicolon.
+#   - Do NOT build C++ string literals through a python heredoc: `\n` arrived as a real newline
+#     twice (C2001), both times leaving a stale exe behind. Use the Edit tool.
+
 # STRETCH (do after the 20 if the night holds)
 thunk collapsing (jmp trampolines) · __security_cookie prolog/epilog hiding · wide L"" strings ·
 delay-load imports · TLS callbacks · .CRT$XCU static ctors · export forwarders · import-by-

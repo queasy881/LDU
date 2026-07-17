@@ -470,6 +470,64 @@
         return "unsigned long long";
     }
 
+    /* Win32 RETURN types — the other half of the type library, and the one that actually
+     * types the reader's VARIABLES rather than just a prototype:
+     *     v7 = CreateFileW(...)      ->  HANDLE v7 = CreateFileW(...)
+     *     v3 = GetModuleHandleW(0)   ->  HMODULE v3 = GetModuleHandleW(0)
+     * A parameter type only says what a call EXPECTS; a return type says what a local IS,
+     * and that is what propagates outward through the rest of the function.
+     *
+     * Only APIs whose return is a real named type are listed. An API returning a plain int
+     * or a count is deliberately ABSENT — "" means "say nothing", never a guess. Every name
+     * here must exist in api_type_backing (integer-backed), so a typed local still compiles
+     * and no call site needs a new cast.
+     * The A/W suffix is stripped by the caller before lookup, exactly like api_param_types. */
+    static std::string api_ret_type(const std::string& nm) {
+        static const bool off = std::getenv("DS_NO_APITYPES") != nullptr;
+        if (off) return "";
+        struct R { const char* api; const char* ty; };
+        static const R tbl[] = {
+            /* module / library handles */
+            {"GetModuleHandle", "HMODULE"}, {"LoadLibrary", "HMODULE"},
+            {"LoadLibraryEx", "HMODULE"},
+            {"GetProcAddress", "FARPROC"},
+            /* kernel object handles */
+            {"CreateFile", "HANDLE"},       {"CreateThread", "HANDLE"},
+            {"CreateMutex", "HANDLE"},      {"CreateEvent", "HANDLE"},
+            {"CreateSemaphore", "HANDLE"},  {"OpenProcess", "HANDLE"},
+            {"OpenThread", "HANDLE"},       {"GetCurrentProcess", "HANDLE"},
+            {"GetCurrentThread", "HANDLE"}, {"GetStdHandle", "HANDLE"},
+            {"CreateToolhelp32Snapshot", "HANDLE"}, {"FindFirstFile", "HANDLE"},
+            {"GetProcessHeap", "HANDLE"},
+            /* memory */
+            {"HeapAlloc", "LPVOID"},        {"HeapReAlloc", "LPVOID"},
+            {"VirtualAlloc", "LPVOID"},     {"VirtualAllocEx", "LPVOID"},
+            {"MapViewOfFile", "LPVOID"},    {"LocalAlloc", "LPVOID"},
+            {"GlobalAlloc", "LPVOID"},
+            /* windows */
+            {"CreateWindowEx", "HWND"},     {"FindWindow", "HWND"},
+            {"GetForegroundWindow", "HWND"},{"GetActiveWindow", "HWND"},
+            {"GetDesktopWindow", "HWND"},   {"WindowFromPoint", "HWND"},
+            {"GetDC", "HDC"},               {"BeginPaint", "HDC"},
+            /* dword-returning status/id APIs */
+            {"GetLastError", "DWORD"},      {"GetCurrentProcessId", "DWORD"},
+            {"GetCurrentThreadId", "DWORD"},{"GetTickCount", "DWORD"},
+            {"WaitForSingleObject", "DWORD"}, {"GetFileAttributes", "DWORD"},
+            {"GetFileSize", "DWORD"},       {"ResumeThread", "DWORD"},
+            {"SuspendThread", "DWORD"},     {"GetModuleFileName", "DWORD"},
+        };
+        std::string base = nm;
+        if (base.size() > 1) {                  /* strip the A/W suffix, as known_api does */
+            char c = base.back();
+            if (c == 'A' || c == 'W') {
+                std::string t = base.substr(0, base.size() - 1);
+                for (const R& r : tbl) if (t == r.api) return r.ty;
+            }
+        }
+        for (const R& r : tbl) if (base == r.api) return r.ty;
+        return "";
+    }
+
     /* Win32 PARAMETER TYPES for imports known_api() already pins an exact arity on,
      * so `long long VirtualProtect(long long, long long, long long, long long)`
      * reads `BOOL VirtualProtect(LPVOID, SIZE_T, DWORD, LPDWORD)` instead.
