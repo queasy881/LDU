@@ -196,6 +196,29 @@ the next jcc renders a confidently-wrong condition. Every one of these is a real
 #   - Do NOT build C++ string literals through a python heredoc: `\n` arrived as a real newline
 #     twice (C2001), both times leaving a stale exe behind. Use the Edit tool.
 
+# 25. CORRECTION — the reloc64 item (backlog_9 #2) IS HALF WRONG. Do not build it as written.
+# The claim: "an 8-byte slot whose RVA is in reloc64 IS a pointer (the loader rebases it); one
+# that is NOT cannot be." The FIRST half is sound. THE SECOND HALF IS FALSE, and it is the half
+# the item calls "more valuable".
+# A base-reloc exists only for a slot with a STATICALLY INITIALIZED pointer. A global assigned
+# at RUNTIME has no reloc entry and is absolutely still a pointer:
+#     qword_173fb0 = GetModuleHandleW(L"VALORANT-Win64-Shipping.exe");   <- the game base
+# Measured on NullWare: 148 qword_ globals referenced, 25 in reloc64, 123 not -- and many of
+# those 123 are runtime-assigned pointers. "Disproving" them would have deleted real pointer
+# types and re-introduced the int-vs-pointer bugs zero_signed_vars exists to catch.
+# WHAT IS LEFT: the sound half types 25 globals as pointers, and the ONE existing use site
+# (07_nullconst_backstop.inc:529, inlining a reloc-typed string) already covers the readable
+# part of that. Low value; the item is not the "cheapest big win" it advertises.
+#
+# 26. NOT WORTH BUILDING, measured (so nobody re-derives these):
+#   - CF tracking for `shr; jae`: 5 sites, all inside CRT float internals (fmod-shaped code).
+#     Real bug (the carry branch renders as an always-false `(x>>n) < 0u`) but nobody reads
+#     those functions, and getting the carry semantics wrong there is easy.
+#   - __security_cookie hiding: 3 functions.
+#   - Field naming from usage (47,449 `field_<hex>` refs -- the biggest number on the board):
+#     NOT decidable. `field_8` used as a loop bound might be count/size/end. Without symbols
+#     this is exactly the plausible-but-wrong the project bans. Same for the 248 globals.
+
 # STRETCH (do after the 20 if the night holds)
 thunk collapsing (jmp trampolines) · __security_cookie prolog/epilog hiding · wide L"" strings ·
 delay-load imports · TLS callbacks · .CRT$XCU static ctors · export forwarders · import-by-
