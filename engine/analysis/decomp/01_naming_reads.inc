@@ -81,30 +81,92 @@
     /* C-escape one byte onto `s`; false if it is not printable, i.e. the run is not a
      * string. Shared by read_cstring (.rdata literals) and recover_stack_strings so both
      * accept exactly the same byte set. */
-    static bool cstr_escape_byte(uint8_t b, std::string& s) {
+    static bool cstr_escape_byte(uint8_t b, std::string& s, bool allow_high = false) {
         if (b == '\n') { s += "\\n"; return true; }
         if (b == '\t') { s += "\\t"; return true; }
         if (b == '\r') { s += "\\r"; return true; }
         if (b == '"')  { s += "\\\""; return true; }
         if (b == '\\') { s += "\\\\"; return true; }
-        if (b < 0x20 || b >= 0x7f) return false;   /* non-printable byte -> not a string */
+        if (b < 0x20) return false;                /* a control byte -> binary data, not a string */
+        if (b >= 0x7f) {
+            /* A HIGH BYTE is UTF-8, not garbage. Rejecting the whole run on the first one threw
+             * away every log string the program actually prints:
+             *     [NullWare] \342\234\223 All hooks installed!\n     ("✓")
+             *     [NullWare] \342\234\227 Hook initialization failed!\n ("✗")
+             *     \342\225\221         NullWare Internal            \342\225\221  (box drawing)
+             * -- 4 of the 19 raw addresses still passed where a string belongs.
+             *
+             * OCTAL, not \xNN: a hex escape has NO length limit in C, so "\x41" followed by a
+             * literal 'B' parses as ONE escape \x41B. Octal is capped at 3 digits and cannot
+             * swallow the next character.
+             * Only for callers that pass allow_high AND enforce a printable-majority ratio --
+             * on its own this would happily read a binary table as a "string". */
+            if (!allow_high) return false;
+            char buf[8];
+            std::snprintf(buf, sizeof buf, "\\%03o", (unsigned)b);
+            s += buf; return true;
+        }
         s += (char)b; return true;
     }
     static const int CSTR_MINLEN = 4;
     /* If `rva` addresses a READ-ONLY, null-terminated, printable C string of at least
      * MINLEN chars, return it C-escaped (no quotes). Recovers string-literal operands
      * the compiler passed by address — Ghidra-style .rdata string recovery. */
+    /* Is `p[0..n)` a WELL-FORMED UTF-8 sequence? This is the discriminator that lets high
+     * bytes into a string safely. A printable-majority RATIO was tried first and is wrong: it
+     * rejects `════════ NullWare ════════`, a real separator line that is almost entirely
+     * box-drawing characters. Valid UTF-8 is a far stronger signal than any ratio -- random
+     * binary violates it within a byte or two (a stray 0x80-0xBF with no lead, a truncated
+     * sequence, an over-long form), while genuine text never does.
+     * Rejects the over-long encodings and the surrogate range too, so a crafted blob cannot
+     * masquerade as text. */
+    static bool valid_utf8(const uint8_t* p, size_t n) {
+        for (size_t i = 0; i < n; ) {
+            uint8_t b = p[i];
+            if (b < 0x80) { ++i; continue; }
+            int need; uint32_t cp;
+            if ((b & 0xE0) == 0xC0)      { need = 1; cp = b & 0x1F; }
+            else if ((b & 0xF0) == 0xE0) { need = 2; cp = b & 0x0F; }
+            else if ((b & 0xF8) == 0xF0) { need = 3; cp = b & 0x07; }
+            else return false;                       /* a bare continuation byte, or 0xF8+ */
+            if (i + (size_t)need >= n) return false;  /* the continuation bytes run past the end */
+            for (int k = 1; k <= need; ++k) {
+                uint8_t c = p[i + k];
+                if ((c & 0xC0) != 0x80) return false;    /* not a continuation */
+                cp = (cp << 6) | (c & 0x3F);
+            }
+            if (need == 1 && cp < 0x80)    return false;         /* over-long */
+            if (need == 2 && cp < 0x800)   return false;         /* over-long */
+            if (need == 3 && cp < 0x10000) return false;         /* over-long */
+            if (cp > 0x10FFFF)             return false;         /* out of range */
+            if (cp >= 0xD800 && cp <= 0xDFFF) return false;      /* a lone surrogate */
+            i += (size_t)need + 1;
+        }
+        return true;
+    }
     bool read_cstring(uint64_t rva, std::string& out) {
         if (!in_data_rva(rva) || addr_writable(rva)) return false;   /* read-only data only */
         const int MINLEN = CSTR_MINLEN, MAXLEN = 4096;
-        std::string s;
+        /* Read the raw run first: the UTF-8 check needs to look AHEAD at continuation bytes,
+         * which a byte-at-a-time escape loop cannot do. */
+        std::vector<uint8_t> raw;
+        bool terminated = false;
         for (int i = 0; i < MAXLEN; ++i) {
             uint8_t b;
             if (!read_u8(rva + (uint64_t)i, b)) return false;
-            if (b == 0) { if ((int)s.size() < MINLEN) return false; out.swap(s); return true; }
-            if (!cstr_escape_byte(b, s)) return false;
+            if (b == 0) { terminated = true; break; }
+            if (b < 0x20 && b != '\n' && b != '\t' && b != '\r') return false;  /* control -> data */
+            raw.push_back(b);
         }
-        return false;   /* unterminated within MAXLEN */
+        if (!terminated || (int)raw.size() < MINLEN) return false;
+        bool any_high = false;
+        for (uint8_t b : raw) if (b >= 0x7f) { any_high = true; break; }
+        if (any_high && !valid_utf8(raw.data(), raw.size())) return false;
+        std::string s;
+        for (uint8_t b : raw)
+            if (!cstr_escape_byte(b, s, /*allow_high=*/true)) return false;
+        out.swap(s);
+        return true;
     }
     /* The UTF-16 twin of read_cstring. A wide literal is invisible to read_cstring by
      * construction: `L"VALORANT-Win64-Shipping.exe"` is the bytes 56 00 41 00 4c 00 ..., so a
