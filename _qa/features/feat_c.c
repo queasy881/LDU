@@ -66,6 +66,33 @@ __declspec(dllexport) void f_fastfail(void) { __fastfail(1); }
  *     not `long long` for every parameter. */
 __declspec(dllexport) int f_heapfree(HANDLE h, void* p) { return HeapFree(h, 0, p); }
 
+/* --- CROSS-FUNCTION type propagation. This is the case a direct-call-only rule cannot see:
+ *     the type has to flow THROUGH a local wrapper.
+ *       f_get_base  returns whatever GetModuleHandleW returned  -> it returns an HMODULE
+ *       f_use_base  calls f_get_base                            -> ITS local is an HMODULE too
+ *     NullWare has ZERO functions of this shape (measured: 0 local fns return an API result
+ *     directly), which is exactly why it needs a fixture -- the real gate binary cannot
+ *     validate it, and real-world code is full of these wrappers. */
+/*     noinline is REQUIRED, not cosmetic: at /O2 MSVC inlines the wrapper and f_use_base
+ *     calls GetModuleHandleW directly, so the fixture silently tests the DIRECT path and
+ *     proves nothing about the cross-function one. (First cut did exactly that.) */
+/*     g_touch is REQUIRED too: without it the wrapper compiles to a bare `jmp [IAT]` THUNK
+ *     (no call, no ret), which is a different shape entirely and does not test the
+ *     call-result path. Real wrappers do work; this makes the fixture one. */
+static volatile int g_touch;
+__declspec(noinline) __declspec(dllexport) HMODULE f_get_base(void) {
+    HMODULE h = GetModuleHandleW(L"kernel32.dll");
+    g_touch++;
+    return h;
+}
+__declspec(dllexport) int f_use_base(void) {
+    HMODULE m = f_get_base();          /* must recover as HMODULE, not int64_t */
+    return m != 0;
+}
+/* the same shape one level deeper: a wrapper of a wrapper (tests the fixpoint's iteration) */
+__declspec(noinline) __declspec(dllexport) HMODULE f_get_base2(void) { return f_get_base(); }
+__declspec(dllexport) int f_use_base2(void) { HMODULE m = f_get_base2(); return m != 0; }
+
 /* --- sret: >8-byte struct return. The return TYPE must follow the returned struct pointer
  *     (that is the decidable half; the phantom-arg half is proven undecidable — see
  *     _qa/sret/srettest.c). */
@@ -78,6 +105,23 @@ __declspec(dllexport) int f_pcmpeqb(const char* p) {
     __m128i z = _mm_setzero_si128();
     __m128i c = _mm_cmpeq_epi8(z, _mm_loadu_si128((const __m128i*)p));
     return _mm_movemask_epi8(c);
+}
+
+/* --- compound assignment: `v = v + x` is what the machine does; `v += x` is what the source
+ *     said. Every loop body in the binary carries the long form. */
+__declspec(dllexport) int f_compound(int* a, int n) {
+    int s = 0;
+    for (int i = 0; i < n; i++) {
+        s += a[i];          /* must read `s += ...`, not `s = s + ...` */
+        s ^= a[i] >> 3;     /* must read `s ^= ...` */
+    }
+    return s;
+}
+/* --- ++ / -- : `v = v + 1` must read `++v`. */
+__declspec(dllexport) int f_incr(volatile int* p, int n) {
+    int c = 0;
+    while (n--) { c++; }
+    return c;
 }
 
 /* --- stack string: bytes built from immediates must be recovered as a char array. */

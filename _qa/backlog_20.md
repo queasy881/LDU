@@ -172,6 +172,14 @@ the next jcc renders a confidently-wrong condition. Every one of these is a real
 # RULE: before inserting a pass, grep where each map it reads is WRITTEN, and put the pass after
 # the LAST writer. If that is awkward, compute lazily at render time — by then everything is final.
 #
+# 24. COMMIT `git add -f <dir>/*` SWEEPS IN WORK THE MESSAGE DOES NOT MENTION
+# 3e681f3 ("Win32 types on variables, wide literals, _byteswap_*, std_vector, format arity")
+# ALSO contains the locked-RMW family (try_interlocked_rmw: lock or/and/inc/dec ->
+# _InterlockedOr/And/ExchangeAdd, 6 -> 89 sites) because the staging line was
+# `git add -f engine/analysis/decomp/*.inc` and that work was already in the tree. The commit
+# is correct and gated; its MESSAGE is incomplete, which is worse than it sounds — the message
+# is what the next reader bisects against. Stage the FILES a change touches, not a glob.
+#
 # 23. STALE-BINARY / BAD-GREP DISCIPLINE (cost several cycles this night)
 #   - `cargo ... | grep -c "error C"` must be CHECKED, not printed: a failing build leaves the
 #     OLD exe in place and its output reads exactly like a working feature. Gate commands are

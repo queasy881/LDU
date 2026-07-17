@@ -1038,6 +1038,12 @@ struct FuncSig {
      *     fun_00001310("[NullWare] Game module found at 0x%p\n", v2, 4, 0)
      * one %p, three arguments. See trim_format_args(). */
     bool is_variadic = false;
+    /* The Win32 type this function RETURNS, propagated across the call graph. A local wrapper
+     * that hands back an API's result returns that API's type, and so does a wrapper of that
+     * wrapper -- which is the only way `HMODULE dll = GetDllBase();` can be recovered, since
+     * the caller never sees GetModuleHandleW at all. Empty = say nothing.
+     * Filled by the fixpoint at the end of build_sig_table, off ret_call_target. */
+    std::string ret_api;
     unsigned char float_mask = 0; /* bit p set => param position p is an XMM float/double arg */
     unsigned char double_mask = 0; /* bit p set (within float_mask) => that arg is DOUBLE (8B), else float (4B) */
     unsigned char float_typed_mask = 0; /* float params whose scalar WIDTH is known (4/8) — safe to type in a proto */
@@ -1927,9 +1933,24 @@ struct Decompiler {
                    !array_locals.count(a->name) &&
                    !assigned.count(a->name) && !addr_taken.count(a->name);
         };
+        /* A REAL compiler intrinsic has a FIXED signature that MSVC knows independently of the
+         * prototype we emit, so dropping an argument is a hard error, not a cosmetic choice:
+         *     lock or dword ptr [rdi+0x14], eax
+         *     _InterlockedOr((volatile long*)((char*)a4 + 0x14))     <- C2168, src trimmed
+         * (fn_00075d88: eax's value was a phantom, so the trailing-phantom trim ate it.)
+         * The OPAQUE stand-ins are the opposite -- `int32_t __pcmpeqb();` is old-style, has no
+         * prototype to violate, and its arguments are documentation -- so they stay trimmable.
+         * This was latent for _rotl, _byteswap and __movsb before the locked-RMW family made
+         * it reachable; it is fixed for the whole class, not the one callee that hit. */
+        auto fixed_arity_intrinsic = [](const std::string& c) {
+            return c.rfind("_Interlocked", 0) == 0 || c.rfind("_byteswap_", 0) == 0 ||
+                   c.rfind("_rotl", 0) == 0 || c.rfind("_rotr", 0) == 0 ||
+                   c.rfind("__movs", 0) == 0 || c.rfind("__stos", 0) == 0 ||
+                   c == "__fastfail" || c == "__rdtsc";
+        };
         std::function<void(ExprP&)> visit = [&](ExprP& e) {
             if (!e) return;
-            if (e->kind == EK::Call) {
+            if (e->kind == EK::Call && !fixed_arity_intrinsic(e->callee)) {
                 /* trailing phantoms: safe for ANY callee — a uniform arity reduction */
                 while (!e->args.empty() && is_phantom(e->args.back()))
                     e->args.pop_back();
@@ -1993,6 +2014,25 @@ struct Decompiler {
      * Read by decl_type, so it wins over the width/pointer inference for that variable. */
     std::map<std::string, std::string> var_api_type;
     std::set<std::string> api_types_used;   /* every Win32 name emitted -> its typedef prelude */
+
+    /* Callee NAME -> its function rva. The existing sig lookups all do
+     * `strtoull(c.c_str() + 4, ...)`, which silently assumes every local callee is spelled
+     * `fun_<hex>` -- true for a stripped binary and FALSE the moment a symbol has a real name
+     * (an export, a PDB name, an RTTI-recovered method). Those callees then resolve to a
+     * garbage rva and get no signature information at all. Falls back to the symbol table,
+     * matching on the same sani() spelling the callee was rendered with. */
+    bool callee_rva_of(const std::string& nm, uint64_t& out) {
+        if (nm.rfind("fun_", 0) == 0 || nm.rfind("sub_", 0) == 0) {
+            out = strtoull(nm.c_str() + 4, nullptr, 16);
+            return true;
+        }
+        if (!e) return false;
+        for (size_t i = 0; i < e->symbol_len; ++i) {
+            if (!e->symbols[i].name[0]) continue;
+            if (sani(std::string(e->symbols[i].name)) == nm) { out = e->symbols[i].rva; return true; }
+        }
+        return false;
+    }
 
     /* WIN32 TYPES ON THE READER'S VARIABLES, not just on prototypes.
      *
@@ -2083,8 +2123,17 @@ struct Decompiler {
                 if (s.kind == SK::Assign && s.lhs && s.lhs->kind == EK::Var && s.rhs) {
                     ExprP r = s.rhs;
                     while (r && r->kind == EK::Cast && r->a) r = r->a;
-                    if (r && r->kind == EK::Call)
+                    if (r && r->kind == EK::Call) {
                         claim(s.lhs->name, api_ret_type(r->callee));
+                        /* ... and through a LOCAL wrapper: `HMODULE dll = GetDllBase();`.
+                         * build_sig_table propagated the API's return type across the call
+                         * graph, so the caller gets it without ever seeing the import. */
+                        uint64_t crva = 0;
+                        if (sigtab && callee_rva_of(r->callee, crva)) {
+                            auto si = sigtab->find(crva);
+                            if (si != sigtab->end()) claim(s.lhs->name, si->second.ret_api);
+                        }
+                    }
                 }
                 scan(s.lhs); scan(s.rhs);
             }
@@ -2130,9 +2179,9 @@ struct Decompiler {
                  * has zero %-specs, so nc == 0 says nothing on its own -- a plain
                  * `memcmp(a, "abc", 3)` looks identical. Proven-variadic is what separates them. */
                 bool vararg_callee = false;
-                if (sigtab && e->callee.rfind("fun_", 0) == 0) {
-                    uint64_t crva = strtoull(e->callee.c_str() + 4, nullptr, 16);
-                    auto si = sigtab->find(crva);
+                uint64_t vcrva = 0;
+                if (sigtab && callee_rva_of(e->callee, vcrva)) {
+                    auto si = sigtab->find(vcrva);
                     if (si != sigtab->end()) vararg_callee = si->second.is_variadic;
                 }
                 for (size_t i = 0; i + 1 < e->args.size(); ++i) {
@@ -4714,6 +4763,23 @@ struct Decompiler {
             else ret_t = "long long";
         } else ret_t = typ_str(ret_width >= 8 ? 8 : 4, ret_is_unsigned, false);
 
+        /* This function's OWN Win32 return type, if build_sig_table propagated one across the
+         * call graph (a wrapper that hands back an API's result returns that API's type):
+         *     int64_t f_get_base(void)  ->  HMODULE f_get_base(void)
+         * Without it the wrapper and its caller disagree -- the caller says `HMODULE m = ...`
+         * while the callee it reads says it returns int64_t.
+         * Only replaces a width-derived INTEGER spelling: void/float/double/pointer/narrow all
+         * carry information the table does not, and a pointer especially must not be flattened
+         * to an integer-backed typedef (that is the C2109 class). */
+        if (sigtab && f && used_return && !ret_is_pointer && !ret_is_float &&
+            !ret_conflict_raw && ret_small_w == 0 && !ret_byte_return) {
+            auto si = sigtab->find(f->rva);
+            if (si != sigtab->end() && !si->second.ret_api.empty()) {
+                ret_t = si->second.ret_api;
+                api_types_used.insert(ret_t);
+            }
+        }
+
         compute_bool_vars();   /* flag locals -> `bool` (needs the FINAL var widths) */
 
         /* Prune TRAILING unused parameters from the signature. ABI/register
@@ -5262,6 +5328,16 @@ struct Decompiler {
              * call sites are byte-identical. */
             std::string rtv = rt;
             { std::string art = api_ret_type(c);
+              /* a LOCAL callee carries its Win32 return type in the sig table, propagated
+               * across the call graph by build_sig_table's ret_api fixpoint. Without this the
+               * caller's prototype and the callee's definition CONTRADICT each other:
+               *     HMODULE f_get_base(void) { ... }     <- the definition
+               *     int64_t f_get_base();                <- what its caller declares */
+              uint64_t crv = 0;
+              if (art.empty() && sigtab && callee_rva_of(c, crv)) {
+                  auto sit = sigtab->find(crv);
+                  if (sit != sigtab->end()) art = sit->second.ret_api;
+              }
               bool int_rt = (rtv == "int32_t" || rtv == "int64_t" || rtv == "uint32_t" ||
                              rtv == "uint64_t" || rtv == "int" || rtv == "long long" ||
                              rtv == "unsigned int" || rtv == "unsigned long long");
@@ -6092,9 +6168,27 @@ void build_sig_table(ds_engine* e, std::map<uint64_t, FuncSig>& tab) {
                 } else {
                     last_rax_w = cw; last_rax_idx = (long)i; saw_call_result = true;
                     last_rax_from_call = true;
-                    last_rax_call_target =
-                        (c.detail && x.op_count >= 1 && x.operands[0].type == X86_OP_IMM)
-                            ? (uint64_t)x.operands[0].imm : 0;
+                    last_rax_call_target = 0;
+                    if (c.detail && x.op_count >= 1) {
+                        if (x.operands[0].type == X86_OP_IMM)
+                            last_rax_call_target = (uint64_t)x.operands[0].imm;  /* direct call */
+                        else if (x.operands[0].type == X86_OP_MEM &&
+                                 x.operands[0].mem.index == X86_REG_INVALID) {
+                            /* `call qword ptr [IAT]` -- an IMPORT. Recorded as the IAT SLOT rva,
+                             * which is how e->imports keys them. Without this an import call
+                             * recorded target 0 and a wrapper around an API could not be told
+                             * from a wrapper around anything else, so the API's return type had
+                             * nowhere to propagate from (the ret_api fixpoint below).
+                             * An IAT slot lives in .idata and can never collide with a function
+                             * rva, so the existing consumers (the void fixpoint, which looks the
+                             * target up in `tab`) simply do not match it -- no behaviour change. */
+                            const x86_op_mem& mm = x.operands[0].mem;
+                            if (mm.base == X86_REG_RIP)
+                                last_rax_call_target = c.address + c.size + (uint64_t)mm.disp;
+                            else if (mm.base == X86_REG_INVALID)
+                                last_rax_call_target = (uint64_t)mm.disp;
+                        }
+                    }
                 }
             }
             /* idiv/div/imul/mul (1-operand forms) write the result to eax/rax
@@ -6531,6 +6625,65 @@ void build_sig_table(ds_engine* e, std::map<uint64_t, FuncSig>& tab) {
         if (s.ret_kind == 0 || !s.ret_only_from_call || s.saw_real_value_ret)
             continue;
         if (s.ret_call_target == kv.first) s.ret_kind = 0;
+    }
+
+    /* CROSS-FUNCTION RETURN TYPE, to a fixpoint over the call graph.
+     *
+     * propagate_api_types only sees a DIRECT API call, so it recovers
+     *     HMODULE v2 = GetModuleHandleW(..)
+     * and is blind the moment the program wraps it, which real code always does:
+     *     HMODULE GetDllBase(void)  { return GetModuleHandleW(L".."); }
+     *     HMODULE dll = GetDllBase();      <- the caller never sees GetModuleHandleW
+     * A function whose result IS an API's result RETURNS that API's type; a function whose
+     * result is THAT function's result returns it too. Seeded from the imports, then iterated
+     * so wrappers-of-wrappers inherit. Bounded to 8 rounds: the call graph can contain cycles
+     * and this must terminate regardless.
+     *
+     * Sound because ret_call_target is only set when the return value came from that call --
+     * `ret_only_from_call && !saw_real_value_ret` means no path returns a deliberate value of
+     * its own. A function that sometimes returns a handle and sometimes an error code has
+     * saw_real_value_ret and is left alone.
+     * NOTE: measured ZERO sites on NullWare (no local fn there returns an API result), so the
+     * gate binary cannot validate this -- _qa/features/feat_c.c f_get_base/f_use_base is the
+     * oracle. DS_NO_APITYPES. */
+    if (!std::getenv("DS_NO_APITYPES")) {
+        /* seed: ret_call_target is an IAT slot whose API has a known return type */
+        for (auto& kv : tab) {
+            FuncSig& s = kv.second;
+            if (!s.ret_call_target || !s.ret_only_from_call || s.saw_real_value_ret) continue;
+            for (size_t i = 0; i < e->import_len; ++i) {
+                if (e->imports[i].iat_rva != s.ret_call_target || !e->imports[i].name[0]) continue;
+                std::string t = Decompiler::api_ret_type(e->imports[i].name);
+                if (!t.empty()) s.ret_api = t;
+                break;
+            }
+        }
+        /* iterate: a wrapper inherits from the local function it returns */
+        for (int round = 0; round < 8; ++round) {
+            bool changed = false;
+            for (auto& kv : tab) {
+                FuncSig& s = kv.second;
+                if (!s.ret_api.empty() || !s.ret_call_target ||
+                    !s.ret_only_from_call || s.saw_real_value_ret) continue;
+                if (s.ret_call_target == kv.first) continue;      /* self-recursion */
+                auto t = tab.find(s.ret_call_target);
+                if (t != tab.end() && !t->second.ret_api.empty()) {
+                    s.ret_api = t->second.ret_api; changed = true;
+                }
+            }
+            /* ...and through a TAIL-CALL THUNK, which has no `call` to hang ret_call_target on:
+             *     f_get_base2:  jmp f_get_base        <- one instruction, no call, no ret
+             * A thunk returns EXACTLY what its target returns, by definition -- it does not
+             * even have a frame to alter it in. tail_of already holds these pairs. */
+            for (auto& kv : tail_of) {
+                auto s = tab.find(kv.first);
+                auto t = tab.find(kv.second);
+                if (s == tab.end() || t == tab.end()) continue;
+                if (!s->second.ret_api.empty() || t->second.ret_api.empty()) continue;
+                s->second.ret_api = t->second.ret_api; changed = true;
+            }
+            if (!changed) break;
+        }
     }
 }
 

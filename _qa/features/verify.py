@@ -54,12 +54,26 @@ CHECKS = [
      [r'__fastfail'], []),
     ('feat_c', 'f_heapfree', 'typelib: real Win32 param types, not long long',
      [r'HeapFree\s*\(\s*HANDLE|typedef .*HANDLE'], []),
+    # CROSS-FUNCTION type propagation -- the type must flow THROUGH a local wrapper, which a
+    # direct-call-only rule cannot see. NullWare has ZERO functions of this shape, so this
+    # fixture is the only oracle for it.
+    ('feat_c', 'f_get_base', 'cross-fn types: wrapper returns HMODULE, not int64_t',
+     [r'^HMODULE f_get_base\(void\)'], [r'^int64_t f_get_base\(void\)']),
+    ('feat_c', 'f_get_base2', 'cross-fn types: through a TAIL-CALL THUNK (jmp, no call/ret)',
+     [r'^HMODULE f_get_base2\(void\)'], []),
+    ('feat_c', 'f_use_base', 'cross-fn types: the CALLER\'s prototype agrees with the callee',
+     [r'HMODULE f_get_base\(\);'], [r'int64_t f_get_base\(\);']),
     ('feat_c', 'f_sret_v3', 'sret 19a: return type follows the returned struct pointer',
      [r'struct \w+\s*\*\s*f_sret_v3'], [r'^float\*\s*f_sret_v3']),
     ('feat_c', 'f_pcmpeqb', 'lanes16: pcmpeqb DEFINES its dest (no fabricated 0 mask)',
      [r'__pcmpeqb'], [r'__pmovmskb\(0\)']),
     ('feat_c', 'f_stackstr', 'stack strings: immediate bytes -> char array',
      [r'char \w+\[|ABCD|0x44434241'], []),
+    # Compound assignment. The forbidden pattern is the point: `v = v + x` must NOT survive.
+    ('feat_c', 'f_compound', 'compound assign: v = v op x  ->  v op= x',
+     [r'\w+\s(\+|\^|\||&|-|\*)= '], [r'(\b\w+) = \1 [-+^|&*] ']),
+    ('feat_c', 'f_incr', 'increment: v = v + 1  ->  ++v',
+     [r'\+\+\w+|\w+ \+= 1'], [r'(\b\w+) = \1 \+ 1;']),
 
     # ---- feat_cpp.dll : type / class recoveries ---------------------------------------
     ('feat_cpp', 'mk_rect', 'RTTI: class recovered + named',
@@ -154,8 +168,11 @@ def main():
         body = bodies.get(fn)
         if body is None:
             rows.append(('MISS', label, 'fn %s not in the dump' % fn)); nmiss += 1; continue
-        bad = [p for p in req if not re.search(p, body)]
-        hit = [p for p in forb if re.search(p, body)]
+        # re.M so a `^` in a pattern anchors to each LINE, not to the start of the whole body.
+        # Without it every `^`-anchored check silently fails no matter what the output says --
+        # which is how two green cross-fn results were reported RED.
+        bad = [p for p in req if not re.search(p, body, re.M)]
+        hit = [p for p in forb if re.search(p, body, re.M)]
         if not bad and not hit:
             rows.append(('PASS', label, '')); npass += 1
         else:
