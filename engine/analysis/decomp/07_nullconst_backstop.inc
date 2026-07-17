@@ -224,6 +224,46 @@
         return e && e->kind == EK::Var && e->name.rfind("in_", 0) == 0;
     }
 
+    /* Label an UNMAPPED capstone register — one map_reg does not model at all, so it has
+     * no Reg id and collapses to R_NONE: ymm/zmm, mmx, mask, segment, control, debug, x87.
+     * Keyed on the CAPSTONE id, because every one of them maps to the single R_NONE value
+     * and naming them off that would merge ymm0 and ymm1 into one variable. */
+    static std::string cs_reg_label(unsigned cr) {
+        char b[24];
+        if (cr >= X86_REG_YMM0 && cr <= X86_REG_YMM15) { snprintf(b, sizeof b, "YMM%u", cr - X86_REG_YMM0); return b; }
+        if (cr >= X86_REG_ZMM0 && cr <= X86_REG_ZMM31) { snprintf(b, sizeof b, "ZMM%u", cr - X86_REG_ZMM0); return b; }
+        if (cr >= X86_REG_MM0  && cr <= X86_REG_MM7)   { snprintf(b, sizeof b, "MM%u",  cr - X86_REG_MM0);  return b; }
+        if (cr >= X86_REG_K0   && cr <= X86_REG_K7)    { snprintf(b, sizeof b, "K%u",   cr - X86_REG_K0);   return b; }
+        if (cr >= X86_REG_ST0  && cr <= X86_REG_ST0 + 7) { snprintf(b, sizeof b, "ST%u", cr - X86_REG_ST0); return b; }
+        switch (cr) {
+            case X86_REG_ES: return "ES";  case X86_REG_CS: return "CS";
+            case X86_REG_SS: return "SS";  case X86_REG_DS: return "DS";
+            case X86_REG_FS: return "FS";  case X86_REG_GS: return "GS";
+            default: break;
+        }
+        snprintf(b, sizeof b, "REG%u", cr);
+        return b;
+    }
+    std::map<unsigned,std::string> unknown_csreg_name;
+    /* The R_NONE sibling of unknown_reg_value. Same contract: a value the dataflow cannot
+     * reconstruct becomes a NAMED, DECLARED local — never a literal. Stable per capstone
+     * register so every read of the same lost value shares one name, and counted in
+     * unknown_value_count so the confidence header reports it as a phantom live-in. */
+    ExprP unknown_csreg_value(unsigned cr, int w) {
+        int cw = (w >= 8) ? 8 : (w > 0 ? w : 8);
+        auto it = unknown_csreg_name.find(cr);
+        std::string nm;
+        if (it != unknown_csreg_name.end()) nm = it->second;
+        else {
+            nm = "in_" + cs_reg_label(cr);
+            unknown_csreg_name[cr] = nm;
+            record_width(nm, cw >= 8 ? 8 : 4);
+            if (cw >= 8) var_is_ll[nm] = true;
+            ++unknown_value_count;
+        }
+        return mkVar(nm, cw >= 8 ? 8 : 4);
+    }
+
     /* Promote a leaked ARG-register backstop to its PARAMETER. `in_RCX` means "the
      * value rcx held on input" — which, by the Win64 ABI, IS the first integer
      * argument a1 (rdx->a2, r8->a3, r9->a4; xmm0-3 -> a1-a4 float). So an
@@ -372,7 +412,24 @@
             return mkConst(op.imm, op.size ? op.size : 4);
         if (op.type == X86_OP_REG) {
             Reg r; int w; map_reg(op.reg, r, w);
-            if (r == R_NONE) return mkConst(0, w ? w : 8);
+            /* An UNMAPPED register (ymm/zmm/mmx/mask/segment/control/debug/x87 — anything
+             * map_reg does not model) used to read back as the literal constant 0. That is
+             * not a "value unknown" marker, it is a specific FALSE CLAIM, and it propagates:
+             * constant folding believes it, so the fabricated zero reaches conditions. It
+             * gated loop exits in NullWare's AVX2 strlen —
+             *     if (__vpmovmskb(0)) break;
+             * where the argument is the string being scanned. It also contradicted this
+             * file's own stated guarantee, three lines up in unknown_reg_value: "NEVER a
+             * literal-0 pointer base ... structurally unable to reach the output, on ANY
+             * input, forever". R_NONE was the hole in that forever.
+             * Now it is a named, declared phantom live-in like every other unrecoverable
+             * value, and the confidence header counts it. DS_NO_REGPLACEHOLDER restores the
+             * old fabricated zero. */
+            if (r == R_NONE) {
+                static const bool off = std::getenv("DS_NO_REGPLACEHOLDER") != nullptr;
+                if (off) return mkConst(0, w ? w : 8);
+                return unknown_csreg_value(op.reg, w);
+            }
             /* high-byte registers (ah/bh/ch/dh) are bits 8-15 of the parent, NOT
              * the low byte — model them as `(parent >> 8) & 0xFF`. Without this a
              * `test dh,dh` reads as `test dl,dl`, which silently breaks every SWAR

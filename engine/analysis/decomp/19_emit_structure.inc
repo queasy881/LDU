@@ -559,6 +559,14 @@
                  * re-duplicate the freshly-merged block back into every arm, undoing
                  * the merge. A general pred-count heuristic is NOT used here — it
                  * pushes ordinary 2-pred diamonds into a state machine (worse). */
+                /* STALE RATIONALE (2026-07-17): state machines no longer exist — the
+                 * `while(1) switch(__state)` fallback was deleted. "pushes it into a state
+                 * machine (worse)" can no longer happen, so the reason not to use a general
+                 * pred-count heuristic here is gone, and the same applies to the cap=30
+                 * tuning below (chosen to minimise state machines). Both now trade
+                 * duplication against gotos with nothing else on the scale. Re-measure
+                 * before trusting either number; do NOT read the old comments as current
+                 * evidence. */
                 bool hi_fanin = tail_merge_targets.count(b) &&
                                 blocks[b].stmts.size() >= 2;
                 if (!hi_fanin) {
@@ -580,13 +588,15 @@
                          * large tail, discard the copy and emit ONE labeled block + goto
                          * instead — exactly what Hex-Rays does here. Tunable via DS_DUP_MAX. */
                         int dl = 0; for (char c : db) if (c == '\n') ++dl;
-                        /* cap=30 measured best on the full 1443: fewest state machines
-                         * (15 vs 18 baseline / 19 at cap=12) and fewest goto-functions,
-                         * at +1% total lines. A goto-free-only guard (skip dup when db
-                         * has a goto) was tried and REGRESSED it (589 gotos / 19 SM) —
-                         * refusing those dups pushes more fns over the goto threshold
-                         * into state machines. State-machine count is the readability
-                         * metric that matters most, so we keep the broader dup. */
+                        /* HISTORICAL, NO LONGER EVIDENCE (see the stale-rationale note
+                         * above): cap=30 was measured best on the full 1443 by STATE-MACHINE
+                         * count -- "fewest state machines (15 vs 18 baseline / 19 at cap=12)
+                         * ... State-machine count is the readability metric that matters
+                         * most, so we keep the broader dup". State machines were deleted on
+                         * 2026-07-17, so that objective no longer exists and this number is
+                         * optimising for nothing. It now purely trades DUPLICATED CODE
+                         * against gotos. Re-A/B it (chars + the long-line histogram, never
+                         * line count) before changing it in either direction. */
                         static int cap = [](){ const char* e = getenv("DS_DUP_MAX"); return e ? atoi(e) : 30; }();
                         if (dl <= cap) {
                             dst += db;
