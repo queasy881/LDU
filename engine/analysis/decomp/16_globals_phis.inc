@@ -2147,6 +2147,23 @@
                      * a DIFFERENT pointer type = C4133) is made purely integral by
                      * casting each pointer side to (long long). A pointer-vs-null
                      * (`p == 0`) is valid C and left alone. */
+                    /* MEASURED AND REVERTED (2026-07-17): folding `(long long)p == (long long)q`
+                     * to `p == q` when BOTH sides render as the SAME pointer type. Correct, and
+                     * it fires ZERO times -- whole-binary A/B: 0 of 1497 files differ, chars
+                     * byte-identical. Do not re-add it without first fixing the CAUSE.
+                     *
+                     * THE CAUSE IS WORTH MORE THAN THE FEATURE. recover_struct_layouts tags each
+                     * recovered struct PER VARIABLE (s_<fn>_v54, s_<fn>_v2), so two pointers to
+                     * the SAME real struct carry DIFFERENT type names:
+                     *     struct s_fun_00009550_v54*v54;
+                     *     struct s_fun_00009550_v2 *v2;
+                     *     while ((int64_t)(v54) != (int64_t)(v2))   <- cast genuinely REQUIRED
+                     * Every struct-pointer comparison therefore looks like a real C4133 type
+                     * mismatch, and the cast below is right. The 825 casts are a SYMPTOM of the
+                     * per-variable tagging, not of the cast rule. The actual fix is STRUCT
+                     * UNIFICATION: two variables with the same recovered layout, compared to or
+                     * assigned from each other, are one type and should share one tag. That also
+                     * collapses the duplicate struct definitions in every dump. */
                     if ((ap2 || bp2) && !(ap2 && isnull(e->b)) && !(bp2 && isnull(e->a)) &&
                         !(isnull(e->a) || isnull(e->b))) {
                         std::string l = ap2 ? "(long long)(" + rsub(e->a,3) + ")" : rsub(e->a,pp);

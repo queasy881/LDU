@@ -620,7 +620,40 @@
                 }
             }
         }
+
     }
+
+    /* STRUCT UNIFICATION -- BUILT, MEASURED ZERO, REVERTED (2026-07-17). Do not rebuild it
+     * the same way; the numbers are here so the next attempt starts from them.
+     *
+     * The idea: every struct is tagged per VARIABLE (s_<fn>_v54, s_<fn>_v2), so two pointers
+     * to the SAME real struct get DIFFERENT type names, and the output asserts a distinction
+     * the program does not have:
+     *     struct s_fun_00009550_v54*v54;
+     *     struct s_fun_00009550_v2 *v2;
+     *     while ((int64_t)(v54) != (int64_t)(v2))   <- a cast the source never needed
+     *
+     * The SOUND criterion is the assignment/compare, not the shape: two structs sharing a
+     * recovered layout proves nothing ({int64_t; int64_t} is a vector, a pair, a node), while
+     * code comparing them does not compile across unrelated struct types in the original
+     * source. Requiring BOTH (evidence AND identical layout) is what I implemented, and it
+     * fires ZERO times -- measured over 300 functions:
+     *     struct-var compares across different tags : 2
+     *     ...of those with identical layouts        : 0
+     * and the 0 is structural, not bad luck: each variable only reveals the fields IT
+     * touches, so two views of one type ALWAYS have different layouts. The two conditions are
+     * a contradiction.
+     *
+     * (I reached that pair count by measuring '48 identical duplicate layouts' and 'compares
+     * exist' SEPARATELY and assuming the intersection was non-empty -- the same mistake the
+     * devirt recon caught itself making. Measure the INTERSECTION.)
+     *
+     * WHAT WOULD ACTUALLY WORK: on evidence alone, UNION the two field sets -- v54 and v2 are
+     * one type, so the real struct has both their fields, and the merged view is strictly
+     * more complete than either. That is a genuine feature. It is also only ~2 sites per 300
+     * functions here, and unioning fields can create overlaps that corrupt every offset, so
+     * it needs its own cycle and a fixture -- not a drive-by. */
+
     /* Cache each READ-ONLY global struct base in a typed local (`struct s* gs_X = (struct
      * s*)qword_X;`) so the body reads `gs_X->field` instead of repeating the ~50-char
      * `((struct s*)qword_X)->` at every access (fn_0001ab40 has 387 of ONE such cast).

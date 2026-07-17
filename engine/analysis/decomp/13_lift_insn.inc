@@ -1726,7 +1726,14 @@
              * >= the lane width yields ZERO on x86 (all sign bits for psrad), where C's
              * shift is UNDEFINED — so only a constant count within the lane is modeled,
              * and anything else is left alone rather than mis-rendered. */
-            case X86_INS_PSLLD: case X86_INS_PSRLD: case X86_INS_PSRAD: {
+            /* The VEX spellings reach the SAME body: it was written 3-operand-aware from the
+             * start (`int ai = (nop >= 3) ? 1 : 0` -- "VEX: dst,src,imm") and only the case
+             * labels were missing, so every vps* site was silently dropped. 11 real sites in
+             * NullWare (vpsrlq 5, vpsllq 3, vpsrld 2, vpsrad 1), all xmm.
+             * A 256-bit form is declined for free by the is_xmm check below: map_reg gives
+             * R_NONE for ymm, and the lane arrays are 4x32 -- see the VEX width guard. */
+            case X86_INS_PSLLD:  case X86_INS_PSRLD:  case X86_INS_PSRAD:
+            case X86_INS_VPSLLD: case X86_INS_VPSRLD: case X86_INS_VPSRAD: {
                 if (nop < 2 || OP(0).type != X86_OP_REG) break;
                 Reg dr; int dw; map_reg(OP(0).reg, dr, dw);
                 if (!is_xmm(dr)) break;
@@ -1750,7 +1757,8 @@
                 set_xmm_i4(dr, r[0], r[1], r[2], r[3], b);
                 break;
             }
-            case X86_INS_PSLLQ: case X86_INS_PSRLQ: {
+            case X86_INS_PSLLQ:  case X86_INS_PSRLQ:
+            case X86_INS_VPSLLQ: case X86_INS_VPSRLQ: {
                 if (nop < 2 || OP(0).type != X86_OP_REG) break;
                 Reg dr; int dw; map_reg(OP(0).reg, dr, dw);
                 if (!is_xmm(dr)) break;
