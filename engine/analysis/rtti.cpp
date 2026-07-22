@@ -468,6 +468,47 @@ bool looks_like_fmt_string(const ds_engine* e, uint64_t addr, bool* has_s = null
     return conv >= 1;
 }
 
+/* NON-POLYMORPHIC typeid: the COL scan only visits polymorphic classes' TypeDescriptors, so
+ * `typeid(PlainStruct)` (a type with no vtable/COL) had no address->class mapping. Scan the
+ * read-only data for the `.?A<tag>...@@` decorated name a TypeDescriptor carries at +16, and
+ * seed `<Class>__type_info` (at TD+8, the typeid operand) and `<Class>__typedesc` (at TD, the
+ * dynamic_cast dst arg) for every one -- polymorphic or not. Bounded byte scan; the `.?AV`/
+ * `.?AU` prefix is RTTI-specific so false positives are negligible and, being unreferenced,
+ * harmless. DS_NO_TYPEID. */
+void scan_rtti_typedescriptors(ds_engine* e) {
+    if (std::getenv("DS_NO_TYPEID")) return;
+    bool no_dc = std::getenv("DS_NO_DYNCAST") != nullptr;
+    for (size_t si = 0; si < e->segment_len; ++si) {
+        const ds_segment& s = e->segments[si];
+        if (!(s.flags & DS_FLAG_R) || (s.flags & DS_FLAG_X)) continue;
+        uint64_t start = s.rva, end = s.rva + s.size;
+        if (end > e->image_size) end = e->image_size;
+        for (uint64_t p = start; p + 4 <= end; ++p) {
+            if (e->image[p] != '.' || e->image[p+1] != '?' || e->image[p+2] != 'A') continue;
+            char tag = (char)e->image[p+3];
+            if (tag != 'V' && tag != 'U' && tag != 'W' && tag != 'T') continue;
+            if (p < 16) continue;                              /* need TD base = p - 16 */
+            std::string dec = read_rtti_name(e, p);
+            if (dec.size() < 5 || dec.rfind(".?A", 0) != 0) continue;
+            uint64_t td = p - 16, vft;
+            if (!read_u64(e, td, vft) || vft == 0) continue;   /* TD.pVFTable must be present */
+            bool is_struct = false;
+            std::string cls_raw = demangle(dec, &is_struct);
+            if (cls_raw.empty()) continue;
+            std::string cls = c_safe(cls_raw);
+            if (!already_seeded(e, td + 8)) {
+                char ti[176]; std::snprintf(ti, sizeof ti, "%s__type_info", cls.c_str());
+                ds_engine_add_symbol(e, td + 8, ti);
+            }
+            if (!no_dc && !already_seeded(e, td)) {
+                char nm[176]; std::snprintf(nm, sizeof nm, "%s__typedesc", cls.c_str());
+                ds_engine_add_symbol(e, td, nm);
+            }
+            p += dec.size();                                   /* skip past this name */
+        }
+    }
+}
+
 /* PURE VIRTUAL: the abstract-call trap (`_purecall`/`__cxa_pure_virtual`) is the ONE code
  * address MSVC stores into >=2 vtable slots at DISTINCT indices (a real, even inherited,
  * method sits at ONE index across base+derived vtables). Re-run the exact COL recognition
@@ -640,6 +681,8 @@ extern "C" void ds_engine_scan_rtti(ds_engine* e) {
      * COL scan above (that keys on a sig==1 COL; this keys on _ZTS mangled-name strings),
      * so running both is safe on either compiler's output and double-seeding is guarded. */
     scan_rtti_itanium(e);
+    /* also map EVERY TypeDescriptor (incl. non-polymorphic) so typeid/dynamic_cast resolve. */
+    scan_rtti_typedescriptors(e);
 }
 
 /* CONSTRUCTOR / DESTRUCTOR naming. A function that stores `&<Class>__vftable` to [this+0]
