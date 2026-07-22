@@ -1226,6 +1226,7 @@
      * edge and the back edge). We iterate (Gauss-Seidel, in block/address order so
      * forward flow converges in ~1 pass) until entry_reg stops changing. */
     void compute_entry_regs_fixpoint() {
+        static const bool no_loopvec = std::getenv("DS_NO_LOOPVEC") != nullptr;
         compute_reg_liveness();
         phi_temps.clear();
         phi_needs.clear();
@@ -1371,7 +1372,20 @@
                             for (int p : b.pred) {
                                 if (p < 0 || p >= (int)blocks.size()) continue;
                                 ExprP po = blocks[p].reg_out_vla[r];
-                                if (!po || expr_has_in_backstop(po)) { aany = false; break; }
+                                if (!po) {
+                                    /* OPTIMISTIC LOOP BOOTSTRAP: a back-edge pred (a loop
+                                     * latch -- later in address order) has no reg_out on the
+                                     * FIRST fixpoint pass because its block has not run yet.
+                                     * Skip it so a loop-INVARIANT load set in the preheader can
+                                     * seed the loop body; iter>=1 then REQUIRES it (a clobbering
+                                     * loop's latch stays null -> the value is lowered), so the
+                                     * converged state is sound. Without this, memcpy/memset only
+                                     * ever fired on straight-line/unrolled code, never true
+                                     * loops. DS_NO_LOOPVEC restores the old conservative merge. */
+                                    if (iter == 0 && p > (int)b.id && !no_loopvec) continue;
+                                    aany = false; break;
+                                }
+                                if (expr_has_in_backstop(po)) { aany = false; break; }
                                 aany = true;
                                 if (!av) av = po;
                                 else if (!exprEqual(av, po)) adiff = true;
@@ -1395,7 +1409,14 @@
                                 if (p < 0 || p >= (int)blocks.size()) continue;
                                 ExprP po = blocks[p].reg_out_vfill[r];
                                 int pe = blocks[p].reg_out_vfill_esz[r];
-                                if (!po || pe == 0 || expr_has_in_backstop(po)) { fany2 = false; break; }
+                                if (!po || pe == 0) {
+                                    /* optimistic loop bootstrap (see the vla merge): skip a
+                                     * not-yet-run back-edge latch on iter 0 so a loop-invariant
+                                     * FILL set before the loop seeds the store loop body. */
+                                    if (iter == 0 && p > (int)b.id && !no_loopvec) continue;
+                                    fany2 = false; break;
+                                }
+                                if (expr_has_in_backstop(po)) { fany2 = false; break; }
                                 fany2 = true;
                                 if (!fvv) { fvv = po; fesz = pe; }
                                 else if (!exprEqual(fvv, po) || fesz != pe) fdiff2 = true;

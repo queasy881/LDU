@@ -2024,9 +2024,17 @@
                     if (is_xmm(sr)) {
                         if (esz <= 4) {
                             ExprP l[4];
-                            if (xmm_i_lanes(OP(1), l) && l[0])
-                                val = (esz == 4) ? l[0]
-                                    : mkCast(esz == 1 ? "(unsigned __int8)" : "(unsigned __int16)", l[0], esz, true);
+                            ExprP le = (xmm_i_lanes(OP(1), l) && l[0]) ? l[0] : nullptr;
+                            /* the lanes were not stocked (e.g. `vmovd xmm,r32; vpbroadcastb`
+                             * -- movd from a GP reg does not populate xmm_i_lanes): fall back
+                             * to the xmm's scalar low value. This is the g++ inlined-memset
+                             * idiom (vmovd edx,xmm; vpbroadcastb ymm,xmm; vmovdqu [dst],ymm),
+                             * so without it the byte fill is lost and the store stays opaque. */
+                            if (!le) le = simd_lane0(OP(1));
+                            if (!le) { ExprP rv = rvalue(OP(1)); if (rv) le = rv; }
+                            if (le)
+                                val = (esz == 4) ? le
+                                    : mkCast(esz == 1 ? "(unsigned __int8)" : "(unsigned __int16)", le, esz, true);
                         } else {
                             ExprP lo, hi;
                             if (simd_src_lanes(OP(1), lo, hi) && lo) val = lo;
