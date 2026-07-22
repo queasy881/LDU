@@ -392,6 +392,56 @@ void scan_rtti_itanium(ds_engine* e) {
     }
 }
 
+/* ---- ctor/dtor detection helpers (Intel operand-string parsers over ds_insn) ---- */
+std::string first_reg_tok(const char* p) {          /* leading register token: [a-z0-9]+ */
+    std::string r; while (*p == ' ') ++p;
+    while ((*p>='a'&&*p<='z')||(*p>='0'&&*p<='9')) r += *p++;
+    return r;
+}
+bool reg_reg(const char* ops, std::string& d, std::string& s) {  /* "rbx, rcx" (no mem) */
+    if (std::strchr(ops, '[')) return false;
+    const char* comma = std::strchr(ops, ','); if (!comma) return false;
+    d = first_reg_tok(ops);
+    const char* p = comma + 1; while (*p==' ') ++p;
+    s = first_reg_tok(p);
+    return !d.empty() && !s.empty();
+}
+bool store_base0(const char* ops, std::string& base, std::string& src) { /* "qword ptr [rbx], rax" */
+    const char* comma = std::strchr(ops, ','); if (!comma) return false;
+    const char* lb = std::strchr(ops, '['); if (!lb || lb > comma) return false;
+    const char* rb = std::strchr(lb, ']'); if (!rb || rb > comma) return false;
+    for (const char* q = lb + 1; q < rb; ++q) if (*q=='+'||*q=='-'||*q=='*') return false; /* [reg] only */
+    base = first_reg_tok(lb + 1); if (base.empty()) return false;
+    const char* p = comma + 1; while (*p==' ') ++p;
+    src = first_reg_tok(p);
+    return !src.empty();
+}
+std::string class_for_vtable_va(const ds_engine* e, uint64_t va) {   /* &<Class>__vftable -> tag */
+    if (!va) return "";
+    for (uint64_t r : { va, (va >= e->base ? va - e->base : va) })
+        for (size_t i = 0; i < e->symbol_len; ++i) {
+            if (e->symbols[i].rva != r || !e->symbols[i].name[0]) continue;
+            std::string n = e->symbols[i].name;
+            for (const char* suf : { "__vftable", "__vfstruct" }) {
+                size_t sl = std::strlen(suf);
+                if (n.size() > sl && n.compare(n.size()-sl, sl, suf) == 0)
+                    return c_safe(n.substr(0, n.size()-sl));
+            }
+        }
+    return "";
+}
+size_t vtbl_slot_sym(const ds_engine* e, uint64_t r) {   /* is func rva a __vftbl_N slot? */
+    for (size_t i = 0; i < e->symbol_len; ++i)
+        if (e->symbols[i].rva == r && e->symbols[i].name[0] &&
+            std::strstr(e->symbols[i].name, "__vftbl_")) return i;
+    return SIZE_MAX;
+}
+bool name_in_use(const ds_engine* e, const char* nm) {
+    for (size_t i = 0; i < e->symbol_len; ++i)
+        if (e->symbols[i].name[0] && !std::strcmp(e->symbols[i].name, nm)) return true;
+    return false;
+}
+
 /* PURE VIRTUAL: the abstract-call trap (`_purecall`/`__cxa_pure_virtual`) is the ONE code
  * address MSVC stores into >=2 vtable slots at DISTINCT indices (a real, even inherited,
  * method sits at ONE index across base+derived vtables). Re-run the exact COL recognition
@@ -546,4 +596,52 @@ extern "C" void ds_engine_scan_rtti(ds_engine* e) {
      * COL scan above (that keys on a sig==1 COL; this keys on _ZTS mangled-name strings),
      * so running both is safe on either compiler's output and double-seeding is guarded. */
     scan_rtti_itanium(e);
+}
+
+/* CONSTRUCTOR / DESTRUCTOR naming. A function that stores `&<Class>__vftable` to [this+0]
+ * is constructing a <Class> there (the exact rule struct_class ctor-recovery already trusts);
+ * if that function is ALSO a vtable slot it is the destructor (dtors live in the vtable and
+ * re-store the vtable). Name them `<Class>__ctor` / `<Class>__dtor` so call sites read as
+ * such instead of fun_XXXX. Runs after scan_rtti (vtable symbols seeded) and before
+ * resolve_symbols. Naming-only; DS_NO_CTORDTOR. */
+extern "C" void ds_engine_scan_ctor_dtor(ds_engine* e) {
+    if (std::getenv("DS_NO_CTORDTOR")) return;
+    if (!e || e->arch != DS_ARCH_X64 || !e->image || !e->func_len || !e->insn_len) return;
+    for (size_t fi = 0; fi < e->func_len; ++fi) {
+        ds_func* f = &e->funcs[fi];
+        size_t lo = 0, hi = e->insn_len;
+        while (lo < hi) { size_t m=(lo+hi)/2; if (e->insns[m].rva < f->rva) lo=m+1; else hi=m; }
+        uint64_t fend = f->rva + (f->size ? f->size : 0);
+        std::set<std::string> thisreg = { "rcx" };        /* this + register copies of it */
+        std::map<std::string,uint64_t> vtreg;             /* reg -> vtable VA it holds */
+        uint64_t stored_vt = 0;
+        for (size_t k = lo; k < e->insn_len && e->insns[k].rva < fend; ++k) {
+            const ds_insn* in = &e->insns[k];
+            std::string d, s, base;
+            if (!std::strcmp(in->mnemonic,"lea") && in->ref_type==DS_REF_DATA && in->ref_target) {
+                d = first_reg_tok(in->operands);
+                thisreg.erase(d);
+                if (!d.empty() && !class_for_vtable_va(e, in->ref_target).empty()) vtreg[d]=in->ref_target;
+                else vtreg.erase(d);
+            } else if (!std::strcmp(in->mnemonic,"mov") && reg_reg(in->operands, d, s)) {
+                if (thisreg.count(s)) thisreg.insert(d);   /* mov rbx,rcx : rbx aliases this */
+                else { thisreg.erase(d); vtreg.erase(d); }
+            } else if (!std::strcmp(in->mnemonic,"mov") && store_base0(in->operands, base, s)) {
+                if (thisreg.count(base) && vtreg.count(s)) stored_vt = vtreg[s];  /* last wins */
+            }
+        }
+        if (!stored_vt) continue;
+        std::string cls = class_for_vtable_va(e, stored_vt);
+        if (cls.empty()) continue;
+        size_t slot = vtbl_slot_sym(e, f->rva);
+        char nm[96];
+        std::snprintf(nm, sizeof nm, "%s__%s", cls.c_str(), slot!=SIZE_MAX ? "dtor" : "ctor");
+        if (name_in_use(e, nm))
+            std::snprintf(nm, sizeof nm, "%s__%s_%llx", cls.c_str(),
+                          slot!=SIZE_MAX ? "dtor":"ctor", (unsigned long long)f->rva);
+        if (slot != SIZE_MAX)                  /* DTOR: overwrite the __vftbl_N slot name in place */
+            std::snprintf(e->symbols[slot].name, sizeof(e->symbols[slot].name), "%s", nm);
+        else if (!already_seeded(e, f->rva))   /* CTOR: fun_ has no symbol -> add one */
+            ds_engine_add_symbol(e, f->rva, nm);
+    }
 }

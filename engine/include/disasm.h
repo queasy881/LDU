@@ -120,6 +120,10 @@ void ds_engine_add_symbol(ds_engine* e, uint64_t rva, const char* name);
  * symbols. Runs inside ds_engine_resolve_symbols before naming; x64-only, gated
  * by DS_NO_RTTI. Idempotent-safe: only seeds still-unnamed recovered functions. */
 void ds_engine_scan_rtti(ds_engine* e);
+/* name C++ constructors/destructors: a function that stores &<Class>__vftable to
+ * [this+0] is a ctor (or a dtor when it is itself a vtable slot). Runs after
+ * scan_rtti, before resolve_symbols. Naming-only; gated by DS_NO_CTORDTOR. */
+void ds_engine_scan_ctor_dtor(ds_engine* e);
 /* recover real function names from the PDB named by the PE debug directory's
  * CodeView RSDS record, and seed them as symbols. Runs at build_cfg start,
  * before scan_rtti, so the PDB name wins. Windows-only (dbghelp), gated by

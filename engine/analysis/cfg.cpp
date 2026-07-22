@@ -380,5 +380,9 @@ extern "C" int ds_engine_build_cfg(ds_engine* e) {
         e->func_len = w;
     }
 
+    /* name C++ ctors/dtors now that e->funcs is final + sorted and scan_rtti's vtable
+     * symbols are seeded, but before resolve_symbols consumes the names. */
+    ds_engine_scan_ctor_dtor(e);
+
     return 0;
 }
