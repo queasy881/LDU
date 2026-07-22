@@ -1008,6 +1008,20 @@
         if (L.shared_typedef) {   /* Vec2/3/4 -> x/y/z/w */
             switch (off) { case 0: return "x"; case 4: return "y"; case 8: return "z"; case 12: return "w"; }
         }
+        /* a self-referential pointer field (points to its own struct) is a linked-list/tree
+         * link -- name it next/prev/link_<off> instead of the opaque field_<off>. Ranked by
+         * offset so a doubly-linked node's two self-ref fields get distinct names. */
+        if (!std::getenv("DS_NO_LINKFIELD") && !L.tag.empty()) {
+            auto ft = L.fptr_tag.find(off);
+            if (ft != L.fptr_tag.end() && ft->second == L.tag) {
+                int rank = 0;
+                for (auto& kv : L.fptr_tag)
+                    if (kv.second == L.tag && kv.first < off) ++rank;
+                if (rank == 0) return "next";
+                if (rank == 1) return "prev";
+                return "link_" + hex(off).substr(2);
+            }
+        }
         return "field_" + hex(off).substr(2);
     }
     /* Recognize an MSVC std::vector: the `_Mylast - _Myfirst` begin/end pointer
