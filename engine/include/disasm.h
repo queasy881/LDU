@@ -128,6 +128,10 @@ void ds_engine_scan_ctor_dtor(ds_engine* e);
  * format-string calling convention (a callee repeatedly passed a `%`-conversion string
  * literal). Runs after scan_ctor_dtor, before resolve_symbols. Gated by DS_NO_FMTFN. */
 void ds_engine_scan_format_fns(ds_engine* e);
+/* name an anonymous function after a distinctive string it references (Ghidra-style):
+ * a still-unnamed function whose only clean label string is "Enable ESP" becomes
+ * s_EnableESP. Runs after scan_format_fns, before resolve_symbols. Gated DS_NO_STRNAME. */
+void ds_engine_scan_string_names(ds_engine* e);
 /* recover real function names from the PDB named by the PE debug directory's
  * CodeView RSDS record, and seed them as symbols. Runs at build_cfg start,
  * before scan_rtti, so the PDB name wins. Windows-only (dbghelp), gated by

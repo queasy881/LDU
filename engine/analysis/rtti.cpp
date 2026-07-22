@@ -690,6 +690,63 @@ extern "C" void ds_engine_scan_ctor_dtor(ds_engine* e) {
     }
 }
 
+/* Read the string at `addr` if it is a clean, distinctive LABEL (a name a function could be
+ * called after): 4..40 printable chars, >=3 letters, not a printf format, not all-digits. */
+std::string read_clean_label(const ds_engine* e, uint64_t addr) {
+    uint64_t rva = (addr >= e->base) ? addr - e->base : addr;
+    if (rva == 0 || rva >= e->image_size) return "";
+    std::string s; int alpha = 0;
+    for (uint64_t i = 0; i < 48; ++i) {
+        if (rva + i >= e->image_size) return "";
+        unsigned char c = e->image[rva + i];
+        if (c == 0) break;
+        if (c < 0x20 || c > 0x7e) return "";
+        if (c == '%') return "";                       /* a format string, not a label */
+        if ((c>='A'&&c<='Z')||(c>='a'&&c<='z')) ++alpha;
+        s += (char)c;
+    }
+    if (s.size() < 4 || s.size() > 40 || alpha < 3) return "";
+    return s;
+}
+
+/* NAME AN ANONYMOUS FUNCTION AFTER A DISTINCTIVE STRING IT REFERENCES (Ghidra-style). When a
+ * still-unnamed function references EXACTLY ONE clean label string, name it `s_<Label>` so the
+ * reader sees what it is about instead of fun_XXXX. Conservative (exactly one label) to avoid
+ * mislabeling a multi-string function. Runs after scan_ctor_dtor, before resolve_symbols.
+ * DS_NO_STRNAME. */
+extern "C" void ds_engine_scan_string_names(ds_engine* e) {
+    if (std::getenv("DS_NO_STRNAME")) return;
+    if (!e || e->arch != DS_ARCH_X64 || !e->image || !e->func_len || !e->insn_len) return;
+    for (size_t fi = 0; fi < e->func_len; ++fi) {
+        ds_func* f = &e->funcs[fi];
+        bool named = false;
+        for (size_t i = 0; i < e->symbol_len; ++i)
+            if (e->symbols[i].rva == f->rva && e->symbols[i].name[0]) { named = true; break; }
+        if (named) continue;
+        size_t lo = 0, hi = e->insn_len;
+        while (lo < hi) { size_t m=(lo+hi)/2; if (e->insns[m].rva < f->rva) lo=m+1; else hi=m; }
+        uint64_t fend = f->rva + (f->size ? f->size : 0);
+        std::set<std::string> labels;
+        for (size_t k = lo; k < e->insn_len && e->insns[k].rva < fend; ++k) {
+            const ds_insn* in = &e->insns[k];
+            if (!std::strcmp(in->mnemonic,"lea") && in->ref_type==DS_REF_DATA && in->ref_target) {
+                std::string s = read_clean_label(e, in->ref_target);
+                if (!s.empty()) { labels.insert(s); if (labels.size() > 1) break; }
+            }
+        }
+        if (labels.size() != 1) continue;
+        std::string raw = c_safe(*labels.begin()), id;
+        for (char c : raw) { if (c=='_' && (id.empty() || id.back()=='_')) continue; id += c; }
+        while (!id.empty() && id.back() == '_') id.pop_back();   /* collapse/trim '_' runs */
+        if (id.size() < 3) continue;
+        if (id.size() > 28) { id.resize(28); while (!id.empty() && id.back()=='_') id.pop_back(); }
+        char nm[48]; std::snprintf(nm, sizeof nm, "s_%s", id.c_str());
+        if (name_in_use(e, nm)) std::snprintf(nm, sizeof nm, "s_%s_%llx", id.c_str(),
+                                              (unsigned long long)f->rva);
+        ds_engine_add_symbol(e, f->rva, nm);
+    }
+}
+
 /* PRINT / INPUT recognition. A statically-linked CRT printf/scanf (or any user format
  * wrapper) is otherwise an anonymous fun_XXXX. The universal, compiler-independent signal is
  * the printf FORMAT-STRING calling convention: a function repeatedly called with a

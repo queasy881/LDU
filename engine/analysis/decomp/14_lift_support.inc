@@ -589,6 +589,31 @@
              {"PROCESS_TERMINATE","PROCESS_CREATE_THREAD","PROCESS_VM_OPERATION","PROCESS_VM_READ",
               "PROCESS_VM_WRITE","PROCESS_QUERY_INFORMATION","SYNCHRONIZE",0},
              {0x1,0x2,0x8,0x10,0x20,0x400,0x100000,0}},
+            /* VirtualAllocEx(hProcess, lpAddress, dwSize, flAllocationType, flProtect) */
+            {"VirtualAllocEx", 3, CK_FLAGS,
+             {"MEM_COMMIT","MEM_RESERVE","MEM_DECOMMIT","MEM_RELEASE","MEM_RESET","MEM_TOP_DOWN",0},
+             {0x1000,0x2000,0x4000,0x8000,0x80000,0x100000,0}},
+            {"VirtualAllocEx", 4, CK_FLAGS,
+             {"PAGE_NOACCESS","PAGE_READONLY","PAGE_READWRITE","PAGE_WRITECOPY","PAGE_EXECUTE",
+              "PAGE_EXECUTE_READ","PAGE_EXECUTE_READWRITE","PAGE_EXECUTE_WRITECOPY","PAGE_GUARD",0},
+             {0x01,0x02,0x04,0x08,0x10,0x20,0x40,0x80,0x100,0}},
+            /* MessageBox(hWnd, lpText, lpCaption, uType) */
+            {"MessageBox", 3, CK_FLAGS,
+             {"MB_OKCANCEL","MB_ABORTRETRYIGNORE","MB_YESNOCANCEL","MB_YESNO","MB_RETRYCANCEL",
+              "MB_ICONHAND","MB_ICONQUESTION","MB_ICONEXCLAMATION","MB_ICONASTERISK",0},
+             {0x1,0x2,0x3,0x4,0x5,0x10,0x20,0x30,0x40,0}},
+            /* MapViewOfFile(hMap, dwDesiredAccess, ..) */
+            {"MapViewOfFile", 1, CK_FLAGS,
+             {"FILE_MAP_COPY","FILE_MAP_WRITE","FILE_MAP_READ","FILE_MAP_EXECUTE",0},
+             {0x1,0x2,0x4,0x20,0}},
+            /* CreateThread(lpSA, dwStackSize, lpStart, lpParam, dwCreationFlags, lpThreadId) */
+            {"CreateThread", 4, CK_FLAGS, {"CREATE_SUSPENDED","STACK_SIZE_PARAM_IS_A_RESERVATION",0},
+             {0x4,0x10000,0}},
+            /* RegOpenKeyEx(hKey, lpSubKey, ulOptions, samDesired, phkResult) */
+            {"RegOpenKeyEx", 3, CK_FLAGS,
+             {"KEY_QUERY_VALUE","KEY_SET_VALUE","KEY_CREATE_SUB_KEY","KEY_ENUMERATE_SUB_KEYS",
+              "KEY_NOTIFY","KEY_WOW64_64KEY","KEY_WOW64_32KEY",0},
+             {0x1,0x2,0x4,0x8,0x10,0x100,0x200,0}},
             {0,0,0,{0},{0}},
         };
         for (const ApiConst* p = T; p->api; ++p)

@@ -250,6 +250,15 @@
             {"_strdup","str"},             {"strdup","str"},
             {"_wcsdup","str"},             {"wcsdup","str"},
             {"getenv","env"},              {"_wgetenv","env"},
+            /* sockets / services / mapping / GDI / COM — same return-role contract */
+            {"socket","sock"},             {"WSASocket","sock"},           {"accept","hClient"},
+            {"CreateFileMapping","hMapping"}, {"OpenFileMapping","hMapping"},
+            {"OpenService","hService"},    {"CreateService","hService"},   {"OpenSCManager","hSCM"},
+            {"GetDlgItem","hCtrl"},        {"GetWindow","hWndOther"},      {"GetParent","hParent"},
+            {"CreateCompatibleDC","hdc"},  {"CreateCompatibleBitmap","hBmp"}, {"CreateSolidBrush","hBrush"},
+            {"LoadIcon","hIcon"},          {"LoadCursor","hCursor"},       {"SysAllocString","bstr"},
+            {"OpenProcessToken","hToken"}, {"OpenThreadToken","hToken"},
+            {"RegOpenKey","hKey"},         {"RegCreateKey","hKey"},        {"RegOpenKeyEx","hKey"},
         };
         for (auto& b : blocks) {
             for (auto& s : b.stmts) {
@@ -296,6 +305,16 @@
                 {"printf",0,"fmt"},  {"wprintf",0,"fmt"},
                 {"fprintf",1,"fmt"}, {"sprintf",1,"fmt"}, {"fwprintf",1,"fmt"},
                 {"snprintf",3,"fmt"},{"_snprintf",3,"fmt"},
+                {"wcscmp",0,"Str1"}, {"wcscmp",1,"Str2"}, {"wcscat",0,"Dst"}, {"wcscat",1,"Src"},
+                {"wcsncpy",0,"Dst"}, {"wcsncpy",1,"Src"}, {"wcsncpy",2,"Size"},
+                {"fwrite",0,"Buf"},  {"fwrite",3,"Stream"}, {"fread",0,"Buf"}, {"fread",3,"Stream"},
+                {"qsort",0,"Base"},  {"qsort",1,"Num"},   {"qsort",2,"Size"},
+                {"VirtualAlloc",0,"Addr"},  {"VirtualAlloc",1,"Size"},
+                {"VirtualProtect",0,"Addr"},{"VirtualProtect",1,"Size"},
+                {"ReadProcessMemory",1,"Addr"}, {"ReadProcessMemory",2,"Buf"}, {"ReadProcessMemory",3,"Size"},
+                {"WriteProcessMemory",1,"Addr"},{"WriteProcessMemory",2,"Buf"},{"WriteProcessMemory",3,"Size"},
+                {"CreateThread",2,"StartAddr"}, {"CreateThread",3,"Param"},
+                {"send",1,"Buf"},    {"send",2,"Len"},    {"recv",1,"Buf"},   {"recv",2,"Len"},
             };
             std::function<void(const ExprP&)> scan = [&](const ExprP& e) {
                 if (!e) return;
