@@ -413,7 +413,24 @@
                     std::vector<Stmt> hoists;
                     ExprP nr = cse_expr(s.rhs, hoists);
                     for (auto& h : hoists) out.push_back(std::move(h));
-                    Stmt ns = s; ns.rhs = nr; out.push_back(std::move(ns));
+                    Stmt ns = s; ns.rhs = nr;
+                    /* Drop a store byte-identical to the immediately-preceding one:
+                     * MSVC re-emits the same aggregate/field copy twice (a movdqu-
+                     * lowered pair copied through overlapping slots), the second write
+                     * being a provable no-op. Guarded HARD: assign-only (never a bare
+                     * call side effect), pure (no call in lhs/rhs), and the lhs must
+                     * NOT occur in the rhs so a self-update `x = x + 1; x = x + 1;`
+                     * (or a store read back through its own address) is never
+                     * collapsed. Runtime aliasing is safe: copying a value onto its
+                     * own storage twice is idempotent. */
+                    if (s.kind == SK::Assign && ns.lhs && ns.rhs && !out.empty() &&
+                        out.back().kind == SK::Assign && out.back().lhs && out.back().rhs &&
+                        exprEqual(out.back().lhs, ns.lhs) && exprEqual(out.back().rhs, ns.rhs) &&
+                        !has_call(ns.lhs) && !has_call(ns.rhs) &&
+                        count_occ(ns.rhs, ns.lhs) == 0) {
+                        continue;   /* redundant duplicate store */
+                    }
+                    out.push_back(std::move(ns));
                 } else out.push_back(s);
             }
             if (b.cond)       { std::vector<Stmt> h; b.cond       = cse_expr(b.cond, h);       for (auto& x : h) out.push_back(std::move(x)); }
@@ -496,6 +513,56 @@
         if (e->kind == EK::Binary && (e->op == "/" || e->op == "%")) return true;
         return has_div(e->a) || has_div(e->b) || has_div(e->c);
     }
+    /* Structural key for CSE occurrence-counting. Built so that
+     *     cse_key(a) == cse_key(b)   <=>   exprEqual(a, b)
+     * for every expr kind (impure calls get a per-NODE unique key, mirroring that
+     * exprEqual never treats a real call as equal to anything). Memoized per node,
+     * so populating the whole occurrence table is LINEAR in the tree size — the
+     * previous cse_global did an O(candidates^2) pairwise exprEqual dedup plus an
+     * O(candidates * statements) re-scan every iteration (measured 29.5 s on a
+     * 774-block function). Output is byte-identical; only the bookkeeping changed. */
+    void cse_key(const ExprP& e, std::string& out,
+                 std::unordered_map<const Expr*, std::string>& memo) {
+        if (!e) { out += '#'; return; }
+        auto it = memo.find(e.get());
+        if (it != memo.end()) { out += it->second; return; }
+        std::string k;
+        switch (e->kind) {
+            case EK::Const: k = "C" + std::to_string((long long)e->cval) + ";"; break;
+            case EK::Reg:   k = "R" + std::to_string((int)e->reg) + ";"; break;
+            case EK::Var:   k = "V" + e->name + ";"; break;
+            case EK::Str:   k = "S" + e->text + ";"; break;
+            case EK::Mem:   { std::string a; cse_key(e->a, a, memo); k = "M" + std::to_string(e->width) + "(" + a + ")"; break; }
+            case EK::Unary: { std::string a; cse_key(e->a, a, memo); k = "U" + e->op + "(" + a + ")"; break; }
+            case EK::Cast:  { std::string a; cse_key(e->a, a, memo); k = "K" + e->op + "(" + a + ")"; break; }
+            case EK::AddrOf:{ std::string a; cse_key(e->a, a, memo); k = "A(" + a + ")"; break; }
+            case EK::Binary:{ std::string a, b; cse_key(e->a, a, memo); cse_key(e->b, b, memo); k = "B" + e->op + "(" + a + "," + b + ")"; break; }
+            case EK::Ternary:{ std::string a, b, c; cse_key(e->a, a, memo); cse_key(e->b, b, memo); cse_key(e->c, c, memo); k = "T(" + a + "," + b + "," + c + ")"; break; }
+            case EK::Call:
+                if (e->callee.rfind("__", 0) == 0 && !e->indirect) {   /* pure intrinsic: value-equal, like exprEqual */
+                    k = "P" + e->callee + "(";
+                    for (auto& ar : e->args) { std::string a; cse_key(ar, a, memo); k += a; k += ","; }
+                    k += ")";
+                } else {                                               /* impure call: never merges -> unique key */
+                    char buf[24]; std::snprintf(buf, sizeof buf, "Q%p", (void*)e.get()); k = buf;
+                }
+                break;
+            default: k = "?"; break;
+        }
+        out += k;
+        memo.emplace(e.get(), std::move(k));
+    }
+    /* Recurse every subtree POSITION (so a value used N times counts N — matching
+     * count_occ's DAG-expanded semantics), tallying count + block-set by key. */
+    void cse_hash(const ExprP& e, int blk,
+                  std::unordered_map<std::string, std::pair<int, std::set<int>>>& occ,
+                  std::unordered_map<const Expr*, std::string>& memo) {
+        if (!e) return;
+        std::string k; cse_key(e, k, memo);
+        auto& slot = occ[k]; slot.first++; slot.second.insert(blk);
+        cse_hash(e->a, blk, occ, memo); cse_hash(e->b, blk, occ, memo); cse_hash(e->c, blk, occ, memo);
+        for (auto& ar : e->args) cse_hash(ar, blk, occ, memo);
+    }
     /* GLOBAL (cross-block) CSE / materialization. Hex-Rays' readability comes from
      * propagation that REFUSES to duplicate a multi-use value — so a value used >=2
      * times survives as ONE named temp. Here: a PURE (no memory, no call) arithmetic
@@ -505,25 +572,28 @@
      * any propagation-duplicated multi-use value into one definition. */
     void cse_global() {
         for (int iter = 0; iter < 60; ++iter) {
+            /* One linear pass: collect candidate subexprs (in the SAME order as
+             * before, so the count/size tie-break is unchanged) AND tally every
+             * subexpr's occurrence count + block-set by structural key. */
             std::vector<ExprP> cand;
+            std::unordered_map<std::string, std::pair<int, std::set<int>>> occ;
+            std::unordered_map<const Expr*, std::string> memo;
             for (auto& b : blocks) {
-                for (auto& s : b.stmts) if (s.kind==SK::Assign) { collect_subs(s.rhs, cand); collect_subs(s.lhs, cand); }
-                collect_subs(b.cond, cand); collect_subs(b.ret_value, cand); collect_subs(b.switch_var, cand);
+                auto scan = [&](const ExprP& e) { if (e) { collect_subs(e, cand); cse_hash(e, b.id, occ, memo); } };
+                for (auto& s : b.stmts) if (s.kind==SK::Assign) { scan(s.rhs); scan(s.lhs); }
+                scan(b.cond); scan(b.ret_value); scan(b.switch_var);
             }
             ExprP best=nullptr; int bestcnt=0, bestsz=0, bestD=-1; std::set<int> bestUses;
-            std::vector<ExprP> seen;
+            std::unordered_set<std::string> seen;
             for (auto& sub : cand) {
                 int sz = node_count(sub);
                 if (sz < 4 || sz > 400 || has_call(sub) || reads_mem(sub) || has_div(sub)) continue;
-                bool dup=false; for (auto& s2:seen) if (exprEqual(s2,sub)){dup=true;break;}
-                if (dup) continue; seen.push_back(sub);
-                std::set<int> ublocks; int cnt=0;
-                for (auto& b : blocks) {
-                    int c=0;
-                    for (auto& s : b.stmts) if (s.kind==SK::Assign) c += count_occ(s.rhs,sub)+count_occ(s.lhs,sub);
-                    c += count_occ(b.cond,sub)+count_occ(b.ret_value,sub)+count_occ(b.switch_var,sub);
-                    if (c>0) { ublocks.insert(b.id); cnt+=c; }
-                }
+                std::string k; cse_key(sub, k, memo);
+                if (!seen.insert(k).second) continue;          /* dedup: O(1) key hash */
+                auto oit = occ.find(k);
+                if (oit == occ.end()) continue;
+                int cnt = oit->second.first;
+                const std::set<int>& ublocks = oit->second.second;
                 if (cnt < 2 || ublocks.size() < 2) continue;   /* single-block: cse_cross_statement */
                 int D = -1; for (int ub : ublocks) { D = common_dom(D, ub); if (D < 0) break; }
                 if (D < 0 || (size_t)D >= blocks.size()) continue;

@@ -8,26 +8,24 @@
   <link rel="stylesheet" href="css/project.css" />
 </head>
 <body>
-  <div id="project">
-    <header class="pj-bar">
-      <div class="pj-head">
-        <div class="eyebrow">Project</div>
-        <h1 id="pj-name" class="pj-name">&mdash;</h1>
+  <div class="project">
+    <header class="pj-head">
+      <div class="pj-title-wrap">
+        <div class="pj-eyebrow">Project</div>
+        <h1 id="pj-name" class="pj-name">—</h1>
       </div>
-      <button id="pj-add" class="btn btn-primary">+&nbsp; Analyze New Binary</button>
+      <button id="pj-add" class="btn btn-primary">Add binary…</button>
     </header>
 
     <div id="pj-error" class="pj-error" hidden></div>
 
     <main class="pj-body">
       <div class="pj-list-head">
-        <span class="eyebrow">Binaries</span>
-        <span id="bin-count" class="pane-count"></span>
+        <span class="pj-list-label">Binaries</span>
+        <span id="bin-count" class="muted"></span>
       </div>
       <div id="bin-list" class="bin-list"></div>
-      <div id="bin-empty" class="empty-state" hidden>
-        No binaries yet.<br />Add an <b>EXE</b>, <b>DLL</b>, or <b>SYS</b> to disassemble.
-      </div>
+      <div id="bin-empty" class="empty" hidden>No binaries yet. Add an EXE, DLL, or SYS to disassemble.</div>
     </main>
   </div>
 

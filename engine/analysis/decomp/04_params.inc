@@ -521,7 +521,13 @@
                                 (uint64_t)disp < e->image_size && in_data_rva((uint64_t)disp);
             if (static_array && (base_zero || base_backstop)) {
                 addr = nullptr;   /* base = module base 0 */
-            } else if (base_zero || base_pagezero) {
+            } else if ((base_zero || base_pagezero) && index == R_NONE) {
+                /* GUARD: a small-constant/zero base is a LOST pointer only when it is the
+                 * WHOLE address. With an INDEX register present, `[const + reg]` is a real
+                 * pointer `reg` plus a displacement `const` — `movss [rcx+rax],xmm` after
+                 * `mov ecx,4` is the store `a9[1]` (rax=a9 the pointer, 4 the byte offset).
+                 * Backstopping the const base there mis-sent struct-field stores to the
+                 * wrong pointer (`*(a1+a9)`, `*(a9+a3)`); keep the const as the displacement. */
                 /* SECOND HALF OF THE NULL-BASE INVARIANT. A base register whose tracked
                  * value collapsed to literal 0 is a LOST pointer — a loop-carried object
                  * pointer the phi never materialized, a value folded away across a merge

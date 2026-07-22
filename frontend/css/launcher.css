@@ -1,69 +1,42 @@
 /* ============================================================================
-   launcher.css — the welcome window. Centered, calm, monochrome.
-   ========================================================================== */
-
-#launcher {
-  height: 100vh; width: 100vw;
-  display: flex; align-items: center; justify-content: center;
-  padding: 40px;
-  background:
-    radial-gradient(120% 80% at 50% -10%, rgba(255,255,255,0.04), transparent 60%),
-    var(--bg);
+   launcher.css — minimal. Centered column, plain list of recent projects.
+   ============================================================================ */
+.launcher {
+  max-width: 560px;
+  margin: 0 auto;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 40px 28px;
+  gap: 22px;
 }
 
-.lc-inner { width: 100%; max-width: 480px; }
+.lc-head { display: flex; flex-direction: column; gap: 4px; }
+.lc-title { font-size: 22px; font-weight: 650; letter-spacing: -.01em; }
+.lc-sub { font-size: 13px; color: var(--ink-3); }
 
-.btn-lg { padding: 11px 20px; font-size: 13.5px; }
+.lc-actions { display: flex; gap: 10px; }
+.lc-actions .btn { min-width: 140px; }
 
-/* ---- brand ---- */
-.lc-brand { text-align: center; margin-bottom: 34px; }
-.lc-kicker {
-  font-size: 11px; letter-spacing: 0.34em; text-transform: uppercase;
-  color: var(--fg-3); margin-bottom: 12px;
-}
-.lc-logo {
-  font-size: 38px; font-weight: 700; letter-spacing: -0.02em; line-height: 1;
-  color: var(--fg);
-}
+.lc-form { display: flex; gap: 8px; align-items: center; }
+.lc-form .field { flex: 1; }
+.lc-error { color: var(--danger); font-size: 12.5px; }
 
-/* ---- primary actions ---- */
-.lc-actions { display: flex; gap: 12px; margin-bottom: 14px; }
-.lc-actions .btn { flex: 1; justify-content: center; }
+.lc-recent { display: flex; flex-direction: column; gap: 4px; margin-top: 4px; }
+.lc-recent-head { display: flex; align-items: center; gap: 10px; padding: 0 2px 6px; border-bottom: 1px solid var(--line); }
+.lc-recent-label { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); }
+.lc-recent-count { font-size: 11px; color: var(--ink-4); }
+.lc-reload { margin-left: auto; }
 
-/* ---- inline new-project form ---- */
-.lc-newform { display: flex; gap: 8px; margin-bottom: 8px; align-items: center; }
-.lc-newform .input { flex: 1; }
-.lc-error {
-  border: 1px solid var(--fg); color: var(--fg);
-  font-size: 12px; padding: 7px 11px; border-radius: var(--radius); margin-bottom: 8px;
+.lc-list { display: flex; flex-direction: column; max-height: 40vh; overflow-y: auto; }
+.rp {
+  display: flex; align-items: baseline; gap: 12px; width: 100%; text-align: left;
+  background: transparent; border: 0; border-radius: 6px; padding: 9px 8px; color: var(--ink);
 }
-
-/* ---- recent projects ---- */
-.lc-recent { margin-top: 26px; }
-.lc-recent-head {
-  display: flex; align-items: center; justify-content: space-between;
-  padding-bottom: 10px; margin-bottom: 4px; border-bottom: 1px solid var(--border);
-}
-.lc-list { max-height: 38vh; overflow-y: auto; }
-
-.lc-item {
-  display: flex; align-items: center; gap: 12px;
-  padding: 11px 12px; cursor: pointer;
-  border: 1px solid transparent; border-radius: var(--radius);
-}
-.lc-item:hover { background: var(--hover); border-color: var(--border); }
-.lc-item .lc-main { min-width: 0; flex: 1; }
-.lc-item .lc-name { color: var(--fg); font-size: 13px; font-weight: 500; }
-.lc-item .lc-path {
-  color: var(--fg-3); font-family: var(--font-mono); font-size: 11px;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 2px;
-}
-.lc-item .lc-count { flex: 0 0 auto; }
-.lc-item:hover .lc-go { opacity: 1; }
-.lc-item .lc-go { opacity: 0; color: var(--fg-2); font-family: var(--font-mono); transition: opacity .12s; }
-
-/* ---- footer ---- */
-.lc-foot {
-  text-align: center; margin-top: 30px;
-  color: var(--fg-4); font-size: 11px; letter-spacing: 0.04em;
-}
+.rp:hover { background: var(--surface); }
+.rp-idx { display: none; }
+.rp-name { font-size: 13.5px; color: var(--ink); flex: none; }
+.rp-path { flex: 1; min-width: 0; color: var(--ink-3); font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-family: var(--mono); }
+.rp-count { color: var(--ink-4); font-size: 11px; white-space: nowrap; }
+.rp-go { display: none; }

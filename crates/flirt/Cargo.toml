@@ -1,0 +1,24 @@
+[package]
+name = "flirt"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# A from-scratch FLIRT-style library-function identifier: it reads static libs
+# (COFF `.lib` / GNU `.a` archives), extracts relocation-masked byte signatures
+# per function, and matches them against a binary's unnamed functions so CRT/STL
+# library code gets named (printf, std::basic_ostream<char>::operator<<, ...).
+[lib]
+name = "flirt"
+path = "src/lib.rs"
+
+# CLI: `flirtgen <out.fdb> <lib1> <lib2> ...` builds a signature database.
+[[bin]]
+name = "flirtgen"
+path = "src/bin/flirtgen.rs"
+
+[dependencies]
+
+[[bin]]
+name = "flirtmatch"
+path = "src/bin/flirtmatch.rs"

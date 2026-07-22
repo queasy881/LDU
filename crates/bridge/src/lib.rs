@@ -111,6 +111,15 @@ pub struct Engine {
 // `&mut`/`&` discipline owned by the shell's `Mutex`, so this is sound.
 unsafe impl Send for Engine {}
 
+// `Sync` — concurrent `&Engine` decompilation is sound. `ds_decompile(e, rva)`
+// constructs a FRESH `Decompiler` per call, reads a const engine (image + funcs),
+// and shares only per-engine caches (sig table, PE tables, demangle map) that are
+// each `std::mutex`-guarded (see decompiler.cpp: "the dump tool decompiles across
+// N threads"). It never mutates the engine, so many threads may hold `&Engine` and
+// call `decompile()` at once. Only `&self` methods are safe to call concurrently;
+// the `&mut self` builders are still statically excluded by the borrow checker.
+unsafe impl Sync for Engine {}
+
 // ---- helpers ---------------------------------------------------------------
 
 /// Read a fixed `char[N]` field (possibly un-terminated if it fills the array)

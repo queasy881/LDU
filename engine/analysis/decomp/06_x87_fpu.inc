@@ -80,6 +80,19 @@
      * ops on the bit pattern (vec2_add/len/make). Cleared per block. */
     std::map<Reg, std::string> xmm_packed_var;      /* xmm holds packed bytes of GP var */
     std::map<int64_t, std::string> stack_packed_var; /* stack slot (norm) holds packed bytes of GP var */
+    /* the memory address a WIDE (ymm/zmm) vector reg was loaded from, so a memcpy
+     * (`vmovdqu ymm,[src]; vmovdqu [dst],ymm`) becomes a real chunked copy instead of
+     * a dropped store. Erased the instant anything else writes the reg (no stale value).
+     * Cleared per block. */
+    std::map<Reg, ExprP> vec_load_addr;
+    /* the VALUE a WIDE vector reg was filled with by a broadcast/zero/all-ones idiom,
+     * so a `vmovdqu [dst],ymm` of it becomes a real `memset`/element fill instead of a
+     * dropped store. `val` is the per-element fill value (a Const for zero/ones/imm, or
+     * a resolved scalar for a runtime broadcast); `esz` is the element size in bytes
+     * (1=byte -> memset). Erased the instant anything else writes the reg. Cleared per
+     * block; carried across block edges (see entry_vfill) only when all preds agree. */
+    struct VecFill { ExprP val; int esz = 0; };
+    std::map<Reg, VecFill> vec_fill;
     std::map<int64_t, int> float_slots;              /* stack slot (norm) last written by movss/movsd -> float width (bit-reinterpret on int read) */
     std::map<int64_t, int> int_slots;                /* stack slot (norm) last written by a GP integer store -> width (bit-reinterpret on movss/movsd load = int->float, the u2f/u2d direction) */
     /* Every GP store to a stack slot, for stack-string recovery (recover_stack_strings).

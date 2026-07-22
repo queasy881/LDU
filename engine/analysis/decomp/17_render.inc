@@ -289,11 +289,28 @@
          * `(char*)(a2-a1) + t3` == char* + pointer (C2110). Pick the pointer as the
          * base and keep the offset integer. */
         if (e->kind == EK::Binary && (e->op == "+" || e->op == "-")) {
+            /* Flatten a chained byte displacement `(p + c1) + c2` -> `p + (c1+c2)`: a temp
+             * `rsi = a1 + 8` then a store `[rsi + 8]` otherwise renders the nested
+             * `(char*)((char*)a1 + 8) + 8` instead of `(char*)a1 + 0x10`. Guarded to a
+             * pointer base plus two integer constants (value-identical byte arithmetic). */
+            if (e->op == "+" && e->b && e->b->kind == EK::Const && !e->b->is_float &&
+                e->a && e->a->kind == EK::Binary && e->a->op == "+" &&
+                e->a->b && e->a->b->kind == EK::Const && !e->a->b->is_float && e->a->a &&
+                (e->a->a->kind == EK::AddrOf || expr_is_pointer(e->a->a) ||
+                 is_struct_ptr_field(e->a->a))) {
+                ExprP folded = mkBinary("+", clone(e->a->a),
+                                        mkConst(e->a->b->cval + e->b->cval, 8), 8);
+                return render_addr(folded);
+            }
             /* a retyped `struct T*` field counts as a pointer here (else `(char*)idx +
              * a2->field_90` = char* + struct* = C2110); pick it as the base / cast it as
              * an integer offset like any other pointer. */
             auto is_ptr = [&](const ExprP& x) -> bool {
-                return expr_is_pointer(x) || is_struct_ptr_field(x);
+                /* `&field` is a TYPED pointer that scales `+ off`, so it must be the
+                 * char*-cast base — without this it fell through to the wide64 escape
+                 * (an AddrOf is 8 bytes wide) and emitted `&field_10 + 8`, which scales
+                 * by sizeof(field) (e.g. +64 bytes) instead of the +8 BYTES the lea did. */
+                return x && (x->kind == EK::AddrOf || expr_is_pointer(x) || is_struct_ptr_field(x));
             };
             ExprP base = e->a, off = e->b;
             if (e->op == "+" && is_ptr(off) && !is_ptr(base))

@@ -22,6 +22,11 @@ const LAUNCHER_CSS: &str = include_str!("../../../frontend/css/launcher.css");
 const PROJECT_CSS: &str = include_str!("../../../frontend/css/project.css");
 const DISASM_CSS: &str = include_str!("../../../frontend/css/disasm.css");
 
+// Embedded fonts so the app renders in Cascadia Mono/Code regardless of whether
+// the webview resolves the installed system font by name.
+const FONT_CASCADIA_MONO: &[u8] = include_bytes!("../../../frontend/fonts/CascadiaMono.ttf");
+const FONT_CASCADIA_CODE: &[u8] = include_bytes!("../../../frontend/fonts/CascadiaCode.ttf");
+
 const JS_IPC: &str = include_str!("../../../frontend/js/ipc.js");
 const JS_UTIL: &str = include_str!("../../../frontend/js/util.js");
 const JS_VLIST: &str = include_str!("../../../frontend/js/vlist.js");
@@ -55,6 +60,9 @@ fn lookup(path: &str) -> Option<(&'static [u8], &'static str)> {
         "js/launcher.js" => Some((JS_LAUNCHER.as_bytes(), "text/javascript")),
         "js/project.js" => Some((JS_PROJECT.as_bytes(), "text/javascript")),
         "js/disasm.js" => Some((JS_DISASM.as_bytes(), "text/javascript")),
+
+        "fonts/CascadiaMono.ttf" => Some((FONT_CASCADIA_MONO, "font/ttf")),
+        "fonts/CascadiaCode.ttf" => Some((FONT_CASCADIA_CODE, "font/ttf")),
         _ => None,
     };
     asset

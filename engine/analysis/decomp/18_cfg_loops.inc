@@ -238,6 +238,18 @@
             {"GetDC","hdc"},               {"BeginPaint","hdc"},
             {"GetLastError","dwError"},    {"GetTickCount","dwTick"},
             {"GetCurrentProcessId","dwPid"}, {"GetCurrentThreadId","dwTid"},
+            /* CRT / STL producers (named by the FLIRT pass at load time, so a
+             * statically-linked `malloc`/`fopen`/... is a real callee here). Same
+             * contract as the Win32 handles: the callee tells us what the value IS. */
+            {"malloc","buf"},              {"calloc","buf"},
+            {"realloc","buf"},             {"_aligned_malloc","buf"},
+            {"operator_new","p"},          {"operator new","p"},
+            {"fopen","fp"},                {"_wfopen","fp"},
+            {"fopen_s","fp"},              {"_fsopen","fp"},
+            {"tmpfile","fp"},              {"freopen","fp"},
+            {"_strdup","str"},             {"strdup","str"},
+            {"_wcsdup","str"},             {"wcsdup","str"},
+            {"getenv","env"},              {"_wgetenv","env"},
         };
         for (auto& b : blocks) {
             for (auto& s : b.stmts) {
@@ -257,6 +269,54 @@
                     assign(s.lhs->name, a.nm, pool);
                     break;
                 }
+            }
+        }
+        /* (d) NAME A LOCAL AFTER THE ARGUMENT SLOT IT FILLS at a well-known callee.
+         *     memcpy(v3, v8, v2)  ->  memcpy(Dst, Src, Size)
+         * The callee's contract names each parameter; spend that on the argument
+         * local's name (Hex-Rays' Dst/Src/Size/Str). Same machinery + `used` guard as
+         * (a)-(c): only a bare v<N>/t<N> local is renamed, first conventional role
+         * wins, and a collision falls to the numbered pool. Curated to slots whose
+         * role is unambiguous from the one call. DS_NO_ARGNAME. */
+        if (!std::getenv("DS_NO_ARGNAME")) {
+            struct AA { const char* api; int pos; const char* nm; };
+            static const AA AARGS[] = {
+                {"memcpy",0,"Dst"},  {"memcpy",1,"Src"},  {"memcpy",2,"Size"},
+                {"memmove",0,"Dst"}, {"memmove",1,"Src"}, {"memmove",2,"Size"},
+                {"memset",0,"Dst"},  {"memset",2,"Size"},
+                {"memcmp",0,"Buf1"}, {"memcmp",1,"Buf2"}, {"memcmp",2,"Size"},
+                {"strcpy",0,"Dst"},  {"strcpy",1,"Src"},
+                {"strncpy",0,"Dst"}, {"strncpy",1,"Src"}, {"strncpy",2,"Size"},
+                {"wcscpy",0,"Dst"},  {"wcscpy",1,"Src"},
+                {"strcat",0,"Dst"},  {"strcat",1,"Src"},
+                {"strlen",0,"Str"},  {"wcslen",0,"Str"},
+                {"strcmp",0,"Str1"}, {"strcmp",1,"Str2"},
+                {"strncmp",0,"Str1"},{"strncmp",1,"Str2"},{"strncmp",2,"Size"},
+                {"strstr",0,"Str"},  {"strchr",0,"Str"},  {"strrchr",0,"Str"},
+                {"printf",0,"fmt"},  {"wprintf",0,"fmt"},
+                {"fprintf",1,"fmt"}, {"sprintf",1,"fmt"}, {"fwprintf",1,"fmt"},
+                {"snprintf",3,"fmt"},{"_snprintf",3,"fmt"},
+            };
+            std::function<void(const ExprP&)> scan = [&](const ExprP& e) {
+                if (!e) return;
+                if (e->kind == EK::Call && !e->callee.empty()) {
+                    for (const AA& a : AARGS) {
+                        if (e->callee != a.api) continue;
+                        if (a.pos < 0 || a.pos >= (int)e->args.size()) continue;
+                        ExprP arg = e->args[a.pos];
+                        while (arg && arg->kind == EK::Cast && arg->a) arg = arg->a;
+                        if (!arg || arg->kind != EK::Var) continue;
+                        std::vector<std::string> pool;
+                        for (int k = 2; k <= 6; ++k) pool.push_back(std::string(a.nm) + std::to_string(k));
+                        assign(arg->name, a.nm, pool);
+                    }
+                }
+                scan(e->a); scan(e->b); scan(e->c);
+                for (auto& ar : e->args) scan(ar);
+            };
+            for (auto& b : blocks) {
+                for (auto& s : b.stmts) { scan(s.lhs); scan(s.rhs); }
+                scan(b.cond); scan(b.ret_value); scan(b.switch_var); scan(b.tail_call);
             }
         }
     }

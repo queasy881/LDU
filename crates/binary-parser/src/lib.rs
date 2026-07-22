@@ -48,6 +48,9 @@ pub enum Format {
 pub struct Symbol {
     pub rva: u64,
     pub name: String,
+    /// Owning module for an import (the DLL it is resolved from), e.g.
+    /// `"USER32.dll"`. `None` for exports and for imports with no known module.
+    pub module: Option<String>,
 }
 
 /// A loadable region of the image. `flags` uses R=1, W=2, X=4.

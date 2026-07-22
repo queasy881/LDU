@@ -7,95 +7,172 @@
   <link rel="stylesheet" href="css/main.css" />
   <link rel="stylesheet" href="css/disasm.css" />
 </head>
-<body>
-  <div id="ws">
+<body class="theme-slate">
+  <div id="ide">
 
     <!-- toolbar -->
-    <header id="ws-bar">
-      <button id="ws-back" class="btn-icon" title="Back  (Alt+Left)">&larr;</button>
-      <button id="ws-goto" class="btn btn-sm btn-ghost" title="Goto address  (g)">goto</button>
-      <button id="ws-decompile" class="btn btn-sm btn-ghost" title="Decompile current function  (F5)">decompile</button>
-      <span id="ws-loc" class="mono"></span>
-      <span class="ws-grow"></span>
-      <span id="ws-meta" class="mono"></span>
-      <button id="ws-help" class="btn-icon" title="Keyboard shortcuts  (?)">?</button>
+    <header id="toolbar">
+      <div class="tb-row tb-main">
+        <div class="tb-left">
+          <div class="tb-brand">DISASM<b>STUDIO</b></div>
+          <div class="tb-sep"></div>
+          <button id="tb-back" class="tb-icon" title="Back">←</button>
+          <button id="tb-fwd" class="tb-icon" title="Forward">→</button>
+          <div id="tb-loc" class="tb-loc mono"><span class="loc-fn">—</span></div>
+        </div>
+        <div class="tb-right">
+          <div id="tb-meta" class="tb-meta"></div>
+          <button id="tb-goto" class="tb-btn" title="Go to address / symbol  (G)"><span class="tb-btn-k mono">G</span>goto</button>
+          <button id="tb-decompile" class="tb-btn tb-btn-accent" title="Decompile  (F5)"><span class="tb-btn-k mono">F5</span>decompile</button>
+          <button id="tb-cmd" class="tb-btn" title="Command palette  (Ctrl+K)"><span class="tb-btn-k mono">Ctrl K</span>commands</button>
+        </div>
+      </div>
     </header>
 
-    <!-- body: sidebar + listing -->
-    <div id="ws-body">
-      <aside id="ws-side">
-        <div id="side-tabs" class="side-tabs">
-          <button class="side-tab active" data-tab="functions">Funcs</button>
-          <button class="side-tab" data-tab="imports">Imports</button>
-          <button class="side-tab" data-tab="exports">Exports</button>
-          <button class="side-tab" data-tab="strings">Strings</button>
-          <button class="side-tab" data-tab="segments">Segs</button>
+    <div id="workarea">
+      <!-- activity rail: F I E S M, vertically centered -->
+      <nav id="activity">
+        <span class="grow"></span>
+        <button class="act on" data-panel="functions" title="Functions"><span class="act-g">F</span></button>
+        <button class="act" data-panel="imports" title="Imports"><span class="act-g">I</span></button>
+        <button class="act" data-panel="exports" title="Exports"><span class="act-g">E</span></button>
+        <button class="act" data-panel="strings" title="Strings"><span class="act-g">S</span></button>
+        <button class="act" data-panel="segments" title="Segments"><span class="act-g">M</span></button>
+        <span class="grow"></span>
+      </nav>
+
+      <!-- navigator panel -->
+      <aside id="panel">
+        <div class="panel-head">
+          <span id="panel-title" class="panel-title">FUNCTIONS</span>
+          <span id="panel-count" class="panel-count mono"></span>
         </div>
-        <div class="side-filter">
-          <input id="fn-filter" class="input" type="text" spellcheck="false"
-                 autocomplete="off" placeholder="filter   /" />
-          <span id="side-count" class="side-count"></span>
+        <div class="panel-search">
+          <input id="panel-filter" class="panel-input mono" type="text" spellcheck="false" autocomplete="off" placeholder="filter  /" />
         </div>
-        <div id="side-list" class="side-list"></div>
+        <div id="panel-list" class="panel-list"></div>
       </aside>
 
-      <main id="ws-main">
-        <div id="disasm-view"></div>
-        <div id="decomp-resizer" title="Drag to resize" hidden></div>
-        <aside id="decomp-overlay" hidden>
-          <div class="decomp-head">
-            <span class="eyebrow">Pseudocode</span>
-            <span id="decomp-title" class="mono"></span>
-            <span class="ws-grow"></span>
-            <span id="decomp-live" class="decomp-live" title="Live: follows the selected function">live</span>
-            <button id="decomp-copy" class="btn btn-sm btn-ghost" title="Copy">copy</button>
-            <button id="decomp-close" class="btn-icon" title="Close (Esc / F5)">&#10005;</button>
-          </div>
-          <pre id="decomp-code" class="decomp-code"></pre>
-        </aside>
+      <!-- drag handle: navigator | listing -->
+      <div class="rz" id="rz-panel" title="Drag to resize"></div>
+
+      <!-- assembly listing + jump map -->
+      <main id="center">
+        <div id="listing" class="listing"></div>
+        <canvas id="jumpmap" class="jumpmap" title="Overview — click to navigate"></canvas>
       </main>
+
+      <!-- drag handle: listing | inspector -->
+      <div class="rz" id="rz-insp" title="Drag to resize"></div>
+
+      <!-- right inspector dock -->
+      <section id="inspector">
+        <div class="insp-tabs" id="insp-tabs">
+          <button class="insp-tab on" data-view="decompile">Decompile</button>
+          <button class="insp-tab" data-view="graph">Graph</button>
+          <button class="insp-tab" data-view="offsets">Offsets</button>
+          <button class="insp-tab" data-view="hex">Hex</button>
+          <button class="insp-tab" data-view="xrefs">Xrefs</button>
+          <span class="grow"></span>
+          <button id="insp-toggle" class="insp-x" title="Collapse inspector">›</button>
+        </div>
+        <div id="insp-sub" class="insp-sub mono">— no function selected —</div>
+
+        <div class="insp-body">
+          <div id="view-decompile" class="insp-view">
+            <div class="decomp-bar">
+              <div id="sm-seg" class="seg" title="Show goto labels, or rewrite them away as a while(1)/switch state machine">
+                <button class="seg-btn on" data-sm="0">With labels</button>
+                <button class="seg-btn" data-sm="1">Without labels</button>
+              </div>
+              <span class="grow"></span>
+              <button id="dc-fdec" class="chip chip-ico" title="Smaller text">A−</button>
+              <button id="dc-finc" class="chip chip-ico" title="Larger text">A+</button>
+              <button id="decomp-live" class="chip on" title="Live: follow the selected function">live</button>
+              <button id="decomp-copy" class="chip" title="Copy">copy</button>
+            </div>
+            <div id="decomp-meta" class="decomp-meta mono"></div>
+            <pre id="decomp-code" class="decomp-code"></pre>
+          </div>
+
+          <div id="view-graph" class="insp-view hide">
+            <div class="graph-tools">
+              <div class="seg" id="graph-dir">
+                <button class="seg-btn on" data-dir="callees">callees ▸</button>
+                <button class="seg-btn" data-dir="callers">◂ callers</button>
+              </div>
+            </div>
+            <div id="graph-host" class="graph-host"></div>
+          </div>
+
+          <div id="view-offsets" class="insp-view hide">
+            <div id="offsets-host" class="offsets-host"></div>
+          </div>
+
+          <div id="view-hex" class="insp-view hide">
+            <div id="hex-head" class="hex-head mono"></div>
+            <div id="hex-host" class="hex-host mono"></div>
+          </div>
+
+          <div id="view-xrefs" class="insp-view hide">
+            <div id="xrefs-host" class="xrefs-host"></div>
+          </div>
+        </div>
+      </section>
     </div>
 
-    <!-- cross-references bar -->
-    <div id="xref-bar" class="collapsed">
-      <div id="xref-head">
-        <span id="xref-tog">&#9652;</span>
-        <span class="xref-label">Cross-references</span>
-        <span id="xref-to" class="mono"></span>
-        <span id="xref-count" class="pane-count"></span>
-      </div>
-      <div id="xref-chips"></div>
-    </div>
-
+    <!-- bottom status bar -->
+    <footer id="statusbar" class="statusbar mono">
+      <span id="sb-name" class="sb-name">—</span>
+      <span class="sb-sep">·</span>
+      <span id="sb-rva" class="sb-rva">—</span>
+      <span class="sb-sep">·</span>
+      <span id="sb-size" class="sb-size">—</span>
+      <span class="grow"></span>
+      <span id="sb-hint" class="sb-hint">Ctrl F search · G goto · F5 decompile</span>
+    </footer>
   </div>
 
-  <!-- analysis progress overlay (covers everything until analysis_done) -->
-  <div id="analysis-overlay">
-    <div class="an-box">
-      <div id="an-target" class="an-target mono"></div>
-      <div id="an-running">
-        <div id="analysis-stage" class="an-stage">Preparing&hellip;</div>
-        <div class="an-track"><div id="analysis-bar" class="an-bar"></div></div>
-        <div class="an-foot">
-          <span id="analysis-pct" class="mono">0%</span>
-          <button id="analysis-cancel" class="btn btn-sm">Cancel</button>
-        </div>
+  <!-- global search modal -->
+  <div id="search" class="search-scrim" hidden>
+    <div class="search-box">
+      <div class="search-head">
+        <span class="search-glyph mono">⌕</span>
+        <input id="search-input" class="search-input" placeholder="Search everything — functions, strings, imports, exports…" spellcheck="false" autocomplete="off" />
+        <span class="kbd">esc</span>
       </div>
-      <div id="analysis-error" hidden>
-        <div class="an-err-label">Analysis failed</div>
-        <div id="analysis-error-msg" class="an-err-msg mono"></div>
-        <div class="an-foot">
-          <button id="analysis-retry" class="btn btn-sm btn-primary">Retry</button>
-        </div>
-      </div>
+      <div id="search-results" class="search-results"></div>
     </div>
   </div>
 
-  <!-- shortcuts help -->
-  <div id="help-overlay" class="overlay" hidden>
-    <div class="modal">
-      <div class="modal-head">Keyboard Shortcuts</div>
-      <div class="modal-body" id="help-grid"></div>
+  <!-- goto modal -->
+  <div id="goto" class="goto-scrim" hidden>
+    <form id="goto-form" class="goto-box">
+      <span class="goto-ps mono">goto&nbsp;»</span>
+      <input id="goto-input" class="goto-input mono" placeholder="0x1400013a0  or  symbol name" spellcheck="false" autocomplete="off" />
+      <span class="goto-hint mono">↵ jump &nbsp; esc cancel</span>
+    </form>
+  </div>
+
+  <!-- analysis overlay -->
+  <div id="overlay">
+    <div class="ov-card">
+      <div class="ov-scan"></div>
+      <div id="ov-target" class="ov-target mono"></div>
+      <div id="ov-running">
+        <div id="ov-stage" class="ov-stage">Preparing…</div>
+        <div class="ov-track"><div id="ov-bar" class="ov-bar"></div></div>
+        <div class="ov-foot">
+          <span id="ov-pct" class="ov-pct mono">0%</span>
+          <button id="ov-cancel" class="ov-btn">cancel</button>
+        </div>
+        <ul id="ov-steps" class="ov-steps mono"></ul>
+      </div>
+      <div id="ov-error" class="ov-error" hidden>
+        <div class="ov-err-label">ANALYSIS FAILED</div>
+        <div id="ov-error-msg" class="ov-err-msg mono"></div>
+        <button id="ov-retry" class="ov-btn ov-btn-accent">retry</button>
+      </div>
     </div>
   </div>
 

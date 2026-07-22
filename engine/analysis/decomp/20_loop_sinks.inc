@@ -268,6 +268,25 @@
         emit_if_else_body(b, stop, dst, loop_header);
     }
 
+    /* Conservative "this emitted body cannot fall through its end" test: the last
+     * non-blank line, trimmed of indentation and a trailing `;`, is an unconditional
+     * terminator (return / break / continue / goto). Used to drop a post-dominator
+     * join that both arms already terminate before — the shared epilogue duplicated
+     * into every path by inner guard-clause structuring. Deliberately strict: a body
+     * ending in `}` (a nested if whose arms MIGHT fall through) reads as fall-through,
+     * so a reachable join is never dropped. */
+    bool body_terminates(const std::string& body) {
+        size_t end = body.find_last_not_of(" \t\r\n");
+        if (end == std::string::npos) return false;
+        size_t ls = body.rfind('\n', end);
+        std::string line = body.substr(ls == std::string::npos ? 0 : ls + 1, end - (ls == std::string::npos ? 0 : ls));
+        size_t a = line.find_first_not_of(" \t");
+        if (a == std::string::npos) return false;
+        line = line.substr(a);
+        return line == "return;" || line.rfind("return ", 0) == 0 ||
+               line == "break;" || line == "continue;" || line.rfind("goto ", 0) == 0;
+    }
+
     void emit_if_else_body(int b, int stop, std::string& dst, int loop_header) {
         Block& B = blocks[b];
         int t = B.taken, fl = B.fall;
@@ -557,12 +576,31 @@
                 dst += fall_body;
                 dst += ind() + "}\n";
                 dst += dedent_one(taken_body);
+            } else if (!taken_empty && !has_call(cond) && taken_body == fall_body) {
+                /* Both arms render to byte-identical statements, so the branch is dead
+                 * for output purposes: emit the shared body ONCE, unconditionally. The
+                 * condition is side-effect-free (guarded: contains no call), so dropping
+                 * it is value-identical. This collapses the MSVC inlined-sqrtf domain
+                 * check (`if (dom<0) v=sqrtf(x); else v=sqrtf(x);`) and any /O2 duplicated
+                 * two-arm diamond into a single statement. Both arms were already emitted
+                 * above, so `structured` covers both blocks; the join logic below runs
+                 * unchanged (the two bodies terminate identically). */
+                dst += taken_body;
             } else {
                 dst += ind() + "if (" + render_cond(cond) + ") {\n";
                 dst += taken_body;
                 dst += ind() + "} else {\n";
                 dst += fall_body;
                 dst += ind() + "}\n";
+            }
+            /* Both arms already end in an explicit terminator (inner guard-clause
+             * structuring duplicated the shared epilogue-return into every path), so
+             * `join` is UNREACHABLE: emitting it appends dead code after the last
+             * return. Only skip when BOTH emitted bodies provably cannot fall through
+             * — a genuinely reachable join always has at least one falling-through arm. */
+            if (join != stop && body_terminates(taken_body) && body_terminates(fall_body)) {
+                structured.insert(join);
+                return;
             }
             emit_region(join, stop, dst, loop_header);
             return;

@@ -312,14 +312,17 @@ pub(crate) fn parse(bytes: &[u8]) -> Result<BinaryMeta, String> {
             }
             if st_shndx == SHN_UNDEF || st_value == 0 {
                 // Undefined function symbol -> an import (best effort, rva 0 ok).
+                // ELF does not record a per-symbol owning library here.
                 imports.push(Symbol {
                     rva: st_value.saturating_sub(base),
                     name,
+                    module: None,
                 });
             } else {
                 exports.push(Symbol {
                     rva: st_value.saturating_sub(base),
                     name,
+                    module: None,
                 });
             }
         }

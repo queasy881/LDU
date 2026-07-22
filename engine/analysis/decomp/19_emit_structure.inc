@@ -128,6 +128,7 @@
         }
     }
     void emit_stmt(const Stmt& s, std::string& dst) {
+        size_t emit_start = dst.size();
         switch (s.kind) {
             case SK::Assign: {
                 std::string l = render(s.lhs);
@@ -167,6 +168,13 @@
                                ? "(" + x + ")" : x;
                     };
                     bool rhs_ptr = renders_as_pointer(s.rhs);
+                    /* A resolved string literal (`lea rcx,[rodata]`) is a `char*`. Assigned
+                     * to an INTEGER lvalue (a struct field / spill the recovery typed
+                     * int64_t) it is C4047 without a cast — `field_40 = "(null)"` must read
+                     * `field_40 = (long long)"(null)"`, exactly as an integer dest <- pointer
+                     * value already does below. Only affects integer dests; a real char*
+                     * dest is handled by the pointer-dest arm and stays cast-free. */
+                    bool rhs_str = s.rhs && s.rhs->kind == EK::Str;
                     if (s.lhs->kind == EK::Var) {
                         std::string dt = decl_type(s.lhs->name);
                         if (!dt.empty() && dt.back() == '*') {
@@ -185,7 +193,7 @@
                                 r.compare(0, dt.size() + 1, "(" + dt) != 0;
                             if (!isnull && (ptr_assign_needs_cast(s.rhs, dt) || !rhs_ptr || render_intized))
                                 r = "(" + dt + ")" + wrapstr(r);
-                        } else if (rhs_ptr) {                            /* int dest <- ptr */
+                        } else if (rhs_ptr || rhs_str) {                  /* int dest <- ptr / string */
                             r = "(long long)" + wrapstr(r);
                         } else if (s.rhs->is_float && dt != "float" && dt != "double") {
                             /* a FLOAT value stored into an INTEGER-typed variable is a
@@ -197,7 +205,25 @@
                              * A genuine float->int conversion carries an explicit (int)
                              * cast (rhs not is_float), so it is untouched. */
                             int fw = (s.rhs->width >= 8) ? 8 : 4;
-                            l = std::string("*(") + (fw == 8 ? "double" : "float") + "*)&" + l;
+                            /* A 4-byte "float" Const whose IEEE-754 bits are a SUBNORMAL
+                             * (exponent field zero, mantissa non-zero) is almost never a
+                             * real float literal -- it is a small integer FLAG mis-floated
+                             * into a denormal (e.g. `mov dword[slot],0x40800`, an outgoing
+                             * stack-arg cell reused by a neighbouring movss). Floating it
+                             * prints garbage (`3.70212e-40f`); emit the integer bit store
+                             * instead -- the SAME 4-byte pattern, read as the real flag.
+                             * Normal patterns (1.0f=0x3f800000, -1.0f=0xbf800000,
+                             * FLT_MAX=0x7f7fffff) carry a non-zero exponent and stay float. */
+                            uint32_t fbits = (uint32_t)(uint64_t)s.rhs->cval;
+                            if (fw == 4 && s.rhs->kind == EK::Const &&
+                                ((fbits >> 23) & 0xff) == 0 && (fbits & 0x7fffff) != 0) {
+                                char ibuf[32];
+                                std::snprintf(ibuf, sizeof ibuf, "0x%x", (unsigned)fbits);
+                                l = "*(int32_t*)&" + l;
+                                r = ibuf;
+                            } else {
+                                l = std::string("*(") + (fw == 8 ? "double" : "float") + "*)&" + l;
+                            }
                         }
                     } else if (s.lhs->kind == EK::Mem && !struct_ptr_field_tag(s.lhs).empty()) {
                         /* store into a retyped `struct T*` field: make the value's type
@@ -217,7 +243,17 @@
                          * lvalue to keep the 8-byte pattern (mirrors the Var-dest idiom above). */
                         int fw = (s.rhs->width >= 8) ? 8 : 4;
                         l = std::string("*(") + (fw == 8 ? "double" : "float") + "*)&(" + l + ")";
-                    } else if (s.lhs->kind == EK::Mem && rhs_ptr && !s.lhs->is_float) {
+                    } else if (s.lhs->kind == EK::Mem && is_struct_ptr_field(s.lhs) &&
+                               s.rhs->kind == EK::Cast && s.rhs->a && renders_as_pointer(s.rhs->a) &&
+                               (s.rhs->op == "(int64_t)" || s.rhs->op == "(long long)" ||
+                                s.rhs->op == "(uint64_t)" || s.rhs->op == "(unsigned long long)")) {
+                        /* `void* field = (int64_t)ptr` — the recovery boxed a pointer value in
+                         * an integer cast to match the 8-byte store width, but the field itself
+                         * is a pointer. Drop the int cast: `field = ptr` (a struct-ptr or char-ptr
+                         * to void-ptr is a valid implicit conversion) reads clean and is C4047-free,
+                         * where `field = (int64_t)ptr` warned and obscured that a pointer is stored. */
+                        r = render(s.rhs->a);
+                    } else if (s.lhs->kind == EK::Mem && (rhs_ptr || rhs_str) && !s.lhs->is_float) {
                         /* a pointer value stored into a scalar memory slot: make the
                          * ptr->int reinterpret explicit (else C4047). A width-8 slot is
                          * clean (long long); a width-4 `*(int*)` slot narrows (that
@@ -320,6 +356,19 @@
                 dst += ind() + "/* " + s.label + " */\n";
                 break;
         }
+        /* Frontend line<->address sync: tag real statements with their source
+         * instruction address as a trailing marker comment. Gated on DS_LINE_ADDR
+         * so the gates / corpus / batch dumper (which call decompile() directly)
+         * never see it -- only the interactive get_pseudocode path sets it. Only
+         * Assign/Call/Return get a marker: Label/Goto/Comment lines are matched by
+         * exact text in later passes and must stay pristine. */
+        if (s.addr && dst.size() > emit_start && dst.back() == '\n' &&
+            (s.kind == SK::Assign || s.kind == SK::Call || s.kind == SK::Return) &&
+            std::getenv("DS_LINE_ADDR")) {
+            char buf[32];
+            std::snprintf(buf, sizeof buf, "/*@%llx*/", (unsigned long long)s.addr);
+            dst.insert(dst.size() - 1, buf);
+        }
     }
 
     /* a switch selector must be INTEGRAL; a float-typed selector (mis-inferred) is
@@ -342,6 +391,11 @@
             std::string dt = decl_type(e->name);
             if (!dt.empty() && dt.back() == '*') return "(long long)" + rsub(e, 14);
         }
+        /* The Var check above misses a pointer-valued EXPRESSION, e.g. `switch (a2 - 0x100)`
+         * when a2 is a pointer param: `a2 - 0x100` is still a pointer (C2050). expr_is_pointer
+         * walks binary +/-, casts and addr-of, so it catches the composite selector. A ptr-ptr
+         * difference is already integral, and wrapping it in a redundant (long long) is harmless. */
+        if (expr_is_pointer(e)) return "(long long)(" + render(e) + ")";
         return render(e);
     }
 

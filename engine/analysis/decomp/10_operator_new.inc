@@ -180,6 +180,13 @@
             if (!getenv("DS_NO_LEASTR")) {
                 std::string s;
                 if (read_cstring(abs, s)) return mkText("\"" + s + "\"", 8);
+                /* UTF-16 twin: `lea rcx,[wide_str]` (an LPCWSTR argument or a stored
+                 * wchar_t* — `28 00 6e 00 ...` = L"(null)") is invisible to the byte-wise
+                 * read_cstring, which sees '(' then a NUL and gives up, leaving a bare
+                 * address. read_wstring is equally conservative (read-only, aligned, BMP
+                 * printable, min length), so a genuine numeric pointer is still left raw. */
+                std::string ws;
+                if (read_wstring(abs, ws)) return mkText("L\"" + ws + "\"", 8);
             }
             /* `lea reg,[rip+func]` taking the address of code -> the function's name
              * (a function pointer: callbacks, thread procs, vtable init). Executable

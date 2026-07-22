@@ -364,7 +364,7 @@
             {"FileTimeToLocalFileTime",2,1},{"GetFileTime",4,1},{"SetFileTime",4,1},
             /* file / module (kernel32) */
             {"CreateFile",7,2},{"DeleteFile",1,1},{"GetFileAttributes",1,1},
-            {"GetFileAttributesEx",3,1},{"SetFilePointer",4,1},{"SetFilePointerEx",5,1},
+            {"GetFileAttributesEx",3,1},{"SetFilePointer",4,1},{"SetFilePointerEx",4,1},
             {"GetFileSizeEx",2,1},{"FlushFileBuffers",1,1},{"SetEndOfFile",1,1},
             {"GetModuleFileName",3,1},{"GetModuleHandleEx",3,1},{"LoadLibraryEx",3,2},
             {"GetFullPathName",4,1},{"GetTempPath",2,1},{"GetTempFileName",4,1},

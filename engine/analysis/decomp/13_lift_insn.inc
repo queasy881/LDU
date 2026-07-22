@@ -33,9 +33,78 @@
         set_flags_arith(d.type == X86_OP_MEM ? rvalue(d) : res, w);
     }
 
+    /* Canonical Intel/MS intrinsic NAME for a packed-SIMD mnemonic we don't lane-model,
+     * so an unmodeled op reads as `_mm_shuffle_epi8(a, b)` — exactly what Hex-Rays prints —
+     * instead of a home-grown `__vpshufb(a, b)`. This is the same industry choice IDA makes
+     * (it emits Intel intrinsic names up to SSE4a and inlines the rest): we DON'T translate
+     * the lane semantics to C, we NAME the operation with the name a reverse engineer greps
+     * for. The names are declared old-style (`long long _mm_...();`) like every other opaque
+     * call, which MSVC's C compiler accepts without <immintrin.h> — so the gate stays clean.
+     * A leading VEX `v` on a 128-bit form maps to the same SSE intrinsic (this path only fires
+     * for xmm destinations). Returns "" for anything not in the table (keep the __mnem form). */
+    const std::string& simd_intrinsic_name(const std::string& mnem) {
+        static const std::map<std::string, std::string> T = {
+            /* packed integer arithmetic */
+            {"paddb","_mm_add_epi8"},{"paddw","_mm_add_epi16"},{"paddd","_mm_add_epi32"},{"paddq","_mm_add_epi64"},
+            {"psubb","_mm_sub_epi8"},{"psubw","_mm_sub_epi16"},{"psubd","_mm_sub_epi32"},{"psubq","_mm_sub_epi64"},
+            {"paddsb","_mm_adds_epi8"},{"paddsw","_mm_adds_epi16"},{"paddusb","_mm_adds_epu8"},{"paddusw","_mm_adds_epu16"},
+            {"psubsb","_mm_subs_epi8"},{"psubsw","_mm_subs_epi16"},{"psubusb","_mm_subs_epu8"},{"psubusw","_mm_subs_epu16"},
+            {"pmullw","_mm_mullo_epi16"},{"pmulld","_mm_mullo_epi32"},{"pmulhw","_mm_mulhi_epi16"},{"pmulhuw","_mm_mulhi_epu16"},
+            {"pmuludq","_mm_mul_epu32"},{"pmuldq","_mm_mul_epi32"},{"pmaddwd","_mm_madd_epi16"},{"psadbw","_mm_sad_epu8"},
+            {"pavgb","_mm_avg_epu8"},{"pavgw","_mm_avg_epu16"},
+            {"pmaxub","_mm_max_epu8"},{"pminub","_mm_min_epu8"},{"pmaxsw","_mm_max_epi16"},{"pminsw","_mm_min_epi16"},
+            {"pmaxsb","_mm_max_epi8"},{"pminsb","_mm_min_epi8"},{"pmaxud","_mm_max_epu32"},{"pminud","_mm_min_epu32"},
+            {"pmaxsd","_mm_max_epi32"},{"pminsd","_mm_min_epi32"},{"pabsb","_mm_abs_epi8"},{"pabsw","_mm_abs_epi16"},{"pabsd","_mm_abs_epi32"},
+            /* bitwise (integer) */
+            {"pand","_mm_and_si128"},{"por","_mm_or_si128"},{"pxor","_mm_xor_si128"},{"pandn","_mm_andnot_si128"},
+            /* packed compares */
+            {"pcmpeqb","_mm_cmpeq_epi8"},{"pcmpeqw","_mm_cmpeq_epi16"},{"pcmpeqd","_mm_cmpeq_epi32"},{"pcmpeqq","_mm_cmpeq_epi64"},
+            {"pcmpgtb","_mm_cmpgt_epi8"},{"pcmpgtw","_mm_cmpgt_epi16"},{"pcmpgtd","_mm_cmpgt_epi32"},{"pcmpgtq","_mm_cmpgt_epi64"},
+            /* shuffles / packs / blends */
+            {"pshufb","_mm_shuffle_epi8"},{"pshufd","_mm_shuffle_epi32"},{"pshuflw","_mm_shufflelo_epi16"},{"pshufhw","_mm_shufflehi_epi16"},
+            {"packsswb","_mm_packs_epi16"},{"packssdw","_mm_packs_epi32"},{"packuswb","_mm_packus_epi16"},{"packusdw","_mm_packus_epi32"},
+            {"pblendw","_mm_blend_epi16"},{"pblendvb","_mm_blendv_epi8"},{"palignr","_mm_alignr_epi8"},
+            {"punpcklbw","_mm_unpacklo_epi8"},{"punpckhbw","_mm_unpackhi_epi8"},{"punpcklwd","_mm_unpacklo_epi16"},{"punpckhwd","_mm_unpackhi_epi16"},
+            {"punpckldq","_mm_unpacklo_epi32"},{"punpckhdq","_mm_unpackhi_epi32"},{"punpcklqdq","_mm_unpacklo_epi64"},{"punpckhqdq","_mm_unpackhi_epi64"},
+            /* packed shifts */
+            {"psllw","_mm_sll_epi16"},{"pslld","_mm_sll_epi32"},{"psllq","_mm_sll_epi64"},{"pslldq","_mm_slli_si128"},
+            {"psrlw","_mm_srl_epi16"},{"psrld","_mm_srl_epi32"},{"psrlq","_mm_srl_epi64"},{"psrldq","_mm_srli_si128"},
+            {"psraw","_mm_sra_epi16"},{"psrad","_mm_sra_epi32"},{"pmovmskb","_mm_movemask_epi8"},
+            /* packed float arithmetic */
+            {"addps","_mm_add_ps"},{"subps","_mm_sub_ps"},{"mulps","_mm_mul_ps"},{"divps","_mm_div_ps"},
+            {"addpd","_mm_add_pd"},{"subpd","_mm_sub_pd"},{"mulpd","_mm_mul_pd"},{"divpd","_mm_div_pd"},
+            {"sqrtps","_mm_sqrt_ps"},{"sqrtpd","_mm_sqrt_pd"},{"rsqrtps","_mm_rsqrt_ps"},{"rcpps","_mm_rcp_ps"},
+            {"maxps","_mm_max_ps"},{"minps","_mm_min_ps"},{"maxpd","_mm_max_pd"},{"minpd","_mm_min_pd"},
+            {"andps","_mm_and_ps"},{"orps","_mm_or_ps"},{"xorps","_mm_xor_ps"},{"andnps","_mm_andnot_ps"},
+            {"andpd","_mm_and_pd"},{"orpd","_mm_or_pd"},{"xorpd","_mm_xor_pd"},
+            {"shufps","_mm_shuffle_ps"},{"shufpd","_mm_shuffle_pd"},{"unpcklps","_mm_unpacklo_ps"},{"unpckhps","_mm_unpackhi_ps"},
+            {"unpcklpd","_mm_unpacklo_pd"},{"unpckhpd","_mm_unpackhi_pd"},{"blendps","_mm_blend_ps"},{"blendpd","_mm_blend_pd"},
+            {"haddps","_mm_hadd_ps"},{"hsubps","_mm_hsub_ps"},{"haddpd","_mm_hadd_pd"},{"addsubps","_mm_addsub_ps"},
+            {"dpps","_mm_dp_ps"},{"dppd","_mm_dp_pd"},{"roundps","_mm_round_ps"},{"roundpd","_mm_round_pd"},
+            /* NB: the packed CONVERSIONS (cvtdq2ps/cvtps2dq/cvtdq2pd/pmovsx.../etc) are
+             * deliberately NOT mapped to their _mm_cvt* intrinsic names. MSVC's C
+             * compiler recognizes those as builtins with a STRICT fixed arity, and our
+             * opaque-call arg capture can drop the source operand -- a _mm_cvtepi32_pd()
+             * with 0 args then fails the builtin arity check (C2168) and breaks the gate.
+             * The binary-op intrinsics below are safe (2 operands captured reliably); the
+             * conversions keep the __cvtdq2pd form, still readable, never a builtin. */
+            /* crypto / crc */
+            {"aesenc","_mm_aesenc_si128"},{"aesenclast","_mm_aesenclast_si128"},{"aesdec","_mm_aesdec_si128"},
+            {"aesdeclast","_mm_aesdeclast_si128"},{"aesimc","_mm_aesimc_si128"},{"aeskeygenassist","_mm_aeskeygenassist_si128"},
+            {"pclmulqdq","_mm_clmulepi64_si128"},
+        };
+        std::string key = mnem;
+        auto it = T.find(key);
+        if (it == T.end() && key.size() > 1 && key[0] == 'v') { it = T.find(key.substr(1)); }  /* VEX 128-bit */
+        static const std::string none;
+        return it == T.end() ? none : it->second;
+    }
+
     /* ----- the main per-block executor ----- */
     void exec_block(Block& b) {
         for (int i = 0; i < R_COUNT; ++i) { regfile[i] = nullptr; regfile_hi[i] = nullptr; clear_xmm_f((Reg)i); }
+        vec_load_addr.clear();
+        vec_fill.clear();
         xmm_packed_var.clear(); stack_packed_var.clear(); int_slots.clear();
         if (b.is_switch) switch_resolved_index.erase(b.id);   /* recapture each pass */
         /* x87 stack: reset like regfile, then inherit from a SINGLE predecessor (the
@@ -74,6 +143,59 @@
                 else if (!flagsrc_equal(first, fp)) { agree = false; break; }
             }
             if (init && agree) flags = first;
+            /* Diamond flag merge: the two arms of an if/else each end in a compare
+             * that differs in EXACTLY ONE operand (`test x,0x10; je L; comiss z,[p];
+             * jmp M; L: comiss z,[q]; M: seta cl`). The operands disagree so the
+             * all-agree merge above fails and the condition collapses to `if (1)`,
+             * turning the seta/jcc it feeds into an UNCONDITIONAL action (the guard on
+             * the store it controls is dropped). Rebuild the differing operand as a
+             * ternary selected by the grandparent branch that chose the arm — bit-exact
+             * for every input. Tightly guarded to the clean diamond so no other shape
+             * is affected. */
+            else if (!agree && b.pred.size() == 2) {
+                int p0 = b.pred[0], p1 = b.pred[1];
+                if (p0 >= 0 && p1 >= 0 &&
+                    p0 < (int)block_flags_out.size() && p1 < (int)block_flags_out.size() &&
+                    p0 < (int)blocks.size() && p1 < (int)blocks.size()) {
+                    const FlagSrc& f0 = block_flags_out[p0];
+                    const FlagSrc& f1 = block_flags_out[p1];
+                    if (f0.valid && f1.valid &&
+                        f0.is_cmp==f1.is_cmp && f0.is_test==f1.is_test &&
+                        f0.is_arith==f1.is_arith && f0.is_bt==f1.is_bt &&
+                        f0.is_fcmp==f1.is_fcmp && f0.width==f1.width) {
+                        bool a_same = exprEqual(f0.a, f1.a);
+                        bool b_same = exprEqual(f0.b, f1.b);
+                        Block& A0 = blocks[p0]; Block& A1 = blocks[p1];
+                        /* differ in exactly one operand; both arms are single-pred to a
+                         * common conditional grandparent whose two edges are these arms */
+                        if ((a_same ^ b_same) &&
+                            A0.pred.size()==1 && A1.pred.size()==1 &&
+                            A0.pred[0]==A1.pred[0]) {
+                            int g = A0.pred[0];
+                            if (g >= 0 && g < (int)blocks.size()) {
+                                Block& G = blocks[g];
+                                if (G.ends_jcc && G.cond &&
+                                    ((G.taken==p0 && G.fall==p1) ||
+                                     (G.taken==p1 && G.fall==p0))) {
+                                    const FlagSrc& ft = (G.taken==p0) ? f0 : f1; /* taken arm */
+                                    const FlagSrc& ff = (G.taken==p0) ? f1 : f0; /* fall arm  */
+                                    FlagSrc m = f0;   /* copy kind/width */
+                                    if (a_same) {     /* a agrees, b differs */
+                                        m.a = clone(f0.a);
+                                        m.b = mkTernary(clone(G.cond), clone(ft.b), clone(ff.b), f0.width);
+                                        if (f0.is_fcmp) m.b->is_float = true;
+                                    } else {          /* b agrees, a differs */
+                                        m.a = mkTernary(clone(G.cond), clone(ft.a), clone(ff.a), f0.width);
+                                        if (f0.is_fcmp) m.a->is_float = true;
+                                        m.b = clone(f0.b);
+                                    }
+                                    flags = m;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
         /* RSP is the symbolic frame base: a register that captures it (`mov rax,rsp`)
          * stays frame-relative so `[rax+off]` resolves to a stack slot instead of
@@ -103,6 +225,19 @@
                         xmm_i[i][L] = entry_xmm_i[b.id][i][L] ? clone(entry_xmm_i[b.id][i][L]) : nullptr;
                     xmm_i_real[i] = entry_xmm_i_real[b.id][i];
                 }
+        /* seed cross-block vec-load-address facts (a wide reg loaded in a
+         * predecessor block, stored here — the jump-table-unrolled memcpy).
+         * vec_load_addr was already cleared at the top of exec_block. */
+        if (b.id >= 0 && b.id < (int)entry_vla.size())
+            for (int i = 0; i < R_COUNT; ++i)
+                if (entry_vla[b.id][i])
+                    vec_load_addr[(Reg)i] = clone(entry_vla[b.id][i]);
+        /* seed cross-block vec-fill facts (a wide reg broadcast/zeroed in a
+         * predecessor block, streamed out here — the jump-table-unrolled memset). */
+        if (b.id >= 0 && b.id < (int)entry_vfill.size())
+            for (int i = 0; i < R_COUNT; ++i)
+                if (entry_vfill[b.id][i] && entry_vfill_esz[b.id][i])
+                    vec_fill[(Reg)i] = { clone(entry_vfill[b.id][i]), entry_vfill_esz[b.id][i] };
 
         prev_insn = nullptr;
         for (size_t k = 0; k < b.insn_idx.size(); ++k) {
@@ -130,6 +265,21 @@
             b.reg_out_i_real[i] = xmm_i_real[i];
             for (int L = 0; L < 4; ++L)
                 b.reg_out_i[i][L] = xmm_i[i][L] ? clone(xmm_i[i][L]) : nullptr;
+            /* publish the vec-load-address fact so a successor block (the store
+             * side of a jump-table-unrolled memcpy) can inherit it. */
+            auto vit = vec_load_addr.find((Reg)i);
+            b.reg_out_vla[i] = (vit != vec_load_addr.end() && vit->second)
+                                   ? clone(vit->second) : nullptr;
+            /* publish the vec-fill fact (broadcast/zero) for the store side of a
+             * jump-table-unrolled memset. */
+            auto fit2 = vec_fill.find((Reg)i);
+            if (fit2 != vec_fill.end() && fit2->second.val && fit2->second.esz) {
+                b.reg_out_vfill[i] = clone(fit2->second.val);
+                b.reg_out_vfill_esz[i] = fit2->second.esz;
+            } else {
+                b.reg_out_vfill[i] = nullptr;
+                b.reg_out_vfill_esz[i] = 0;
+            }
         }
         if (b.id >= 0 && b.id < (int)block_flags_out.size())
             block_flags_out[b.id] = flags;
@@ -667,6 +817,10 @@
                 case X86_INS_VMOVUPD: sse = X86_INS_MOVUPD; break;
                 case X86_INS_VMOVDQA: sse = X86_INS_MOVDQA; break;
                 case X86_INS_VMOVDQU: sse = X86_INS_MOVDQU; break;
+                case X86_INS_VMOVNTDQ:  sse = X86_INS_MOVNTDQ;  break;
+                case X86_INS_VMOVNTPS:  sse = X86_INS_MOVNTPS;  break;
+                case X86_INS_VMOVNTPD:  sse = X86_INS_MOVNTPD;  break;
+                case X86_INS_VMOVNTDQA: sse = X86_INS_MOVNTDQA; break;
                 case X86_INS_VMOVD:   sse = X86_INS_MOVD;   break;
                 case X86_INS_VMOVQ:   sse = X86_INS_MOVQ;   break;
                 case X86_INS_VUCOMISS: sse = X86_INS_UCOMISS; break;
@@ -724,6 +878,18 @@
          * observable effect on the recovered C; modeling the save read the
          * register's incoming value (rendering `v5 = ctx_r14` — a phantom). */
         if (callee_save_addrs.count(in.addr)) return;
+
+        /* Any instruction that writes a vector register invalidates the wide-vec load
+         * AND fill tracking for it (a wide vmov LOAD / broadcast / zero re-establishes
+         * it below). This keeps the memcpy/memset modeling bulletproof: a store only
+         * copies from a source that was loaded/filled and NOT since clobbered. The
+         * broadcast/zero cases below re-set vec_fill after this erase, so a genuine fill
+         * survives while any later overwrite drops it. */
+        if (nop >= 1 && OP(0).type == X86_OP_REG &&
+            (!vec_load_addr.empty() || !vec_fill.empty())) {
+            Reg d0 = vec_reg(OP(0).reg);
+            if (d0 != R_NONE) { vec_load_addr.erase(d0); vec_fill.erase(d0); }
+        }
 
         switch (id) {
             case X86_INS_MOV: case X86_INS_MOVABS: {
@@ -833,6 +999,13 @@
                     set_flags_arith(mkConst(0, dw), dw);
                     break;
                 }
+                /* stack-canary setup/verify `xor reg, rsp`: rsp carries no modeled
+                 * scalar value and degrades to 0, so the real
+                 * `cookie ^ (uintptr_t)&frame` renders as a bogus `cookie ^ 0`. The
+                 * value is the /GS cookie stored to the frame (and re-xored + checked
+                 * in the epilogue, whose call is already dropped) -- no observable
+                 * effect. Keep the destination's current value (the cookie). */
+                if (is_cookie_xor(&in)) { do_dst(b, OP(0), rvalue(OP(0)), in.addr); break; }
                 arith2(b, x, "^", in.addr); break;
             }
             /* ROTATE. C has no rotate operator, so an unmodeled rol/ror DROPPED the whole
@@ -1366,7 +1539,10 @@
             }
             case X86_INS_MOVAPS:  case X86_INS_MOVUPS:
             case X86_INS_MOVDQA:  case X86_INS_MOVDQU:
-            case X86_INS_MOVUPD:  case X86_INS_MOVAPD: {
+            case X86_INS_MOVUPD:  case X86_INS_MOVAPD:
+            /* non-temporal 16-byte moves are the same store/load for our purposes */
+            case X86_INS_MOVNTDQ: case X86_INS_MOVNTPS:
+            case X86_INS_MOVNTPD: case X86_INS_MOVNTDQA: {
                 if (nop < 2) break;
                 /* 16-byte packed move. */
                 if (OP(0).type == X86_OP_MEM && OP(0).size == 16) {
@@ -1697,10 +1873,59 @@
              * Defining the dest with an opaque call keeps the load in the tree and lets the
              * confidence header disclose it. pmovmskb itself needs no case — the existing GPR
              * fallback picks it up. DS_NO_LANES16. */
+            /* Vector BROADCAST: replicate one scalar element across a (possibly wide)
+             * vector register. Recorded as a fill so a later store of the register models
+             * a real memset/element-fill instead of a dropped __vpbroadcast/__vmov store.
+             * Source scalar is memory (`*(intN*)src`), the low element of an xmm, or a GP
+             * register (the AVX-512 form). The lane model can't hold a >16-byte value, but
+             * a uniform broadcast IS knowable at every byte, so the full width is sound. */
+            case X86_INS_VPBROADCASTB: case X86_INS_VPBROADCASTW:
+            case X86_INS_VPBROADCASTD: case X86_INS_VPBROADCASTQ:
+            case X86_INS_VBROADCASTSS: case X86_INS_VBROADCASTSD: {
+                if (nop < 2 || OP(0).type != X86_OP_REG) break;
+                Reg vf = vec_reg(OP(0).reg);
+                if (vf == R_NONE) break;
+                int esz = (id == X86_INS_VPBROADCASTB) ? 1 :
+                          (id == X86_INS_VPBROADCASTW) ? 2 :
+                          (id == X86_INS_VPBROADCASTD || id == X86_INS_VBROADCASTSS) ? 4 : 8;
+                ExprP val;
+                if (OP(1).type == X86_OP_MEM) {
+                    val = mkMem(addr_of_mem(OP(1)), esz);
+                } else if (OP(1).type == X86_OP_REG) {
+                    Reg sr; int sw; map_reg(OP(1).reg, sr, sw);
+                    if (is_xmm(sr)) {
+                        if (esz <= 4) {
+                            ExprP l[4];
+                            if (xmm_i_lanes(OP(1), l) && l[0])
+                                val = (esz == 4) ? l[0]
+                                    : mkCast(esz == 1 ? "(unsigned __int8)" : "(unsigned __int16)", l[0], esz, true);
+                        } else {
+                            ExprP lo, hi;
+                            if (simd_src_lanes(OP(1), lo, hi) && lo) val = lo;
+                        }
+                    } else {
+                        ExprP r = rvalue(OP(1));
+                        if (r) val = (esz >= 8) ? r
+                            : mkCast(esz == 1 ? "(unsigned __int8)" : esz == 2 ? "(unsigned __int16)" : "(unsigned __int32)", r, esz, true);
+                    }
+                }
+                if (val) vec_fill[vf] = { val, esz };
+                break;
+            }
             case X86_INS_PCMPEQB:  case X86_INS_VPCMPEQB:
             case X86_INS_PSHUFB:   case X86_INS_VPSHUFB: {
                 if (std::getenv("DS_NO_LANES16")) break;
                 if (nop < 2 || OP(0).type != X86_OP_REG) break;
+                /* all-ones fill: `pcmpeqb x,x` (covers the ymm/wide form declined by the
+                 * lane model below) -> a later store is memset(dst, 0xFF, n). */
+                if (id == X86_INS_PCMPEQB || id == X86_INS_VPCMPEQB) {
+                    int ai0 = (nop >= 3) ? 1 : 0, bi0 = (nop >= 3) ? 2 : 1;
+                    if (OP(ai0).type == X86_OP_REG && OP(bi0).type == X86_OP_REG &&
+                        OP(ai0).reg == OP(bi0).reg) {
+                        Reg vf = vec_reg(OP(0).reg);
+                        if (vf != R_NONE) vec_fill[vf] = { mkConst(0xFF, 1), 1 };
+                    }
+                }
                 Reg dr; int dw; map_reg(OP(0).reg, dr, dw);
                 if (!is_xmm(dr)) break;      /* ymm -> R_NONE: the width guard's territory */
                 int ai = (nop >= 3) ? 1 : 0, bi = (nop >= 3) ? 2 : 1;   /* VEX: dst,src1,src2 */
@@ -1730,6 +1955,14 @@
             case X86_INS_PCMPEQD: case X86_INS_VPCMPEQD:
             case X86_INS_PCMPGTD: case X86_INS_VPCMPGTD: {
                 if (nop < 2 || OP(0).type != X86_OP_REG) break;
+                if (id == X86_INS_PCMPEQD || id == X86_INS_VPCMPEQD) {
+                    int ai0 = (nop >= 3) ? 1 : 0, bi0 = (nop >= 3) ? 2 : 1;
+                    if (OP(ai0).type == X86_OP_REG && OP(bi0).type == X86_OP_REG &&
+                        OP(ai0).reg == OP(bi0).reg) {
+                        Reg vf = vec_reg(OP(0).reg);        /* pcmpeqd x,x -> all-ones fill */
+                        if (vf != R_NONE) vec_fill[vf] = { mkConst(0xFF, 1), 1 };
+                    }
+                }
                 Reg dr; int dw; map_reg(OP(0).reg, dr, dw);
                 if (!is_xmm(dr)) break;
                 int ai = (nop >= 3) ? 1 : 0, bi = (nop >= 3) ? 2 : 1;
@@ -1852,6 +2085,14 @@
             /* PACKED QWORD compare-equal: dst[qw] = (a==b) ? -1 : 0, over the two 64-bit lanes. */
             case X86_INS_PCMPEQQ: case X86_INS_VPCMPEQQ: {
                 if (nop < 2 || OP(0).type != X86_OP_REG) break;
+                {
+                    int ai0 = (nop >= 3) ? 1 : 0, bi0 = (nop >= 3) ? 2 : 1;
+                    if (OP(ai0).type == X86_OP_REG && OP(bi0).type == X86_OP_REG &&
+                        OP(ai0).reg == OP(bi0).reg) {
+                        Reg vf = vec_reg(OP(0).reg);        /* pcmpeqq x,x -> all-ones fill */
+                        if (vf != R_NONE) vec_fill[vf] = { mkConst(0xFF, 1), 1 };
+                    }
+                }
                 Reg dr; int dw; map_reg(OP(0).reg, dr, dw);
                 if (!is_xmm(dr)) break;
                 int ai = (nop >= 3) ? 1 : 0, bi = (nop >= 3) ? 2 : 1;
@@ -1909,7 +2150,27 @@
                     break;
                 }
                 ExprP hi = xmm_hi(dr);
-                if (shb == 8 && hi) set_xmm_lanes(dr, hi, mkConst(0, 8), b);
+                if (shb == 8 && hi) { set_xmm_lanes(dr, hi, mkConst(0, 8), b); break; }
+                /* A byte-granular shift the lane model cannot express (an odd/unaligned
+                 * count, e.g. the SSE2 strcspn/strpbrk `psrldq xmm,3`). Do NOT fall off
+                 * the end with the destination UNCHANGED — that silently reuses the
+                 * pre-shift bytes and every downstream pcmpeqb compares the wrong lanes.
+                 * Define the dest with an opaque `__psrldq(src, n)` intrinsic (the same
+                 * honest floor pslldq already gets from the default fallback) so the shift
+                 * survives as a real data dependency instead of being dropped. Only the
+                 * SSE PSRLDQ form (dst is BOTH source and destination) reaches here; the
+                 * VEX VPSRLDQ has a separate source and takes the default path. */
+                if (!std::getenv("DS_NO_SIMDOPAQUE")) {
+                    auto call = std::make_shared<Expr>();
+                    call->kind = EK::Call;
+                    call->callee = "__" + sani(in.mnem);
+                    call->width = 8; call->ret_kind = 2;   /* carry the xmm as an 8-byte view */
+                    call->args.push_back(rvalue(OP(0)));    /* current value (RMW dest) */
+                    call->args.push_back(rvalue(OP(1)));    /* shift byte count */
+                    extern_callees[call->callee] = call->ret_kind;
+                    opaque_ops[call->callee]++;             /* keep the confidence header honest */
+                    do_dst(b, OP(0), call, in.addr);
+                }
                 break;
             }
             case X86_INS_PMOVSXDQ: case X86_INS_PMOVZXDQ:
@@ -2247,6 +2508,8 @@
                         ExprP zl[4] = { mkConst(0,4), mkConst(0,4), mkConst(0,4), mkConst(0,4) };
                         populate_xmm_i(zr, zl);
                     }
+                    /* a zeroed wide reg that is later stored is a memset(dst,0,n). */
+                    { Reg vf = vec_reg(OP(0).reg); if (vf != R_NONE) vec_fill[vf] = { mkConst(0, 1), 1 }; }
                     break;
                 }
                 if (id != X86_INS_VPXOR && OP(0).type==X86_OP_REG) {
@@ -2411,6 +2674,8 @@
                         ExprP zl[4] = { mkConst(0,4), mkConst(0,4), mkConst(0,4), mkConst(0,4) };
                         populate_xmm_i(zr, zl);
                     }
+                    /* a zeroed wide reg that is later stored is a memset(dst,0,n). */
+                    { Reg vf = vec_reg(OP(0).reg); if (vf != R_NONE) vec_fill[vf] = { mkConst(0, 1), 1 }; }
                     break;
                 }
                 /* `xorps/xorpd xmm, [sign-mask const]` is the scalar FP NEGATE
@@ -3020,6 +3285,23 @@
                     break;
                 }
                 if (in.is_jcc || in.is_jmp || in.is_ret) break;
+                /* WIDE (ymm/zmm) vector LOAD tracking — MUST run before the register-write
+                 * opaque handler just below. map_reg returns R_NONE for a ymm/zmm dest, so
+                 * that handler emits nothing for a wide load yet still `break`s, which would
+                 * drop the load and leave vec_load_addr unset — so the matching store never
+                 * finds a source and stays an opaque `__vmovdqu(dst)`. Recording the source
+                 * address here (via vec_reg, which DOES map ymm/zmm) lets the store below
+                 * turn the pair into a real chunked memcpy. DS_NO_VECCOPY. */
+                if (nop >= 2 && !std::getenv("DS_NO_VECCOPY") &&
+                    OP(0).type == X86_OP_REG && OP(1).type == X86_OP_MEM &&
+                    (in.mnem.rfind("vmov", 0) == 0 || in.mnem.rfind("movnt", 0) == 0)) {
+                    Reg dr = vec_reg(OP(0).reg);
+                    ExprP sm = rvalue(OP(1));
+                    if (dr != R_NONE && sm && sm->kind == EK::Mem && sm->a) {
+                        vec_load_addr[dr] = clone(sm->a);
+                        break;
+                    }
+                }
                 /* An unmodeled op that WRITES a register still DEFINES it: leaving
                  * the dest undefined makes a later read fall back to the misleading
                  * entry-value placeholder `in_<REG>` (pmovmskb/tzcnt/lzcnt/... in
@@ -3045,9 +3327,29 @@
                     if (gpr || xmm) {
                         auto call = std::make_shared<Expr>();
                         call->kind = EK::Call;
-                        call->callee = "__" + sani(in.mnem);
+                        /* xmm packed op -> canonical Intel intrinsic name (Hex-Rays parity);
+                         * GPR / unmapped ops keep the __mnem form. */
+                        { const std::string& intr = xmm ? simd_intrinsic_name(in.mnem) : std::string();
+                          call->callee = intr.empty() ? ("__" + sani(in.mnem)) : intr; }
                         int cw = gpr ? ((dw >= 8) ? 8 : 4) : 8;   /* xmm: carry as an 8-byte view */
                         call->width = cw; call->ret_kind = (cw >= 8) ? 2 : 1;
+                        /* A floating-point BLEND/SELECT (blendvpd/blendvps and their VEX
+                         * forms) returns one of its two source VALUES unchanged — a value
+                         * select, not a bit shuffle. Typed `long long`, its opaque result
+                         * forces a spurious int->double CONVERSION at every use: here the
+                         * atan2 max/min lane select feeds `/` and `>`, so
+                         * `__vblendvpd(...)/__vblendvpd(...) > 0.0625` decayed to INTEGER
+                         * division. Type it by the operand domain the mnemonic encodes
+                         * (pd/sd = double, ps/ss = float) so the float math is faithful. */
+                        if (xmm && in.mnem.find("blendv") != std::string::npos && in.mnem.size() >= 2) {
+                            const std::string& mn = in.mnem;
+                            size_t sp = mn.size() - 2;
+                            if (mn.compare(sp, 2, "pd") == 0 || mn.compare(sp, 2, "sd") == 0) {
+                                call->width = 8; call->ret_kind = 4;   /* double */
+                            } else if (mn.compare(sp, 2, "ps") == 0 || mn.compare(sp, 2, "ss") == 0) {
+                                call->width = 4; call->ret_kind = 3;   /* float */
+                            }
+                        }
                         /* A read-modify-write dest (rol/ror/adc/sbb: OP(0) is BOTH
                          * source and destination) contributes its CURRENT value as
                          * the first arg — else `rol x,n` renders `x = __rol(n)`,
@@ -3081,6 +3383,87 @@
                  * lie being removed), so only immediates join the address as arguments.
                  * This also makes the op appear in the body text, which is the ONLY way the
                  * confidence header counts it. DS_NO_OPAQUEMEM. */
+                /* WIDE (YMM/ZMM) / non-temporal vector MOVE modeling. The lane model can't
+                 * hold a >16-byte value, but a load-then-store IS a memcpy. Record the
+                 * address a wide reg was loaded from; turn a later store of that (un-
+                 * clobbered) reg into a chunked `*(int64_t*)(dst+8k) = *(int64_t*)(src+8k)`
+                 * copy so the memcpy survives instead of a valueless `__vmovdqu(dst)`.
+                 * The reg's tracking was erased above if anything else wrote it, so this
+                 * never copies a stale value. DS_NO_VECCOPY. */
+                if (nop >= 2 && !std::getenv("DS_NO_VECCOPY") &&
+                    (in.mnem.rfind("vmov", 0) == 0 || in.mnem.rfind("movnt", 0) == 0)) {
+                    if (OP(0).type == X86_OP_REG && OP(1).type == X86_OP_MEM) {
+                        Reg dr = vec_reg(OP(0).reg);
+                        ExprP sm = rvalue(OP(1));
+                        if (dr != R_NONE && sm && sm->kind == EK::Mem && sm->a) {
+                            vec_load_addr[dr] = clone(sm->a);
+                            break;
+                        }
+                    } else if (OP(0).type == X86_OP_MEM && OP(1).type == X86_OP_REG) {
+                        Reg sr = vec_reg(OP(1).reg);
+                        auto it = vec_load_addr.find(sr);
+                        int vsz = OP(0).size ? OP(0).size : 16;
+                        if (sr != R_NONE && it != vec_load_addr.end() && it->second &&
+                            (vsz == 16 || vsz == 32 || vsz == 64)) {
+                            ExprP daddr = addr_of_mem(OP(0));
+                            ExprP saddr = it->second;
+                            for (int k = 0; k < vsz / 8; ++k) {
+                                ExprP d = mkMem(k ? mkBinary("+", clone(daddr), mkConst(8 * k, 8), 8) : clone(daddr), 8);
+                                ExprP s = mkMem(k ? mkBinary("+", clone(saddr), mkConst(8 * k, 8), 8) : clone(saddr), 8);
+                                emit_store(b, d, s, in.addr);
+                            }
+                            break;
+                        }
+                        /* Broadcast/zero/all-ones FILL of a wide reg -> a real memset,
+                         * rendered as chunked stores (identical, gate-proven mechanism to
+                         * the copy above — deliberately NOT an emitted `memset()` call,
+                         * which would risk an extern-prototype conflict). Sound: vec_fill
+                         * is set only by zero/ones/broadcast idioms and erased on any other
+                         * write to the reg. Element fill value is `val` (a Const for
+                         * zero/ones/immediate, or a resolved scalar for a runtime
+                         * broadcast); `esz` is the element size in bytes. DS_NO_VECFILL. */
+                        auto fit = vec_fill.find(sr);
+                        if (sr != R_NONE && fit != vec_fill.end() && fit->second.val &&
+                            fit->second.esz >= 1 && !std::getenv("DS_NO_VECFILL") &&
+                            (vsz == 16 || vsz == 32 || vsz == 64)) {
+                            ExprP daddr = addr_of_mem(OP(0));
+                            int esz = fit->second.esz;
+                            ExprP fv = fit->second.val;
+                            bool isConst = (fv->kind == EK::Const);
+                            if (esz == 1) {
+                                /* byte fill: replicate to a 64-bit pattern, chunk by 8. */
+                                for (int k = 0; k < vsz / 8; ++k) {
+                                    ExprP q = isConst
+                                        ? mkConst((int64_t)(((uint64_t)fv->cval & 0xFF) * 0x0101010101010101ULL), 8)
+                                        : mkBinary("*", mkCast("(unsigned __int8)", clone(fv), 1, true),
+                                                   mkConst((int64_t)0x0101010101010101ULL, 8), 8);
+                                    ExprP d = mkMem(k ? mkBinary("+", clone(daddr), mkConst(8 * k, 8), 8) : clone(daddr), 8);
+                                    emit_store(b, d, q, in.addr);
+                                }
+                                break;
+                            }
+                            if (isConst) {
+                                /* wider constant element: fold to a 64-bit pattern, chunk by 8. */
+                                uint64_t e = (uint64_t)fv->cval, pat;
+                                if (esz == 2)      { uint64_t x = e & 0xFFFF;     pat = x | x << 16 | x << 32 | x << 48; }
+                                else if (esz == 4) { uint64_t x = e & 0xFFFFFFFF; pat = x | x << 32; }
+                                else               pat = e;                        /* esz == 8 */
+                                for (int k = 0; k < vsz / 8; ++k) {
+                                    ExprP d = mkMem(k ? mkBinary("+", clone(daddr), mkConst(8 * k, 8), 8) : clone(daddr), 8);
+                                    emit_store(b, d, mkConst((int64_t)pat, 8), in.addr);
+                                }
+                                break;
+                            }
+                            /* runtime wider element (vpbroadcastd/q with a variable): store
+                             * element-granular so the exact value is preserved. */
+                            for (int k = 0; k < vsz / esz; ++k) {
+                                ExprP d = mkMem(k ? mkBinary("+", clone(daddr), mkConst(esz * k, 8), 8) : clone(daddr), esz);
+                                emit_store(b, d, clone(fv), in.addr);
+                            }
+                            break;
+                        }
+                    }
+                }
                 if (nop >= 2 && vex_wide_refused && OP(0).type == X86_OP_MEM &&
                     !in.mnem.empty() && !std::getenv("DS_NO_OPAQUEMEM")) {
                     auto call = std::make_shared<Expr>();

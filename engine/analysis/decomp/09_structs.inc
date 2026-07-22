@@ -63,6 +63,18 @@
         auto fit = it->second.fptr.find(off);
         return fit != it->second.fptr.end() && fit->second;
     }
+    /* True when the Mem lvalue addresses a recovered struct field typed FLOAT/double.
+     * Used to reinterpret a raw integer store into it as a bit-preserving `*(float*)`
+     * copy (a `mov [float_field], r32` fed by a plain `mov r32,[mem]` GP dword copy). */
+    bool is_struct_float_field(const ExprP& mem) {
+        if (param_structs.empty() || !mem || mem->kind != EK::Mem || !mem->a) return false;
+        std::string p; int64_t off;
+        if (!struct_base_offset(mem->a, p, off)) return false;
+        auto it = param_structs.find(p);
+        if (it == param_structs.end()) return false;
+        auto fit = it->second.ff.find(off);
+        return fit != it->second.ff.end() && fit->second;
+    }
     /* the nested-struct TAG a `struct T*` field points to (top-level OR nested base), for
      * casting a value stored into it. Returns "" if the Mem is not a retyped ptr field. */
     std::string struct_ptr_field_tag(const ExprP& mem) {
@@ -620,7 +632,17 @@
                     L.fw[o] = w; L.fu[o] = vfu[p][o]; L.ff[o] = vff[p][o]; L.fptr[o] = false;
                     prev_end = o + w;
                 }
-                if (L.fw.size() >= 2) {
+                /* An all-single-byte layout on a POINTER TEMP is a char / uint8_t
+                 * buffer walked as a string (`p[0],p[1],p[2]`), not a struct --
+                 * synthesizing `struct{int8 f0,f1,f2}` is the phantom-struct-for-a-
+                 * byte-string artifact. Leave it a plain byte pointer;
+                 * propagate_pointer_types (already run) typed such a temp `uint8_t*`
+                 * (element width 1), so its const-offset accesses render as `p[k]`.
+                 * DS_KEEP_BYTESTRUCT restores the old struct form for A/B. */
+                bool all_bytes = true;
+                for (auto& f : L.fw) if (f.second != 1) { all_bytes = false; break; }
+                bool byte_str = all_bytes && !std::getenv("DS_KEEP_BYTESTRUCT");
+                if (L.fw.size() >= 2 && !byte_str) {
                     mktag(p, L); param_structs[p] = L; struct_var.insert(p);
                 }
             }
@@ -658,6 +680,128 @@
      * more complete than either. That is a genuine feature. It is also only ~2 sites per 300
      * functions here, and unioning fields can create overlaps that corrupt every offset, so
      * it needs its own cycle and a fixture -- not a drive-by. */
+
+    /* STRUCT UNIFICATION (field UNION on proven aliasing) -- the "WHAT WOULD ACTUALLY WORK"
+     * above, now built with the overlap/conflict guard it needed. Two per-function pointer
+     * structs whose bases the code PROVES are the same object -- a pointer copy `v2 = v54`, an
+     * equality/inequality compare `v54 == v2`, or both passed to the SAME parameter slot of the
+     * SAME callee -- are ONE type: they get a shared tag and the UNION of their fields, so every
+     * access renders through one complete struct and the bogus `(int64_t)v54 != (int64_t)v2`
+     * cross-type cast disappears. SOUND: only proven aliases merge, and any field disagreement
+     * at a shared offset (different width / float-ness / pointer-ness / nested tag) or a
+     * resulting overlap ABORTS that group rather than corrupting a layout. Only plain top-level
+     * param / local struct bases participate (never a class/vector/string/nested/array/global
+     * type, which already has its own identity). DS_NO_STRUCTUNIFY. */
+    void unify_struct_aliases() {
+        if (std::getenv("DS_NO_STRUCTUNIFY")) return;
+        if (param_structs.size() < 2) return;
+        const std::string pfx = "s_" + self_fname + "_";
+        auto eligible = [&](const std::string& p) -> bool {
+            if (!(is_ptr_param_name(p) || struct_var.count(p))) return false;   /* top-level only */
+            auto it = param_structs.find(p);
+            if (it == param_structs.end()) return false;
+            const ParamStruct& L = it->second;
+            if (L.is_class || L.is_vector || L.is_stdstring || L.shared_typedef || L.stride != 0)
+                return false;                                   /* already-canonical / array elem */
+            return L.tag.rfind(pfx, 0) == 0;                    /* a plain s_<fn>_<p> tag */
+        };
+        std::map<std::string,std::string> parent;
+        std::function<std::string(const std::string&)> find = [&](const std::string& x) -> std::string {
+            auto it = parent.find(x);
+            if (it == parent.end()) { parent[x] = x; return x; }
+            if (it->second == x) return x;
+            return parent[x] = find(it->second);
+        };
+        auto unite = [&](const std::string& a, const std::string& b) {
+            if (a == b || !eligible(a) || !eligible(b)) return;
+            std::string ra = find(a), rb = find(b);
+            if (ra != rb) parent[ra] = rb;
+        };
+        auto base_var = [](const ExprP& e) -> std::string {
+            ExprP x = e; while (x && x->kind == EK::Cast) x = x->a;
+            return (x && x->kind == EK::Var) ? x->name : std::string();
+        };
+        std::map<std::string,std::string> call_arg;             /* "callee#pos" -> first eligible arg var */
+        std::function<void(const ExprP&)> scan = [&](const ExprP& e) {
+            if (!e) return;
+            if (e->kind == EK::Binary && (e->op == "==" || e->op == "!=")) {
+                std::string a = base_var(e->a), b = base_var(e->b);
+                if (!a.empty() && !b.empty()) unite(a, b);      /* compare aliasing */
+            }
+            if (e->kind == EK::Call && !e->callee.empty()) {
+                for (size_t k = 0; k < e->args.size(); ++k) {
+                    std::string v = base_var(e->args[k]);
+                    if (v.empty() || !eligible(v)) continue;
+                    std::string key = e->callee + "#" + std::to_string(k);
+                    auto it = call_arg.find(key);
+                    if (it == call_arg.end()) call_arg[key] = v; /* same callee + same argpos */
+                    else unite(it->second, v);
+                }
+            }
+            scan(e->a); scan(e->b); scan(e->c);
+            for (auto& ar : e->args) scan(ar);
+        };
+        for (auto& b : blocks) {
+            for (auto& s : b.stmts) {
+                if (s.kind == SK::Assign && s.lhs && s.rhs) {
+                    std::string a = base_var(s.lhs), r = base_var(s.rhs);
+                    if (!a.empty() && !r.empty()) unite(a, r);   /* pointer-copy aliasing */
+                }
+                scan(s.lhs); scan(s.rhs);
+            }
+            scan(b.cond); scan(b.ret_value); scan(b.switch_var); scan(b.tail_call);
+        }
+        /* group members by union root */
+        std::map<std::string, std::vector<std::string>> groups;
+        for (auto& kv : param_structs)
+            if (eligible(kv.first)) groups[find(kv.first)].push_back(kv.first);
+        for (auto& g : groups) {
+            auto& members = g.second;
+            if (members.size() < 2) continue;
+            std::map<int64_t,int>  mfw;
+            std::map<int64_t,bool> mfu, mff, mfptr;
+            std::map<int64_t,std::string> mfptr_tag;
+            bool ok = true;
+            for (auto& m : members) {
+                const ParamStruct& L = param_structs[m];
+                for (auto& kv : L.fw) {
+                    int64_t o = kv.first; int w = kv.second;
+                    bool fu = L.fu.count(o) ? L.fu.at(o) : false;
+                    bool ff = L.ff.count(o) ? L.ff.at(o) : false;
+                    bool fp = L.fptr.count(o) ? L.fptr.at(o) : false;
+                    std::string ft = L.fptr_tag.count(o) ? L.fptr_tag.at(o) : "";
+                    auto it = mfw.find(o);
+                    if (it == mfw.end()) {
+                        mfw[o] = w; mfu[o] = fu; mff[o] = ff; mfptr[o] = fp;
+                        if (!ft.empty()) mfptr_tag[o] = ft;
+                    } else {
+                        std::string mft = mfptr_tag.count(o) ? mfptr_tag[o] : "";
+                        /* signedness (fu) difference is benign; everything else aborts. */
+                        if (it->second != w || mff[o] != ff || mfptr[o] != fp || mft != ft) { ok = false; break; }
+                    }
+                }
+                if (!ok) break;
+            }
+            if (!ok) continue;
+            int64_t prev_end = -1;                              /* reject any overlap */
+            for (auto& kv : mfw) {
+                if (kv.first < prev_end) { ok = false; break; }
+                prev_end = kv.first + kv.second;
+            }
+            if (!ok) continue;
+            /* canonical = member with the most fields (ties -> lexicographically smallest). */
+            std::string canon = members.front();
+            for (auto& m : members)
+                if (param_structs[m].fw.size() > param_structs[canon].fw.size() ||
+                    (param_structs[m].fw.size() == param_structs[canon].fw.size() && m < canon))
+                    canon = m;
+            std::string tag = param_structs[canon].tag;
+            for (auto& m : members) {                           /* shared tag + unioned fields */
+                ParamStruct& L = param_structs[m];
+                L.tag = tag; L.fw = mfw; L.fu = mfu; L.ff = mff; L.fptr = mfptr; L.fptr_tag = mfptr_tag;
+            }
+        }
+    }
 
     /* Cache each READ-ONLY global struct base in a typed local (`struct s* gs_X = (struct
      * s*)qword_X;`) so the body reads `gs_X->field` instead of repeating the ~50-char
@@ -793,6 +937,21 @@
     void detect_stl_vectors() {
         if (std::getenv("DS_NO_STLVEC")) return;
         std::set<std::string> vecs;
+        /* An MSVC std::vector is EXACTLY three 8-byte pointers {_Myfirst,_Mylast,_Myend}
+         * (0x18 bytes). The begin/end pair at 0/8 alone is too weak: a serialization
+         * buffer with {char* begin; char* end; int32 remaining; int32 flags; int32 idx}
+         * shares the `end - begin` subtraction but its 3rd slot is a SCALAR COUNTER, not a
+         * capacity pointer. Reject when offset 0x10 is present and NOT 8 bytes, or when any
+         * field lands at 0x14 (which can only exist if 0x10 is a 4-byte scalar, never a
+         * pointer). Absent 3rd field (a range-only vector) still passes. */
+        auto vec_shape_ok = [&](const std::string& p) -> bool {
+            if (!param_structs.count(p)) return false;
+            const ParamStruct& L = param_structs[p];
+            if (!(L.fw.count(0) && L.fw.at(0) == 8 && L.fw.count(8) && L.fw.at(8) == 8)) return false;
+            if (L.fw.count(16) && L.fw.at(16) != 8) return false;
+            if (L.fw.count(20)) return false;
+            return true;
+        };
         std::function<void(const ExprP&)> scan = [&](const ExprP& e) {
             if (!e) return;
             if (e->kind == EK::Binary && e->op == "-" && e->a && e->b &&
@@ -800,11 +959,8 @@
                 std::string pa, pb; int64_t oa = 0, ob = 0;
                 if (struct_base_offset(e->a->a, pa, oa) && oa == 8 &&
                     struct_base_offset(e->b->a, pb, ob) && ob == 0 &&
-                    pa == pb && param_structs.count(pa)) {
-                    const ParamStruct& L = param_structs[pa];
-                    if (L.fw.count(0) && L.fw.at(0) == 8 && L.fw.count(8) && L.fw.at(8) == 8)
-                        vecs.insert(pa);
-                }
+                    pa == pb && vec_shape_ok(pa))
+                    vecs.insert(pa);
             }
             scan(e->a); scan(e->b); scan(e->c);
             for (auto& ar : e->args) scan(ar);
@@ -835,15 +991,11 @@
                 int64_t off = 0;
                 return struct_base_offset(m->a, p, off) && off == want && param_structs.count(p);
             };
-            auto two_qword = [&](const std::string& p) {
-                const ParamStruct& L = param_structs[p];
-                return L.fw.count(0) && L.fw.at(0) == 8 && L.fw.count(8) && L.fw.at(8) == 8;
-            };
             for (auto& b : blocks)
                 for (auto& s : b.stmts) {
                     if (s.kind != SK::Assign || !s.lhs || s.lhs->kind != EK::Var || !s.rhs) continue;
                     std::string p;
-                    if (field_of(s.rhs, 0, p) && two_qword(p)) begin_of[s.lhs->name] = p;
+                    if (field_of(s.rhs, 0, p) && vec_shape_ok(p)) begin_of[s.lhs->name] = p;
                 }
             std::function<void(const ExprP&)> scan_cmp = [&](const ExprP& e) {
                 if (!e) return;

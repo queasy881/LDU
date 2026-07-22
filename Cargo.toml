@@ -4,6 +4,7 @@ members = [
     "crates/shell",
     "crates/binary-parser",
     "crates/bridge",
+    "crates/flirt",
 ]
 
 [workspace.package]

@@ -19,3 +19,4 @@ serde_json = "1"
 
 bridge = { path = "../bridge" }
 binparser = { path = "../binary-parser" }
+flirt = { path = "../flirt" }

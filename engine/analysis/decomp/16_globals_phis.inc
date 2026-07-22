@@ -230,6 +230,16 @@
                 if (op=="/" && y!=0) return wrap(u?(int64_t)((uint64_t)x/(uint64_t)y):x/y);
                 if (op=="%" && y!=0) return wrap(u?(int64_t)((uint64_t)x%(uint64_t)y):x%y);
             }
+            /* integer register-doubling: x + x -> 2 * x. Value-exact mod 2^w and
+             * mirrors the IEEE-754 float doubling handled above. Guarded to a
+             * call-free, non-pointer operand so a side-effecting sub-expression is
+             * never evaluated a different number of times, and ptr+ptr is left
+             * alone. The constant sits on the RIGHT so the x*const folds below can
+             * compose it, collapsing the compiler's (v*3)+(v*3) lea-doubling to v*6. */
+            if (op=="+" && exprEqual(a, bb) && !has_call(a) && !renders_as_pointer(a)) {
+                int ew = e->width ? e->width : (a->width ? a->width : 4);
+                return fold(mkBinary("*", clone(a), mkConst(2, ew, e->is_unsigned), ew, e->is_unsigned));
+            }
             /* `base == base ± K`  ⟺  `K == 0` (and !=). The compiler wrote an
              * empty / "== end" check as `p == p + count*stride`; EXACT, and turns a
              * baffling self-referential compare into a plain `count*stride == 0`. */
@@ -302,13 +312,40 @@
                 return fold(mkBinary("&", clone(a->a),
                             mkConst(a->b->cval & bb->cval, ew), ew, e->is_unsigned));
             }
+            /* distribute a mask over a byte/word-write MERGE and drop the low half:
+             * `((P) | (R & L)) & M` where the merged-in operand's mask L clears every
+             * bit M keeps (L & M == 0) -> `P & M`. AND distributes over OR and
+             * (R & L) & M == 0, so this is an exact value identity. It collapses the
+             * nested partial-register merge chains a run of 8/16-bit sub-register
+             * writes produces -- `(((old & 0xffffff00) | x) & 0xffffff00) | y` folds
+             * down to `(old & 0xffffff00) | y` one level per write, then the narrowing
+             * cast at the byte store drops the surviving high part entirely. Mirrors
+             * the masks_off logic already used on the cast side above. */
+            if (op=="&" && bc && a->kind==EK::Binary && a->op=="|" && a->a && a->b) {
+                uint64_t M = (uint64_t)bb->cval;
+                auto masks_off = [&](const ExprP& s)->bool {
+                    return s && s->kind==EK::Binary && s->op=="&" && s->b &&
+                           s->b->kind==EK::Const &&
+                           ((uint64_t)s->b->cval & M)==0;
+                };
+                int ew = e->width ? e->width : 4;
+                if (masks_off(a->b))
+                    return fold(mkBinary("&", clone(a->a), clone(bb), ew, e->is_unsigned));
+                if (masks_off(a->a))
+                    return fold(mkBinary("&", clone(a->b), clone(bb), ew, e->is_unsigned));
+            }
             /* redundant narrowing cast before a small-mask AND: `(signed char)X & K` == `X & K`
              * when K's set bits all fit the cast width — the AND masks out the sign/zero-
              * extended bits, so the truncation is a no-op. Removes `(signed char)`/`(short)`
              * noise on flag/bitfield tests. */
             if (op=="&" && bc && bb->cval >= 0 && a && a->kind==EK::Cast && a->a &&
                 a->op.find('*')==std::string::npos && !a->is_float && !a->a->is_float &&
-                ((a->width==1 && bb->cval<=0xff) || (a->width==2 && bb->cval<=0xffff))) {
+                a->width >= 1 && a->width <= 8 &&
+                (a->width >= 8 || (uint64_t)bb->cval <= (((uint64_t)1 << (a->width * 8)) - 1))) {
+                /* peel ANY integer cast (byte..qword) whose width covers the mask:
+                 * `(uint64_t)((int8_t)v1) & 0xf` -> `v1 & 0xf`, dropping both the
+                 * widening and the sign-changing truncation the mask makes dead.
+                 * fold() re-applies, so a chain of casts unwinds one level at a time. */
                 int ew = e->width ? e->width : 4;
                 return fold(mkBinary("&", clone(a->a), clone(bb), ew, e->is_unsigned));
             }
@@ -477,6 +514,20 @@
                 inner->b && inner->b->kind == EK::Const && inner->b->cval == e->b->cval)
                 return e->a;
         }
+        /* `(x * c1) * c2` -> `x * (c1*c2)` on the FINAL tree. fold() has this exact
+         * rule but runs at LIFT time; a pointer/index byte-offset assembled later by
+         * copy-propagation (a lea `*9` composed with the `*8` address scale, or the
+         * `x+x`->`*2` doubling composed with `*8`) reaches the renderer un-refolded as
+         * `x * 9 * 8` / `x * 2 * 8`. Integer only, value-exact mod 2^w. */
+        if (!tf_off && e->kind == EK::Binary && e->op == "*" && !e->is_float &&
+            e->b && e->b->kind == EK::Const &&
+            e->a && e->a->kind == EK::Binary && e->a->op == "*" && !e->a->is_float &&
+            e->a->b && e->a->b->kind == EK::Const) {
+            int ew = e->width ? e->width : 8;
+            return peephole_expr(mkBinary("*", clone(e->a->a),
+                        mkConst(e->a->b->cval * e->b->cval, ew, e->is_unsigned),
+                        ew, e->is_unsigned));
+        }
         /* both arms the same constant -> that constant (the condition is dead) */
         if (!tf_off && ternary_of_consts(e) && e->b->cval == e->c->cval)
             return mkConst(e->b->cval, e->width, e->is_unsigned);
@@ -487,6 +538,31 @@
                 e->a && e->a->width == e->width) return e->a;
             if (e->a && e->a->kind == EK::Const && e->a->cval == 0 &&
                 e->b && e->b->width == e->width) return e->b;
+        }
+        /* partial-register byte/word merge onto a POINTER's stale bits:
+         * `(P & 0xFFFFFF00) | Y` where P is a pointer value comes from a
+         * `mov pl,byte` whose kept high bits are a leftover address. Masking a
+         * pointer to keep only its high bytes and OR-ing in a low byte is never
+         * meaningful C -- the value is observable only as its low part Y (the code
+         * ties a scanned character to `a2->field_0`). Drop the dead high half.
+         * Mirrors the byte-cast merge strip in mkCast, but keyed on the merged-in
+         * base being a POINTER rather than on a truncating cast. The keep-mask has
+         * its low byte(s) all zero; pointer-tag idioms (`(p & ~7) | tag`) keep low
+         * bits set and so never match. */
+        if (!tf_off && e->kind == EK::Binary && e->op == "|" && !e->is_float && e->a && e->b) {
+            auto is_keepmask = [](int64_t m) -> bool {
+                uint64_t u = (uint64_t)m;
+                return u == 0xFFFFFF00ull || u == 0xFFFFFFFFFFFFFF00ull ||   /* ~0xFF   (byte write) */
+                       u == 0xFFFF0000ull || u == 0xFFFFFFFFFFFF0000ull;     /* ~0xFFFF (word write) */
+            };
+            auto hi_ptr_merge = [&](const ExprP& masked, const ExprP& low) -> bool {
+                return masked && masked->kind == EK::Binary && masked->op == "&" &&
+                       masked->a && masked->b && masked->b->kind == EK::Const &&
+                       is_keepmask(masked->b->cval) &&
+                       expr_is_pointer(masked->a) && low && !expr_is_pointer(low);
+            };
+            if (hi_ptr_merge(e->a, e->b)) return e->b;
+            if (hi_ptr_merge(e->b, e->a)) return e->a;
         }
         /* a constant-ternary tested against 0 IS its condition */
         if (!tf_off && e->kind == EK::Binary && (e->op == "!=" || e->op == "==") &&
@@ -549,6 +625,17 @@
             (e->a->kind == EK::Var || e->a->kind == EK::Mem) &&
             e->a->width == e->width && e->is_unsigned == e->a->is_unsigned)
             return e->a;
+        /* An `int`-width integer cast over a comparison/logical result is pure noise:
+         * a C relational or logical operator (`a > b`, `x && y`) already yields `int`
+         * 0/1, so `(int32_t)(a > b)` == `(a > b)` value-identically. Restricted to
+         * width==4 (a width-8 cast is a REAL widening that matters if the 0/1 is then
+         * shifted or multiplied at 64-bit width) and to non-pointer, non-float casts. */
+        if (e->kind == EK::Cast && !e->is_float && e->width == 4 &&
+            e->op.find('*') == std::string::npos && e->a && e->a->kind == EK::Binary) {
+            const std::string& io = e->a->op;
+            if (io=="<"||io=="<="||io==">"||io==">="||io=="=="||io=="!="||io=="&&"||io=="||")
+                return e->a;
+        }
         /* A2: `(char*)((char*)p + off)` -> `(char*)p + off`. A `(char*)` cast over a `+`/`-`
          * whose base operand is ALREADY a `(char*)` is redundant — the byte-pointer sum is
          * already char*. Drop the outer cast so nested byte-arithmetic doesn't stack casts. */
@@ -566,6 +653,27 @@
                 c->op = "-"; c->b = mkConst(-e->b->cval, e->b->width, false);
                 return c;
             }
+            /* (x + x) * K  ->  x * (2*K)  (and the mirror K * (x + x)). A doubled
+             * operand scaled by a constant is a strength-reduced array index
+             * (`(idx + idx) * 8` == idx*16 for a 16-byte stride) that Hex-Rays folds.
+             * Value-identical in modular arithmetic (2*x*K == x*(2K)); integer only,
+             * K bounded so 2*K cannot overflow int64, and it reads x ONCE where the
+             * sum read it twice (strictly fewer evaluations, so no aliasing concern).
+             * Guarded to a call-free doubled operand so nothing side-effecting moves. */
+            if (op == "*" && !e->is_float) {
+                for (int sw = 0; sw < 2; ++sw) {
+                    ExprP kc  = sw ? e->a : e->b;   /* constant side       */
+                    ExprP sum = sw ? e->b : e->a;   /* the (x + x) side     */
+                    if (kc && kc->kind == EK::Const && !kc->is_float &&
+                        kc->cval > -0x40000000LL && kc->cval < 0x40000000LL &&
+                        sum && sum->kind == EK::Binary && sum->op == "+" && !sum->is_float &&
+                        sum->a && sum->b && exprEqual(sum->a, sum->b) && !has_call(sum->a)) {
+                        return peephole_expr(mkBinary("*", clone(sum->a),
+                                             mkConst(kc->cval * 2, e->width, e->is_unsigned),
+                                             e->width, e->is_unsigned));
+                    }
+                }
+            }
             /* comparison normalizations (value-identical: == / != yield the same 0/1) */
             if (op == "==" || op == "!=") {
                 /* (a - b) ==/!= 0  ->  a ==/!= b */
@@ -580,8 +688,31 @@
                     e->a->kind == EK::Binary && (e->a->op == "+" || e->a->op == "-") &&
                     e->a->a && e->a->b && e->a->b->kind == EK::Const) {
                     int64_t c1 = e->a->op == "+" ? e->a->b->cval : -e->a->b->cval;
+                    int64_t nc = e->b->cval - c1;
+                    /* At a sub-word width the hardware ZF/compare truncates the add
+                     * result to w bytes, but C promotes the operand (e.g. (int8_t)x)
+                     * to int -- so an out-of-range folded constant makes the equality
+                     * a tautology. A byte counter `add r10b,0xff; jne` folded to the
+                     * impossible `(int8_t)x != -255` (never false), silently losing
+                     * the 16-iteration loop bound. Reduce the constant modulo 2^(8w)
+                     * into the range the promoted operand spans, matching the inner
+                     * operand's signedness. Value-identical mod 2^(8w). */
+                    int fw = e->a->width;
+                    if (fw == 1 || fw == 2) {
+                        int bits = fw * 8;
+                        uint64_t mask = (1ull << bits) - 1;
+                        uint64_t u = (uint64_t)nc & mask;
+                        bool lhs_uns = false;
+                        ExprP inr = e->a->a;
+                        if (inr && inr->kind == EK::Cast)
+                            lhs_uns = inr->is_unsigned || inr->op == "(unsigned char)" ||
+                                      inr->op == "(unsigned short)";
+                        if (lhs_uns) nc = (int64_t)u;
+                        else { uint64_t sgn = 1ull << (bits - 1);
+                               nc = (u & sgn) ? (int64_t)(u | ~mask) : (int64_t)u; }
+                    }
                     auto c = std::make_shared<Expr>(*e);
-                    c->a = e->a->a; c->b = mkConst(e->b->cval - c1, e->b->width, e->b->is_unsigned);
+                    c->a = e->a->a; c->b = mkConst(nc, e->b->width, e->b->is_unsigned);
                     return peephole_expr(c);
                 }
             }
@@ -738,6 +869,14 @@
     /* packed-INT analog of entry_xmm_f (the guard-block broadcast for a[i]*=k). */
     std::vector<std::array<std::array<ExprP, 4>, R_COUNT>> entry_xmm_i;
     std::vector<std::array<bool, R_COUNT>> entry_xmm_i_real;
+    /* entry_vla[blk][reg] = address a wide (ymm/zmm) reg was loaded-from on entry
+     * to blk, when all live predecessors agree — lets a jump-table-unrolled memcpy
+     * (load and store in different blocks) still model as a real chunked copy. */
+    std::vector<std::array<ExprP, R_COUNT>> entry_vla;
+    /* entry_vfill[blk][reg] = broadcast/zero/ones fill value (+ element size) a wide
+     * reg holds on entry to blk, when all preds agree — the jump-table-unrolled memset. */
+    std::vector<std::array<ExprP, R_COUNT>> entry_vfill;
+    std::vector<std::array<int, R_COUNT>> entry_vfill_esz;
     std::vector<std::array<bool, R_COUNT>> reg_live_in;
     /* x87 stack at each block's EXIT, so a successor can inherit it. regfile is reset
      * per block and re-seeded, so the FPU stack must be too — letting it flow in raw
@@ -755,6 +894,9 @@
         entry_xmm_f_real.assign(blocks.size(), {});
         entry_xmm_i.assign(blocks.size(), {});
         entry_xmm_i_real.assign(blocks.size(), {});
+        entry_vla.assign(blocks.size(), {});
+        entry_vfill.assign(blocks.size(), {});
+        entry_vfill_esz.assign(blocks.size(), {});
         block_flags_out.assign(blocks.size(), FlagSrc());
         block_fpu_out.assign(blocks.size(), {});
         block_fpu_top_out.assign(blocks.size(), 0);
@@ -1217,6 +1359,56 @@
                             if (!hsame) { curh = nh; changed = true; }
                         }
 
+                        /* Vec-load-address merge for XMM regs (same agreement rule
+                         * as the hi-lane): the "this wide reg was loaded from addr X"
+                         * fact reaches a successor only when every predecessor that
+                         * carries one agrees on the exact address. A disagreement, a
+                         * backstop-tainted address, or any predecessor that lacks the
+                         * fact (e.g. one that overwrote the reg -> reg_out_vla cleared)
+                         * drops it, so a stale source can never leak into the store. */
+                        if (is_xmm((Reg)r) && b.id < (int)entry_vla.size()) {
+                            ExprP av = nullptr; bool adiff = false, aany = false;
+                            for (int p : b.pred) {
+                                if (p < 0 || p >= (int)blocks.size()) continue;
+                                ExprP po = blocks[p].reg_out_vla[r];
+                                if (!po || expr_has_in_backstop(po)) { aany = false; break; }
+                                aany = true;
+                                if (!av) av = po;
+                                else if (!exprEqual(av, po)) adiff = true;
+                            }
+                            ExprP na = (aany && !adiff) ? clone(av) : nullptr;
+                            ExprP& cura = entry_vla[b.id][r];
+                            bool asame = ((bool)cura == (bool)na) &&
+                                         (!cura || exprEqual(cura, na));
+                            if (!asame) { cura = na; changed = true; }
+                        }
+
+                        /* Vec-FILL merge for XMM regs (same all-preds-agree rule as vla,
+                         * but on both value and element size): the "this wide reg is a
+                         * broadcast/zero of value V, element size E" fact reaches a
+                         * successor only when every predecessor carrying one agrees on
+                         * both. Any disagreement or a predecessor lacking it drops it. */
+                        if (is_xmm((Reg)r) && b.id < (int)entry_vfill.size()) {
+                            ExprP fvv = nullptr; int fesz = 0;
+                            bool fdiff2 = false, fany2 = false;
+                            for (int p : b.pred) {
+                                if (p < 0 || p >= (int)blocks.size()) continue;
+                                ExprP po = blocks[p].reg_out_vfill[r];
+                                int pe = blocks[p].reg_out_vfill_esz[r];
+                                if (!po || pe == 0 || expr_has_in_backstop(po)) { fany2 = false; break; }
+                                fany2 = true;
+                                if (!fvv) { fvv = po; fesz = pe; }
+                                else if (!exprEqual(fvv, po) || fesz != pe) fdiff2 = true;
+                            }
+                            ExprP nf = (fany2 && !fdiff2) ? clone(fvv) : nullptr;
+                            int   ne = (fany2 && !fdiff2) ? fesz : 0;
+                            ExprP& curf = entry_vfill[b.id][r];
+                            int&   cure = entry_vfill_esz[b.id][r];
+                            bool fsame = ((bool)curf == (bool)nf) &&
+                                         (!curf || (exprEqual(curf, nf) && cure == ne));
+                            if (!fsame) { curf = nf; cure = ne; changed = true; }
+                        }
+
                         /* Packed-FLOAT 4-lane merge for XMM regs: same agreement
                          * rule — a loop-invariant broadcast (`shufps xmm,xmm,0` in a
                          * preheader) reaches the loop body only if every predecessor
@@ -1619,6 +1811,14 @@
      * integer constant (peeling any widening cast) is emitted in decimal; anything
      * else falls back to the normal string-literal / expression rendering. */
     std::string call_arg_text(const ExprP& arg, bool dec_api) {
+        /* A subnormal "float" const in call-argument (VALUE) position is a
+         * misclassified small integer that flowed into a float-typed param slot —
+         * pass its integer value (`1`), not the bit-reinterpret `1.4013e-45f`. Safe
+         * here because a call arg is never a bit-reinterpret store target. */
+        if (is_subnormal_float_const(arg)) {
+            char b[24]; std::snprintf(b, sizeof b, "%lld", (long long)arg->cval);
+            return b;
+        }
         if (dec_api && arg) {
             ExprP c = arg;
             while (c && c->kind == EK::Cast && c->a) c = c->a;   /* peel widening casts */
@@ -1657,6 +1857,17 @@
         }
         std::string sl = try_string_lit(a);
         return sl.empty() ? render(a) : sl;
+    }
+    /* True if `e` is a "float" const whose bit pattern is a SUBNORMAL (biased
+     * exponent 0, mantissa != 0). Real code never uses float subnormals, so such a
+     * const is a misclassified small INTEGER that flowed into a float-typed slot
+     * (`mov [slot],1` passed to a float param renders 0x1 as `1.4013e-45f`). Only
+     * safe to re-render as the integer in a VALUE context (a call arg), NOT in a
+     * bit-reinterpret store `*(double*)&x = <bits>` where the bits are the payload. */
+    bool is_subnormal_float_const(const ExprP& e) const {
+        if (!e || e->kind != EK::Const || !e->is_float) return false;
+        if (e->width < 8) { uint32_t b = (uint32_t)e->cval; return ((b >> 23) & 0xff) == 0 && (b & 0x7fffff) != 0; }
+        uint64_t b = (uint64_t)e->cval; return ((b >> 52) & 0x7ff) == 0 && (b & 0xfffffffffffffULL) != 0;
     }
     std::string render_const(const ExprP& e) {
         if (e->is_float) return fmt_float_lit(e->cval, e->width < 8);
@@ -1773,7 +1984,19 @@
             }
             case EK::AddrOf: return "&" + rsub(e->a, 15);
             case EK::Unary:  return e->op + rsub(e->a, 14, true);
-            case EK::Cast:   return e->op + rsub(e->a, 14, true);
+            case EK::Cast: {
+                /* `(char*)0xADDR` / `(int8_t*)0xADDR` pointing at a valid read-only
+                 * C string reads as the string literal, like the sibling paths that
+                 * already emit "<Unknown>" — not a bare rodata address. read_cstring
+                 * validates it, so a genuine numeric pointer is left untouched. */
+                if (e->a && e->a->kind == EK::Const &&
+                    (e->op == "(char*)" || e->op == "(int8_t*)" || e->op == "(uint8_t*)" ||
+                     e->op == "(const char*)" || e->op == "(unsigned char*)")) {
+                    std::string sl = try_string_lit(e->a);
+                    if (!sl.empty()) return sl;
+                }
+                return e->op + rsub(e->a, 14, true);
+            }
             case EK::Ternary: {
                 /* std::min / std::max: a select whose condition compares the SAME two
                  * (side-effect-free) operands that are the two arms — `X<Y?X:Y` etc.
@@ -1896,6 +2119,17 @@
                  * arithmetic and bitwise ops well-typed (no C2110 / C2296). */
                 auto rptr = [&](const ExprP& x) -> bool {
                     if (!x) return false;
+                    /* A KNOWN-FLOAT var/param is NEVER a pointer base. A float param
+                     * declared `float`/`double` that also carries a stray var_pointer
+                     * flag (a mis-fired pointer propagation) would otherwise be treated
+                     * as a pointer in +,-,bitwise, and DIVISION contexts: `a2 + const`
+                     * rendered a bit-reinterpret of the float lvalue, and a float `/ a2`
+                     * cast the divisor to a truncating integer -- both WRONG C. The
+                     * declared float type wins (renders_as_pointer already declines it,
+                     * keying off decl_type), so this only realigns expr_is_pointer's
+                     * stale var_pointer flag with the declared float type. */
+                    if (x->kind == EK::Var && var_is_float.count(x->name) &&
+                        var_is_float[x->name]) return false;
                     if (x->kind == EK::Cast && x->op.find('*') != std::string::npos)
                         return true;
                     if (is_struct_ptr_field(x)) return true;   /* a retyped `struct T*` field */
@@ -1914,12 +2148,35 @@
                      * (the float literal's raw bits ARE the offset). `ptr + floatconst`
                      * is C2111; render the integer bits (e->cval holds them). Gated to
                      * a pointer base so a genuine `float + floatconst` is untouched. */
-                    if (e->b && e->b->kind == EK::Const && e->b->is_float && ptr_base(e->a))
+                    if (e->b && e->b->kind == EK::Const && e->b->is_float && ptr_base(e->a)) {
+                        /* Only a SUBNORMAL "float" const is a genuine mis-tagged small
+                         * integer byte offset (every offset < 2^23 has float-bit exponent
+                         * 0), so its raw bits ARE the offset. A NORMAL float const on a
+                         * pointer base is a real scalar-float add whose base was mis-typed
+                         * as a pointer -- e.g. a param-home slot reused as float scratch
+                         * after an out-param call wrote a float through &slot (`addss
+                         * xmm,[home]; addss xmm,[flt_const]`). Emitting the const's raw
+                         * bit pattern as an int addend (`a7 + 1065353048`) is flat wrong.
+                         * Keep the add in the float domain: reinterpret the base's low 4
+                         * bytes as float (bit-identical, and value-preserving even if the
+                         * base is really a float var) so the const prints as its true
+                         * value. Needs a plain lvalue Var base for `&base` to be well-formed. */
+                        /* peel a pointer cast (`(char*)a7`) so the underlying lvalue Var is
+                         * reachable for `&base`; without this a cast-wrapped base fell through
+                         * to the pointer-arith path and emitted `(char*)a7 + 0.99999f` = C2111. */
+                        ExprP fb = e->a; while (fb && fb->kind == EK::Cast && fb->a) fb = fb->a;
+                        if (!is_subnormal_float_const(e->b) && fb && fb->kind == EK::Var)
+                            return "*(float*)&" + rsub(fb, 15) + " " + op + " " + render_const(e->b);
                         return (is_struct_ptr_field(e->a) ? "(char*)" + rsub(e->a, 14) : rsub(e->a, pp))
                                + " " + op + " " + std::to_string((long long)e->b->cval);
-                    if (op == "+" && e->a && e->a->kind == EK::Const && e->a->is_float && ptr_base(e->b))
+                    }
+                    if (op == "+" && e->a && e->a->kind == EK::Const && e->a->is_float && ptr_base(e->b)) {
+                        ExprP fb = e->b; while (fb && fb->kind == EK::Cast && fb->a) fb = fb->a;
+                        if (!is_subnormal_float_const(e->a) && fb && fb->kind == EK::Var)
+                            return "*(float*)&" + rsub(fb, 15) + " + " + render_const(e->a);
                         return (is_struct_ptr_field(e->b) ? "(char*)" + rsub(e->b, 14) : rsub(e->b, pp))
                                + " + " + std::to_string((long long)e->a->cval);
+                    }
                     auto typed_ptr = [&](const ExprP& x) -> bool {
                         if (is_struct_ptr_field(x)) return true;   /* void* field: byte-cast for arithmetic */
                         if (!x || x->kind != EK::Var) return false;
@@ -1961,9 +2218,53 @@
                     auto addr_like = [&](const ExprP& x) -> bool {
                         return rptr(x) || (x && x->kind == EK::Mem && x->width == 8 && !x->is_float);
                     };
+                    /* Flatten a chained byte displacement: `(p + c1) + c2` on a pointer base
+                     * (a temp `rsi = a1 + 8` then a store `[rsi + 8]`) otherwise renders as the
+                     * nested `(char*)((char*)a1 + 8) + 8`. Fold the constants so it reads
+                     * `(char*)a1 + 0x10`. Only when the inner base is itself a pointer, so this is
+                     * byte arithmetic (never `int + int`), and the inner op is `+` (a ptrdiff
+                     * `p - q` never matches). */
+                    if (op == "+" && e->b && e->b->kind == EK::Const && !e->b->is_float &&
+                        e->a && e->a->kind == EK::Binary && e->a->op == "+" &&
+                        e->a->b && e->a->b->kind == EK::Const && !e->a->b->is_float && e->a->a &&
+                        (rptr(e->a->a) || typed_ptr(e->a->a) || is_struct_ptr_field(e->a->a))) {
+                        ExprP folded = mkBinary("+", clone(e->a->a),
+                                                mkConst(e->a->b->cval + e->b->cval, 8), 8);
+                        return render(folded);
+                    }
                     if (op == "-" && (is_struct_ptr_field(e->a) || is_struct_ptr_field(e->b)) &&
                         addr_like(e->a) && addr_like(e->b))
                         return "(char*)" + rsub(e->a, 14) + " - (char*)" + rsub(e->b, 14);
+                    /* `&p->field + K`: try_struct_field_addr renders the base as a TYPED
+                     * pointer to the field (`<fieldtype>*`), so a residual byte offset K —
+                     * a 16-byte SIMD store split into &field / &field+8, or any displacement
+                     * past the last declared field — would be scaled by sizeof(field)
+                     * (`&field_10 + 8` steps 8*8=64 bytes, not 8, overflowing the object).
+                     * Cast the field-address to char* so K stays a byte count. Runs only
+                     * after the whole-node try_struct_field_addr above already declined
+                     * (i.e. e is NOT itself an exact field), mirroring the typed_ptr Var
+                     * handling below. */
+                    {
+                        std::string sfa_dummy;
+                        if (try_struct_field_addr(e->a, sfa_dummy))
+                            return "(char*)" + rsub(e->a, 14) + " " + op + " " + off_of(e->b, 12);
+                        if (op == "+" && try_struct_field_addr(e->b, sfa_dummy))
+                            return "(char*)" + rsub(e->b, 14) + " + " + off_of(e->a, 12);
+                    }
+                    /* A FLOAT const can never be a pointer byte-offset (`(char*)a7 + 0.99999f`
+                     * = C2111). The base is a param-home slot reused as float scratch; reinterpret
+                     * its bytes as float so it reads `*(float*)&base + 0.99999f`. Catches the case
+                     * the ptr_base block above misses when only typed_ptr (not ptr_base) holds. */
+                    {
+                        ExprP pc = nullptr, fc = nullptr;
+                        if (e->b && e->b->kind == EK::Const && e->b->is_float) { pc = e->a; fc = e->b; }
+                        else if (op == "+" && e->a && e->a->kind == EK::Const && e->a->is_float) { pc = e->b; fc = e->a; }
+                        if (pc && fc && !is_subnormal_float_const(fc)) {
+                            ExprP fb = pc; while (fb && fb->kind == EK::Cast && fb->a) fb = fb->a;
+                            if (fb && fb->kind == EK::Var)
+                                return "*(float*)&" + rsub(fb, 15) + " " + op + " " + render_const(fc);
+                        }
+                    }
                     if (typed_ptr(e->a))
                         return "(char*)" + rsub(e->a, 14) + " " + op + " " + off_of(e->b, 12);
                     if (op == "+" && typed_ptr(e->b))

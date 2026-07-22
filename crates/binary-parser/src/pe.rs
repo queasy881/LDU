@@ -325,6 +325,7 @@ fn parse_exports(bytes: &[u8], ctx: &PeCtx) -> Vec<Symbol> {
                     out.push(Symbol {
                         rva: func_rva,
                         name,
+                        module: None,
                     });
                 }
             }
@@ -356,12 +357,16 @@ fn parse_imports(bytes: &[u8], ctx: &PeCtx) -> Vec<Symbol> {
     let max_dlls = 4096usize;
     for _ in 0..max_dlls {
         let ilt_rva = rd_u32(bytes, desc_off).unwrap_or(0) as u64;
-        let _name_rva = rd_u32(bytes, desc_off + 0x0C).unwrap_or(0) as u64;
+        let name_rva = rd_u32(bytes, desc_off + 0x0C).unwrap_or(0) as u64;
         let iat_rva = rd_u32(bytes, desc_off + 0x10).unwrap_or(0) as u64;
 
         if ilt_rva == 0 && iat_rva == 0 {
             break; // null terminator descriptor
         }
+
+        // DLL name for this descriptor (IMAGE_IMPORT_DESCRIPTOR.Name -> ASCII).
+        // Attached to every import from this table so the UI can group by module.
+        let dll = read_str_rva(bytes, ctx, name_rva).filter(|s| !s.is_empty());
 
         // Prefer the ILT (OriginalFirstThunk) for names since the IAT may be
         // bound (overwritten by addresses); fall back to the IAT.
@@ -397,7 +402,15 @@ fn parse_imports(bytes: &[u8], ctx: &PeCtx) -> Vec<Symbol> {
             let slot_rva = iat_rva.saturating_add((i as u64) * (ptr as u64));
 
             if thunk & high_bit != 0 {
-                // Import by ordinal — no name available; skip naming.
+                // Import by ordinal — no name in the file. Surface it anyway as
+                // `Ordinal_<n>` so the import is visible and groupable by DLL
+                // (matches how IDA/Ghidra show unnamed ordinal imports).
+                let ord = thunk & 0xFFFF;
+                out.push(Symbol {
+                    rva: slot_rva,
+                    name: format!("Ordinal_{ord}"),
+                    module: dll.clone(),
+                });
             } else {
                 // Import by name: thunk is an RVA to IMAGE_IMPORT_BY_NAME
                 // { u16 Hint; char Name[]; } — the name starts at +2.
@@ -408,6 +421,7 @@ fn parse_imports(bytes: &[u8], ctx: &PeCtx) -> Vec<Symbol> {
                             out.push(Symbol {
                                 rva: slot_rva,
                                 name,
+                                module: dll.clone(),
                             });
                         }
                     }

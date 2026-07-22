@@ -76,6 +76,19 @@ fn lock<'a, T>(m: &'a Mutex<T>) -> std::sync::MutexGuard<'a, T> {
     }
 }
 
+/// Serializes on-demand (`get_pseudocode` slow-path) decompiles, which run off
+/// the UI thread. Only ONE runs at a time so the process-global `DS_FORCE_SM` /
+/// `DS_LINE_ADDR` env vars the engine reads can't race across concurrent
+/// requests. The eager load-time pass never contends this (it runs before any
+/// interactive request and never sets `DS_FORCE_SM`).
+fn ondemand_guard() -> std::sync::MutexGuard<'static, ()> {
+    static ONDEMAND: Mutex<()> = Mutex::new(());
+    match ONDEMAND.lock() {
+        Ok(g) => g,
+        Err(p) => p.into_inner(),
+    }
+}
+
 /// Entry point: parse the envelope and route by role.
 pub fn dispatch(ctx: &RoleCtx, win: WindowId, body: &str) {
     let msg: Value = match serde_json::from_str(body) {
@@ -340,7 +353,7 @@ fn dispatch_disasm(ctx: &RoleCtx, win: WindowId, id: &Value, cmd: &str, msg: &Va
             let arr: Vec<Value> = s
                 .imports
                 .iter()
-                .map(|(rva, name)| json!({ "rva": rva, "name": name }))
+                .map(|(rva, name, dll)| json!({ "rva": rva, "name": name, "dll": dll }))
                 .collect();
             reply_ok(ctx, win, id, Value::Array(arr));
         }
@@ -391,14 +404,76 @@ fn dispatch_disasm(ctx: &RoleCtx, win: WindowId, id: &Value, cmd: &str, msg: &Va
         }
         "get_pseudocode" => {
             let r = rva();
-            let s = lock(&session);
-            let code = match s.engine.as_ref() {
-                Some(e) => e
-                    .decompile(r)
-                    .unwrap_or_else(|| "/* no function at this address */".to_string()),
-                None => "/* engine not ready */".to_string(),
+            // Per-function state-machine toggle: the UI's inline "0 gotos" button sends
+            // `sm: true`, which forces the `while(1) switch(__state)` form for THIS function
+            // only. The engine reads DS_FORCE_SM at decompile time; set it around this single
+            // interactive call (one at a time on the UI thread -- no race with the N-thread
+            // batch dumper, which never sets it).
+            let sm = msg.get("sm").and_then(Value::as_bool).unwrap_or(false);
+            // Fast path: the worker eagerly decompiled every function at load time
+            // (structured form, `/*@addr*/` markers embedded). Serve that instantly.
+            // The state-machine form (`sm`) is rare and not cached -> compute below.
+            let cached = if !sm {
+                lock(&session).decomp_cache.get(&r).cloned()
+            } else {
+                None
             };
-            reply_ok(ctx, win, id, json!({ "code": code }));
+            if let Some(c) = cached {
+                reply_ok(ctx, win, id, json!({ "code": c }));
+                return;
+            }
+            // Slow path: NOT cached — a function past the eager caps (a huge/pathological
+            // CFG) or the interactive state-machine form. Decompile OFF the IPC/UI thread
+            // and reply asynchronously, so a multi-second decompile can NEVER freeze the
+            // app. The engine is shared (Arc, re-entrant) so we clone the handle and
+            // release the session lock before the (potentially long) decompile. On-demand
+            // decompiles are serialized by ondemand_guard() so the process-global
+            // DS_FORCE_SM / DS_LINE_ADDR env vars can't race across concurrent requests.
+            let engine = lock(&session).engine.clone();
+            let session2 = session.clone();
+            let proxy = ctx.proxy().clone();
+            let id = id.clone();
+            std::thread::spawn(move || {
+                let result = match engine {
+                    Some(e) => {
+                        let _guard = ondemand_guard();
+                        let had_sm = std::env::var("DS_FORCE_SM").ok();
+                        if sm {
+                            std::env::set_var("DS_FORCE_SM", "1");
+                        }
+                        std::env::set_var("DS_LINE_ADDR", "1"); // markers always on for the UI
+                        let out = e.decompile(r);
+                        match had_sm {
+                            Some(v) => std::env::set_var("DS_FORCE_SM", v),
+                            None => std::env::remove_var("DS_FORCE_SM"),
+                        }
+                        out
+                    }
+                    None => None,
+                };
+                // HONEST failure: when the engine genuinely can't produce a body, say so
+                // as an ERROR the UI surfaces — never a blank body dressed up as success.
+                match result {
+                    Some(code) if !code.trim().is_empty() => {
+                        if !sm {
+                            lock(&session2).decomp_cache.insert(r, code.clone());
+                        }
+                        send_reply(&proxy, win, &id, Ok(json!({ "code": code })));
+                    }
+                    Some(_) => send_reply(
+                        &proxy,
+                        win,
+                        &id,
+                        Err(format!("decompilation produced no output for {r:#x}")),
+                    ),
+                    None => send_reply(
+                        &proxy,
+                        win,
+                        &id,
+                        Err(format!("no function at {r:#x} (decompilation unavailable)")),
+                    ),
+                }
+            });
         }
         "set_comment" => {
             let r = rva();
@@ -415,6 +490,18 @@ fn dispatch_disasm(ctx: &RoleCtx, win: WindowId, id: &Value, cmd: &str, msg: &Va
         "get_comments" => {
             let p = lock(&proj);
             reply_ok(ctx, win, id, p.comments_json(bin_id));
+        }
+        // Persist the decompilation to disk (Ctrl+S). Reopening this binary then
+        // loads it instead of re-running the decompile pass.
+        "save_analysis" => {
+            let s = lock(&session);
+            let path = s.binary_path.clone();
+            let res = crate::session::save_decomp_cache(&path, &s.decomp_cache);
+            drop(s);
+            match res {
+                Ok(count) => reply_ok(ctx, win, id, json!({ "ok": true, "count": count })),
+                Err(e) => reply_err(ctx, win, id, &format!("save analysis: {e}")),
+            }
         }
         "toggle_mark" => {
             let r = rva();
