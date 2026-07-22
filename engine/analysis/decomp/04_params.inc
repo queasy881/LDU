@@ -459,6 +459,15 @@
             bool gs = (m.segment == X86_REG_GS) || cur_insn_seg == 1;
             bool fs = (m.segment == X86_REG_FS) || cur_insn_seg == 2;
             if ((gs || fs) && m.base == X86_REG_INVALID) {
+                /* gs:[0x30] TEB self -> NtCurrentTeb() (mirrors resolve_mem). */
+                if (gs && m.index == X86_REG_INVALID && m.disp == 0x30 &&
+                    !std::getenv("DS_NO_TEBNAMES") && !std::getenv("DS_NO_TEB")) {
+                    auto nt = std::make_shared<Expr>();
+                    nt->kind = EK::Call; nt->callee = "NtCurrentTeb";
+                    nt->width = 8; nt->ret_kind = 2;
+                    used_segread = true; used_nt_current_teb = true;
+                    return nt;
+                }
                 auto rd = std::make_shared<Expr>();
                 rd->kind = EK::Call; rd->callee = gs ? "__readgsqword" : "__readfsqword";
                 rd->width = 8; rd->ret_kind = 2;

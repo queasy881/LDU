@@ -362,6 +362,8 @@ struct Expr {
     bool char_hint = false;     /* Const: render as a char literal ('A') — a byte comparison */
     bool dec_hint = false;      /* Const: render as DECIMAL (a recovered divisor: `x / 10`) */
     bool null_hint = false;     /* Const 0: render as NULL (compared/assigned to a pointer) */
+    bool addr_hint = false;     /* Const: value is a static-data ADDRESS in a proven pointer
+                                 * position -> render `&<named_global>` (address-of a global) */
 };
 
 ExprP mkConst(int64_t v, int w = 4, bool u = false) {
@@ -5559,6 +5561,13 @@ struct Decompiler {
         if (used_segread) {
             protos += "unsigned long long __readgsqword(unsigned long long);\n";
             protos += "unsigned long long __readfsqword(unsigned long long);\n";
+        }
+        if (used_nt_current_teb) {
+            /* NtCurrentTeb() as the exact expression it replaces (gs:[0x30]) so the
+             * recompiled bytes are unchanged; #ifndef-guarded to avoid a winnt.h clash. */
+            protos += "#ifndef NtCurrentTeb\n";
+            protos += "#define NtCurrentTeb() ((char *)__readgsqword(0x30))\n";
+            protos += "#endif\n";
         }
         if (used_cpuid) {
             protos += "int __cpuid_eax(int, int);\n";

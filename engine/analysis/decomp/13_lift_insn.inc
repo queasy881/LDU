@@ -545,6 +545,7 @@
     std::set<std::string> used_cmps_fns;
     bool used_cpuid = false;  /* __cpuid_e?x appears -> emit prototypes */
     bool used_segread = false; /* __readgsqword/__readfsqword appears -> emit prototypes */
+    bool used_nt_current_teb = false; /* NtCurrentTeb() emitted -> emit its macro prelude */
     bool used_u2f = false;     /* __u2f (uint bits -> float) helper for a movd xmm,r bit reinterpret */
     bool used_f32hi = false;   /* __f32_hi (clear low 16 mantissa bits) — the Dekker high-part idiom */
     bool used_min = false, used_max = false; /* __min/__max recovered from a select ternary */
@@ -2053,7 +2054,36 @@
                     }
                 }
                 Reg dr; int dw; map_reg(OP(0).reg, dr, dw);
-                if (!is_xmm(dr)) break;      /* ymm -> R_NONE: the width guard's territory */
+                if (!is_xmm(dr)) {
+                    /* YMM/ZMM dest: map_reg -> R_NONE, so the xmm lane path below can't hold
+                     * it and the result was DROPPED -- the ymm vpcmpeqb vanished and the
+                     * vpmovmskb that reads it fell to a phantom in_YMM that trim strips, so
+                     * the AVX2 strlen/memchr/strchr scan loop got a FABRICATED zero-arg
+                     * __vpmovmskb() exit that no longer depends on the scanned memory (32
+                     * sites). Mirror the default AVX path: DEFINE the reg with a load-bearing
+                     * opaque intrinsic in vec_op_value so the movmsk reads the real
+                     * compare(+load). Same-reg all-ones is already a vec_fill above -- don't
+                     * turn it into a bogus compare. DS_NO_SSESCAN. */
+                    int aiy = (nop >= 3) ? 1 : 0, biy = (nop >= 3) ? 2 : 1;
+                    bool samereg = OP(aiy).type == X86_OP_REG && OP(biy).type == X86_OP_REG &&
+                                   OP(aiy).reg == OP(biy).reg;
+                    bool wide = (OP(0).reg >= X86_REG_YMM0 && OP(0).reg <= X86_REG_YMM15) ||
+                                (OP(0).reg >= X86_REG_ZMM0 && OP(0).reg <= X86_REG_ZMM31);
+                    if (samereg || !wide ||
+                        std::getenv("DS_NO_SSESCAN") || std::getenv("DS_NO_AVXMODEL")) break;
+                    ExprP a0 = rvalue(OP(aiy)), a1v = rvalue(OP(biy));
+                    if (!a0 || !a1v) break;   /* untracked src: leave the dest alone */
+                    auto call = std::make_shared<Expr>();
+                    call->kind = EK::Call;
+                    call->callee = "__" + sani(in.mnem);   /* __vpcmpeqb / __vpshufb extern */
+                    call->width = 8; call->ret_kind = 2;
+                    call->args.push_back(a0);              /* char broadcast */
+                    call->args.push_back(a1v);             /* the scanned load *[rcx] */
+                    extern_callees[call->callee] = call->ret_kind;
+                    opaque_ops[call->callee]++;
+                    vec_op_value[OP(0).reg] = call;        /* read back by rvalue() for R_NONE */
+                    break;
+                }
                 int ai = (nop >= 3) ? 1 : 0, bi = (nop >= 3) ? 2 : 1;   /* VEX: dst,src1,src2 */
                 /* `pcmpeqb x,x` is the canonical set-ALL-ONES idiom (the -1 twin of
                  * `xorps x,x`), NOT a real compare. Fold it — an opaque call here would

@@ -520,14 +520,16 @@
             case 0x08: return "TEB_StackBase";
             case 0x10: return "TEB_StackLimit";
             case 0x30: return "TEB_Self";                 /* NtCurrentTeb() */
-            case 0x40: return "TEB_ProcessEnvironmentBlock";
-            case 0x48: return "TEB_ProcessId";            /* ClientId.UniqueProcess */
-            case 0x50: return "TEB_ThreadId";             /* ClientId.UniqueThread */
+            /* x64 _TEB layout (was mislabeled): 0x40 ClientId.UniqueProcess (ProcessId),
+             * 0x48 ClientId.UniqueThread (ThreadId), 0x50 ActiveRpcHandle, 0x60 PEB. The old
+             * table claimed PEB at 0x40 (it is at 0x60) and shifted ProcessId/ThreadId down a
+             * slot; 0x50 (ActiveRpcHandle) and the bogus x64 0x2C are declined -> raw offset. */
+            case 0x40: return "TEB_ClientId_ProcessId";   /* ClientId.UniqueProcess (GetCurrentProcessId) */
+            case 0x48: return "TEB_ClientId_ThreadId";    /* ClientId.UniqueThread  (GetCurrentThreadId) */
             case 0x58: return "TEB_ThreadLocalStoragePointer";
-            case 0x60: return "TEB_PEB";
+            case 0x60: return "TEB_PEB";                  /* ProcessEnvironmentBlock */
             case 0x68: return "TEB_LastErrorValue";
             case 0x1480: return "TEB_TlsSlots";           /* TlsSlots[0] */
-            case 0x2C: return "TEB_TlsExpansionSlots";
             default: return nullptr;
         }
     }

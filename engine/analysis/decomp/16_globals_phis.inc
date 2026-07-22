@@ -1877,6 +1877,19 @@
          * const can still be folded away afterwards (`p == 0` becomes `!p`), and flagging
          * at hint-time pulled the header into functions that never print NULL. */
         if (e->null_hint) { used_null = true; return "NULL"; }
+        /* A constant that IS a static-data address, passed in a proven pointer position
+         * (addr_hint, stamped at the call-arg site from the callee's ptr_param_mask), is the
+         * address of a global: render `&byte_<addr>` reusing the existing named_globals #define.
+         * `&byte_X` expands via the #define to `&(*(int8_t*)0xADDR)` -- the `&` and `*` cancel
+         * to exactly 0xADDR, so this is purely cosmetic. Only fires on positive pointer
+         * evidence + in_data_rva, so a plain integer is never mislabeled a pointer. */
+        if (e->addr_hint && !e->is_float && (uint64_t)v > 0x1000 && in_data_rva((uint64_t)v)) {
+            char nm[40], def[96];
+            std::snprintf(nm,  sizeof nm,  "byte_%llx", (unsigned long long)v);
+            std::snprintf(def, sizeof def, "(*(int8_t*)0x%llx)", (unsigned long long)v);
+            named_globals[nm] = def;
+            return "&" + std::string(nm);
+        }
         /* H4: a printable-ASCII constant compared against a byte value reads as a char
          * literal in Hex-Rays (`c == 'A'` not `c == 0x41`). char_hint is set only for a
          * printable value in a byte comparison, so it never mis-renders a real number. */
