@@ -527,6 +527,7 @@
     std::string self_fname;   /* sanitized name of THIS function (for recursive-call arity) */
     bool used_stos = false;   /* __stosb/w/d/q appears (rep stos fill) -> emit prototypes */
     bool used_movs = false;   /* __movsb/w/d/q appears (rep movs copy) -> emit prototypes */
+    bool used_meminstr = false; /* an emitted memcpy/memset -> #include <string.h> */
     std::set<std::string> used_interlocked;  /* _Interlocked* named -> emit prototypes */
     std::set<std::string> used_byteswap;      /* _byteswap_* named -> emit prototypes */
     bool used_null = false;   /* `NULL` was rendered -> pull in <stddef.h> */
@@ -3605,6 +3606,24 @@
                             (vsz == 16 || vsz == 32 || vsz == 64)) {
                             ExprP daddr = addr_of_mem(OP(0));
                             ExprP saddr = it->second;
+                            /* a load-then-store of a whole wide reg IS a memcpy. Emit the one
+                             * readable call instead of vsz/8 scalar `*(int64_t*)(dst+8k)=...`
+                             * lines (297 of them in __memmove_avx). Behaviorally identical: the
+                             * chunked stores are already FORWARD-order and non-overlapping for a
+                             * single wide reg copy, exactly memcpy's contract. DS_NO_SSEMEMCPY
+                             * reverts to the (gate-proven) chunked stores. */
+                            if (!std::getenv("DS_NO_SSEMEMCPY")) {
+                                auto call = std::make_shared<Expr>();
+                                call->kind = EK::Call; call->callee = "memcpy";
+                                call->width = 8; call->ret_kind = 2;
+                                call->args.push_back(mkCast("(void*)", clone(daddr), 8, true));
+                                call->args.push_back(mkCast("(void*)", clone(saddr), 8, true));
+                                call->args.push_back(mkConst(vsz, 8));
+                                extern_callees["memcpy"] = 2; used_meminstr = true;
+                                Stmt s; s.kind = SK::Call; s.rhs = call; s.addr = in.addr;
+                                b.stmts.push_back(std::move(s));
+                                break;
+                            }
                             for (int k = 0; k < vsz / 8; ++k) {
                                 ExprP d = mkMem(k ? mkBinary("+", clone(daddr), mkConst(8 * k, 8), 8) : clone(daddr), 8);
                                 ExprP s = mkMem(k ? mkBinary("+", clone(saddr), mkConst(8 * k, 8), 8) : clone(saddr), 8);
@@ -3629,6 +3648,24 @@
                             ExprP fv = fit->second.val;
                             bool isConst = (fv->kind == EK::Const);
                             if (esz == 1) {
+                                /* byte fill of a whole wide reg IS a memset. Emit the one call
+                                 * instead of vsz/8 chunked `*(int64_t*)(dst+8k)=byte*0x0101..`
+                                 * stores. DS_NO_SSEMEMCPY reverts to the chunked stores. */
+                                if (!std::getenv("DS_NO_SSEMEMCPY")) {
+                                    ExprP byteval = isConst
+                                        ? mkConst((int64_t)((uint64_t)fv->cval & 0xFF), 4)
+                                        : mkCast("(unsigned __int8)", clone(fv), 1, true);
+                                    auto call = std::make_shared<Expr>();
+                                    call->kind = EK::Call; call->callee = "memset";
+                                    call->width = 8; call->ret_kind = 2;
+                                    call->args.push_back(mkCast("(void*)", clone(daddr), 8, true));
+                                    call->args.push_back(byteval);
+                                    call->args.push_back(mkConst(vsz, 8));
+                                    extern_callees["memset"] = 2; used_meminstr = true;
+                                    Stmt s; s.kind = SK::Call; s.rhs = call; s.addr = in.addr;
+                                    b.stmts.push_back(std::move(s));
+                                    break;
+                                }
                                 /* byte fill: replicate to a 64-bit pattern, chunk by 8. */
                                 for (int k = 0; k < vsz / 8; ++k) {
                                     ExprP q = isConst
