@@ -46,16 +46,21 @@
      * `<tag>__extends__<Base>` marker rtti.cpp seeded, deduped in seed order. */
     std::string class_bases_of(const std::string& tag) {
         if (!e || tag.empty() || std::getenv("DS_NO_RTTIBASE")) return "";
-        static const char* MK = "__extends__";
+        struct MK { const char* mark; const char* pfx; };
+        static const MK MKS[] = { {"__vextends__", "virtual "}, {"__extends__", ""} };
         std::vector<std::string> bs;
         for (size_t i = 0; i < e->symbol_len; ++i) {
             const char* nm = e->symbols[i].name;
             if (!nm || !nm[0]) continue;
-            std::string n = nm; size_t p = n.find(MK);
-            if (p == std::string::npos || sani(n.substr(0, p)) != tag) continue;
-            std::string b = n.substr(p + std::strlen(MK));
-            bool dup = false; for (auto& x : bs) if (x == b) { dup = true; break; }
-            if (!dup) bs.push_back(b);
+            std::string n = nm;
+            for (const MK& m : MKS) {
+                size_t p = n.find(m.mark);
+                if (p == std::string::npos || sani(n.substr(0, p)) != tag) continue;
+                std::string b = m.pfx + n.substr(p + std::strlen(m.mark));
+                bool dup = false; for (auto& x : bs) if (x == b) { dup = true; break; }
+                if (!dup) bs.push_back(b);
+                break;
+            }
         }
         std::string o; for (size_t i = 0; i < bs.size(); ++i) { if (i) o += ", "; o += bs[i]; }
         return o;

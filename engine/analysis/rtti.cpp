@@ -619,19 +619,26 @@ extern "C" void ds_engine_scan_rtti(ds_engine* e) {
                      * when its PMD.mdisp (BCD+0x08) > 0 (a non-primary MI subobject) also seed
                      * `<Class>__baseoff_<mdisp>__<Base>` so an adjustor thunk can name the base. */
                     for (uint32_t k = 1; k < nbase; ) {
-                        uint32_t bcd = 0, btd = 0, ncont = 0, md = 0;
+                        uint32_t bcd = 0, btd = 0, ncont = 0, md = 0, pdisp = 0;
                         if (!read_u32(e, pba + 4 * k, bcd) || !ds_rva_is_mapped(e, bcd)) break;
                         read_u32(e, bcd + 0x04, ncont);
                         read_u32(e, bcd + 0x00, btd);
                         read_u32(e, bcd + 0x08, md);
+                        read_u32(e, bcd + 0x0C, pdisp);   /* PMD.pdisp: != -1 => VIRTUAL base */
+                        bool vbase = (int32_t)pdisp != -1;
                         if (ds_rva_is_mapped(e, btd)) {
                             std::string bdec = read_rtti_name(e, btd + 0x10);
                             if (bdec.rfind(".?A", 0) == 0) {
                                 std::string base_raw = demangle(bdec, nullptr);
                                 if (!base_raw.empty() && base_raw != cls_raw) {
                                     char mk[224];
-                                    std::snprintf(mk, sizeof mk, "%s__extends__%s",
-                                                  c_safe(cls_raw).c_str(), c_safe(base_raw).c_str());
+                                    /* virtual inheritance (`class D : virtual B`) is decidable from
+                                     * the BaseClassDescriptor's PMD.pdisp (the vbtable slot); mark
+                                     * it so class_bases_of renders `virtual <Base>`. */
+                                    std::snprintf(mk, sizeof mk, "%s__%s__%s",
+                                                  c_safe(cls_raw).c_str(),
+                                                  vbase ? "vextends" : "extends",
+                                                  c_safe(base_raw).c_str());
                                     ds_engine_add_symbol(e, bcd, mk);
                                     if ((int32_t)md > 0) {
                                         std::snprintf(mk, sizeof mk, "%s__baseoff_%d__%s",
