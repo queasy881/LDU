@@ -1681,13 +1681,28 @@
     /*  Rendering expressions to C text (precedence-aware, minimal parens)  */
     /* =================================================================== */
 
+    /* A `(char*)` cast wrapping a +/- whose LEADING operand is already `(char*)` is a no-op:
+     * pointer arithmetic on a char* is already char*. Such a cast renders transparently (its
+     * inner Binary), so both prec() and render() must defer to the inner. Very common from
+     * nested address building (`(char*)((char*)a1 + N)` -> `(char*)a1 + N`, ~1000+ on NullWare).
+     * DS_NO_CASTCLEAN restores the redundant cast. */
+    bool redundant_charptr_cast(const ExprP& e) {
+        static const bool off = std::getenv("DS_NO_CASTCLEAN") != nullptr;
+        if (off || !e || e->kind != EK::Cast || e->op != "(char*)" || !e->a) return false;
+        if (e->a->kind != EK::Binary || (e->a->op != "+" && e->a->op != "-")) return false;
+        ExprP lead = e->a->a; int g = 0;
+        while (lead && lead->kind == EK::Binary &&
+               (lead->op == "+" || lead->op == "-") && g++ < 64) lead = lead->a;
+        return lead && lead->kind == EK::Cast && lead->op == "(char*)";
+    }
+
     int prec(const ExprP& e) {
         if (!e) return 99;
         switch (e->kind) {
             case EK::Const: case EK::Var: case EK::Str: case EK::Call: return 99;
             case EK::Mem: return 16;       /* unary deref */
             case EK::AddrOf: return 15;
-            case EK::Cast: return 14;
+            case EK::Cast: return redundant_charptr_cast(e) ? prec(e->a) : 14;
             case EK::Unary: return 14;
             case EK::Ternary: return is_minmax(e) ? 99 : 2;   /* __min/__max render as a call */
             case EK::Reg: return 99;
@@ -1998,6 +2013,9 @@
             case EK::AddrOf: return "&" + rsub(e->a, 15);
             case EK::Unary:  return e->op + rsub(e->a, 14, true);
             case EK::Cast: {
+                /* redundant `(char*)` over an already-char* pointer sum: render the inner
+                 * directly (prec() defers too, so parenthesization stays correct). */
+                if (redundant_charptr_cast(e)) return render(e->a);
                 /* `(char*)0xADDR` / `(int8_t*)0xADDR` pointing at a valid read-only
                  * C string reads as the string literal, like the sibling paths that
                  * already emit "<Unknown>" — not a bare rodata address. read_cstring
