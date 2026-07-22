@@ -2594,7 +2594,9 @@
                 /* Indirect call: render the target from the live child so the text
                  * reflects any copy-prop/inlining done after lift (the callee string
                  * is a stale snapshot from construction time). */
-                std::string vm = (e->indirect && e->a) ? resolve_virtual_call(e->a) : "";
+                bool vc_rec = false; int64_t vc_off = 0; std::string vc_tag;
+                std::string vm = (e->indirect && e->a)
+                    ? resolve_virtual_call(e->a, &vc_rec, &vc_off, &vc_tag) : "";
                 std::string head = !vm.empty() ? vm
                     : (e->indirect && e->a)
                     ? "((long long(*)())(" + render(e->a) + "))"
@@ -2648,6 +2650,18 @@
                     s += call_arg_text(e->args[i], dec_api);   /* call arg = pointer context */
                 }
                 s += ")";
+                /* UNRESOLVED virtual dispatch: the shape was a `*(*obj + off)` vtable call but
+                 * no method name was recovered (class unknown, or the slot target is unnamed).
+                 * Annotate the slot so the reader sees it IS a virtual dispatch and which slot:
+                 * `Class::vfunc_N` when the class is known, else `vtable slot +0xNN`. Comment-only.
+                 * DS_NO_VSLOT. */
+                if (vm.empty() && vc_rec && !std::getenv("DS_NO_VSLOT")) {
+                    int ptrsz = (this->e && this->e->arch == DS_ARCH_X64) ? 8 : 4;
+                    if (!vc_tag.empty())
+                        s += " /* " + vc_tag + "::vfunc_" + std::to_string(vc_off / ptrsz) + " */";
+                    else
+                        s += " /* vtable slot +" + hex((uint64_t)vc_off) + " */";
+                }
                 return s;
             }
         }

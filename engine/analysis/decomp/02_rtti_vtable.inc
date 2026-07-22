@@ -109,7 +109,8 @@
      * slot at `off` is `*(vtable_rva + off)` = the method RVA. Turns
      * `((long long(*)())(*(long long*)(*a1)))(a1)` into `Circle_area(a1)`. Gated
      * DS_NO_VCALL. Returns "" when it is not a recognizable class virtual dispatch. */
-    std::string resolve_virtual_call(const ExprP& target) {
+    std::string resolve_virtual_call(const ExprP& target, bool* out_recognized = nullptr,
+                                     int64_t* out_off = nullptr, std::string* out_tag = nullptr) {
         if (std::getenv("DS_NO_VCALL")) return "";
         if (!target || target->kind != EK::Mem || !target->a) return "";
         ExprP inner = target->a; int64_t off = 0;
@@ -120,6 +121,9 @@
         ExprP obj = inner->a;
         while (obj && obj->kind == EK::Cast) obj = obj->a;
         if (!obj || obj->kind != EK::Var) return "";
+        /* the `*(*Var + const)` vtable-dispatch shape is confirmed here (for the slot annotation) */
+        if (out_recognized) *out_recognized = true;
+        if (out_off) *out_off = off;
         /* Identify obj's CLASS -> its vtable. Two sound sources: */
         std::string tag;
         auto it = param_structs.find(obj->name);
@@ -134,6 +138,13 @@
             size_t p = self_fname.find("__vftbl_");
             if (p != std::string::npos && p > 0) tag = self_fname.substr(0, p);
         }
+        if (tag.empty()) {
+            /* (c) obj is a (possibly cast) COPY of a class-typed value -- a `Class* x =
+             * make(); x->m()` local that propagate_local_class_tags threaded the class to. */
+            auto ct = var_class_tag.find(obj->name);
+            if (ct != var_class_tag.end()) tag = ct->second;
+        }
+        if (out_tag) *out_tag = tag;   /* class when known (may be "") */
         if (tag.empty()) return "";
         uint64_t vt = vtable_rva_for_tag(tag);
         if (!vt) return "";
@@ -152,6 +163,40 @@
         return nm;
     }
     std::set<std::string> virtual_callees;   /* resolved vmethod names referenced -> extern decls */
+    std::map<std::string,std::string> var_class_tag;   /* local -> class tag of the value it copies */
+
+    /* Propagate a recovered class tag along local COPY chains (`Class* x = (Class*)make();
+     * y = x;`) so a virtual call on a class-typed LOCAL -- not just a param or `this` --
+     * devirtualizes. Seeds from param_structs' is_class vars; fixpoint over cast-stripped
+     * Var=Var copies; a var assigned two different class tags becomes ambiguous and is
+     * dropped (never a wrong dispatch). vtable_rva_for_tag gate keeps it to real classes.
+     * DS_NO_VCALL_LOCAL. */
+    void propagate_local_class_tags() {
+        if (std::getenv("DS_NO_VCALL_LOCAL")) return;
+        std::set<std::string> ambig;
+        auto tag_of = [&](const std::string& v) -> std::string {
+            auto it = param_structs.find(v);
+            if (it != param_structs.end() && it->second.is_class) return it->second.tag;
+            auto ct = var_class_tag.find(v);
+            return (ct != var_class_tag.end()) ? ct->second : std::string();
+        };
+        for (int iter = 0; iter < 4; ++iter) {
+            bool changed = false;
+            for (auto& b : blocks) for (auto& s : b.stmts) {
+                if (s.kind != SK::Assign || !s.lhs || s.lhs->kind != EK::Var || !s.rhs) continue;
+                ExprP r = s.rhs; while (r && r->kind == EK::Cast) r = r->a;
+                if (!r || r->kind != EK::Var) continue;
+                const std::string& dst = s.lhs->name;
+                if (ambig.count(dst)) continue;
+                std::string tag = tag_of(r->name);
+                if (tag.empty() || !vtable_rva_for_tag(tag)) continue;
+                auto ex = var_class_tag.find(dst);
+                if (ex == var_class_tag.end())      { var_class_tag[dst] = tag; changed = true; }
+                else if (ex->second != tag)         { var_class_tag.erase(ex); ambig.insert(dst); changed = true; }
+            }
+            if (!changed) break;
+        }
+    }
 
     /* A `xrefs: called by NAME (N sites)` header comment for THIS function, built
      * from the whole-program call graph (e->refs, populated once by build_xrefs).

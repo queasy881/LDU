@@ -4904,6 +4904,7 @@ struct Decompiler {
         _phase("struct-recovery");
         recover_operator_new();          /* alloc-then-vtable-store callee -> operator_new / void*(size_t) */
         assign_global_struct_locals();   /* cache read-only global struct bases in locals */
+        propagate_local_class_tags();    /* class tag along local copy chains -> devirt on a local */
         coalesce_locals();   /* AFTER struct recovery so decl_type (including struct-ptr, float,
                               * pointer) is final: the candidate gate decl_type(x)==decl_type(y)
                               * would else merge a to-be-struct-ptr var with a float var (C2440). */
