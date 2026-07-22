@@ -354,6 +354,53 @@
         }
     }
 
+    /* HARD GUARANTEE: no in_<X> phantom EVER reaches the output, for ANY binary in the world.
+     * promote_leaked_arg_params turns every GP in_<reg> into the parameter aN it represents.
+     * This final scrub catches everything ELSE named in_<X> -- specifically the unmapped
+     * register backstops (in_YMM3 / in_MM0 / in_FS / in_ST0: a ymm/zmm/mmx/mask/x87/segment
+     * register the lifter cannot model, held in unknown_csreg_name and never promoted) -- plus
+     * any straggler from a late rvalue() call. Each is renamed to an ordinary DECLARED local,
+     * exactly the way IDA renders a value it could not trace (an undefined local), never the
+     * in_ marker. It scans the actual IR, so it is producer- and timing-independent: a
+     * surviving in_ is structurally impossible after this runs. Runs before display renumber
+     * so the fresh locals fold into the contiguous v1,v2,... naming. */
+    void scrub_in_placeholders() {
+        std::set<std::string> leaks;
+        std::function<void(const ExprP&)> scan = [&](const ExprP& e) {
+            if (!e) return;
+            if (e->kind == EK::Var && e->name.rfind("in_", 0) == 0) leaks.insert(e->name);
+            scan(e->a); scan(e->b); scan(e->c);
+            for (auto& ar : e->args) scan(ar);
+        };
+        for (auto& b : blocks) {
+            for (auto& s : b.stmts) { scan(s.lhs); scan(s.rhs); }
+            scan(b.cond); scan(b.ret_value); scan(b.ret_raw); scan(b.switch_var); scan(b.tail_call);
+        }
+        for (const std::string& leak : leaks) {
+            int w = var_width.count(leak) ? var_width[leak] : 8;
+            std::string ln = "v" + std::to_string(++temp_seq);
+            record_width(ln, w >= 8 ? 8 : 4);
+            if (w >= 8) var_is_ll[ln] = true;
+            if (var_is_float.count(leak) && var_is_float[leak]) var_is_float[ln] = true;
+            if (var_pointer.count(leak) && var_pointer[leak]) {
+                var_pointer[ln] = true; var_is_ll[ln] = true;
+                if (ptr_elem_width.count(leak)) ptr_elem_width[ln] = ptr_elem_width[leak];
+                if (ptr_elem_uns.count(leak))   ptr_elem_uns[ln]   = ptr_elem_uns[leak];
+                if (ptr_elem_float.count(leak)) ptr_elem_float[ln] = ptr_elem_float[leak];
+            }
+            ExprP lv = mkVar(ln, w >= 8 ? 8 : 4);
+            if (var_is_float.count(ln) && var_is_float[ln]) lv->is_float = true;
+            for (auto& b : blocks) {
+                for (auto& s : b.stmts) { s.lhs = subst_named_var(s.lhs, leak, lv); s.rhs = subst_named_var(s.rhs, leak, lv); }
+                b.cond = subst_named_var(b.cond, leak, lv);
+                b.ret_value = subst_named_var(b.ret_value, leak, lv);
+                b.ret_raw = subst_named_var(b.ret_raw, leak, lv);
+                b.switch_var = subst_named_var(b.switch_var, leak, lv);
+                b.tail_call = subst_named_var(b.tail_call, leak, lv);
+            }
+        }
+    }
+
     ExprP reg_value(Reg r, int w) {
         ExprP v = regfile[r] ? clone(regfile[r]) : nullptr;
         if (!v) {

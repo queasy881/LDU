@@ -75,6 +75,18 @@ pub(crate) fn parse(bytes: &[u8]) -> Result<BinaryMeta, String> {
     let size_opt_hdr = rd_u16(bytes, coff + 16).ok_or("truncated COFF header")? as usize;
     let characteristics = rd_u16(bytes, coff + 18).ok_or("truncated COFF header")?;
 
+    // COFF string table location, for resolving `/NNN` long section names (GCC/binutils
+    // emit these for names > 8 chars: .debug_info, .eh_frame, ...). It follows the symbol
+    // table: PointerToSymbolTable + NumberOfSymbols * 18 (each symbol record is 18 bytes).
+    // 0 = the image was linked without a symbol table (MSVC release builds), so no long names.
+    let ptr_symtab = rd_u32(bytes, coff + 8).unwrap_or(0) as usize;
+    let num_symbols = rd_u32(bytes, coff + 12).unwrap_or(0) as usize;
+    let strtab_off = if ptr_symtab != 0 {
+        ptr_symtab.saturating_add(num_symbols.saturating_mul(18))
+    } else {
+        0
+    };
+
     let arch = match machine {
         IMAGE_FILE_MACHINE_I386 => Arch::X86,
         IMAGE_FILE_MACHINE_AMD64 => Arch::X64,
@@ -145,7 +157,7 @@ pub(crate) fn parse(bytes: &[u8]) -> Result<BinaryMeta, String> {
             Some(n) => n,
             None => break,
         };
-        let name = decode_section_name(name_raw);
+        let name = decode_section_name(name_raw, bytes, strtab_off);
         let vsize = rd_u32(bytes, s + 8).unwrap_or(0) as u64;
         let vaddr = rd_u32(bytes, s + 12).unwrap_or(0) as u64;
         let raw_size = rd_u32(bytes, s + 16).unwrap_or(0) as u64;
@@ -221,11 +233,32 @@ pub(crate) fn parse(bytes: &[u8]) -> Result<BinaryMeta, String> {
     })
 }
 
-/// Decode an 8-byte PE section name (NUL-padded ASCII). `/NNN` long-name forms
-/// referencing the string table are left as-is — rare in shipped images.
-fn decode_section_name(raw: &[u8]) -> String {
+/// Decode an 8-byte PE section name (NUL-padded ASCII), resolving the COFF long-name
+/// form `/NNN` (a decimal byte offset into the COFF string table) to the real section
+/// name. GCC/binutils emit these for names longer than 8 chars (`.debug_info`,
+/// `.debug_abbrev`, `.eh_frame`, `.gcc_except_table`, ...); MSVC never does, so on
+/// MSVC images `strtab_off` is 0 and this is a plain NUL-trim.
+fn decode_section_name(raw: &[u8], bytes: &[u8], strtab_off: usize) -> String {
     let end = raw.iter().position(|&b| b == 0).unwrap_or(raw.len());
-    String::from_utf8_lossy(&raw[..end]).into_owned()
+    let s = String::from_utf8_lossy(&raw[..end]);
+    if strtab_off != 0 {
+        if let Some(num) = s.strip_prefix('/') {
+            if let Ok(off) = num.trim().parse::<usize>() {
+                let at = strtab_off.saturating_add(off);
+                if let Some(tail) = bytes.get(at..) {
+                    let z = tail.iter().position(|&b| b == 0).unwrap_or(tail.len());
+                    let resolved = String::from_utf8_lossy(&tail[..z]);
+                    // Only accept a plausible section name (printable, non-empty).
+                    if !resolved.is_empty()
+                        && resolved.bytes().all(|b| (0x20..0x7f).contains(&b))
+                    {
+                        return resolved.into_owned();
+                    }
+                }
+            }
+        }
+    }
+    s.into_owned()
 }
 
 /// Translate an RVA to a file offset using the section table. Returns `None`

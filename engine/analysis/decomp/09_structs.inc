@@ -490,6 +490,28 @@
                                             L.cls_kw_struct = struct_class_kw.count(p) && struct_class_kw[p];
                                             if (struct_class_qual.count(p)) L.qual_name = struct_class_qual[p]; return; }
             if (int vn = is_vec_layout(L)) { L.tag = "Vec" + std::to_string(vn); L.shared_typedef = true; return; }
+            /* GLOBAL-STRUCT UNIFICATION: a global data object at a fixed address is ONE type
+             * for the whole program. Tag it by its ADDRESS (g_<addr>), not the per-function
+             * name, and shared_typedef-guard the definition, so every function that touches
+             * qword_<addr> names the SAME struct instead of a private s_<fn>_qword_<addr>.
+             * (Each function still only declares the fields IT sees; the NullWare gate compiles
+             * every function as its own TU so that is always sound. DS_NO_GUNIFY reverts.) */
+            /* Only a REAL top-level global (`qword_<hex>` / `dword_<hex>` whose suffix is pure
+             * hex with NO further '_') is one program-wide type worth unifying. A NESTED or
+             * ARRAY-element derivative (`qword_<hex>_<off>`, `..._A<stride>`) is a per-function
+             * synthetic whose layout is context-specific -- unifying those under a shared,
+             * guarded tag made a later view miss the first view's fields (C2039). This mirrors
+             * the same real-vs-synthetic test in assign_global_struct_locals. */
+            if (is_global_struct_name(p) && p.size() > 6 &&
+                p.substr(6).find('_') == std::string::npos && !std::getenv("DS_NO_GUNIFY")) {
+                /* Tag by the FULL base name (`g_qword_140050`), not just the address: the same
+                 * address read at two widths mints both qword_<addr> and dword_<addr> with
+                 * different layouts, so the qword/dword prefix must stay to keep them distinct
+                 * while still unifying each across every function. */
+                L.tag = "g_" + p;
+                L.shared_typedef = true;
+                return;
+            }
             L.tag = "s_" + self_fname + "_" + p;
         };
         for (auto& kv : fw) {
@@ -799,6 +821,39 @@
             for (auto& m : members) {                           /* shared tag + unioned fields */
                 ParamStruct& L = param_structs[m];
                 L.tag = tag; L.fw = mfw; L.fu = mfu; L.ff = mff; L.fptr = mfptr; L.fptr_tag = mfptr_tag;
+            }
+        }
+    }
+
+    /* SELF-REFERENTIAL (linked-list / tree) struct fields. A width-8 field O of struct S
+     * whose loaded value is used as a base of S itself is a next/prev/child link. The
+     * list-iteration `v = *(long long*)(v + O)` -- reassigning the SAME struct variable
+     * from its own field O -- is the clean, sound signal: offset O of v's struct points to
+     * v's struct. Retype it as `struct <S>*` (fptr_tag = S's own tag) so `v = v->field_O`
+     * and `v->field_O->field_K` render as arrow chains instead of raw casts, and the struct
+     * definition self-references (`struct S { ...; struct S* field_O; }`, legal C). Runs
+     * AFTER the layouts + unification are final so the tag is canonical. DS_NO_LISTSTRUCT. */
+    void detect_self_ref_fields() {
+        if (std::getenv("DS_NO_LISTSTRUCT")) return;
+        for (auto& b : blocks) {
+            for (auto& s : b.stmts) {
+                if (s.kind != SK::Assign || !s.lhs || s.lhs->kind != EK::Var || !s.rhs) continue;
+                const std::string& v = s.lhs->name;
+                auto it = param_structs.find(v);
+                if (it == param_structs.end()) continue;        /* lhs must be a recovered struct base */
+                ParamStruct& L = it->second;
+                if (L.is_class || L.is_vector || L.is_stdstring || L.shared_typedef) continue;
+                ExprP r = s.rhs;
+                while (r && r->kind == EK::Cast) r = r->a;       /* strip (struct S*) etc. */
+                if (!r || r->kind != EK::Mem || !r->a || r->width != 8 || r->is_float) continue;
+                std::string p; int64_t off;
+                if (!struct_base_offset(r->a, p, off)) continue;
+                if (p != v) continue;                            /* load must be from v's OWN field */
+                auto fw = L.fw.find(off);
+                if (fw == L.fw.end() || fw->second != 8) continue;   /* offset O is a width-8 field */
+                if (L.ff.count(off) && L.ff.at(off)) continue;   /* never retype a float field */
+                L.fptr[off] = true;
+                L.fptr_tag[off] = L.tag;                          /* struct S* -- self reference */
             }
         }
     }

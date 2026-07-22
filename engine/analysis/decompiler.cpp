@@ -4818,6 +4818,7 @@ struct Decompiler {
         detect_stl_vectors();            /* _Mylast-_Myfirst range idiom -> name a std::vector's fields */
         detect_stl_strings();            /* _Myres-vs-15 SSO discriminator -> name a std::string's fields */
         unify_struct_aliases();          /* merge proven-aliased per-fn structs (field UNION) into one type */
+        detect_self_ref_fields();        /* linked-list/tree: a field that points to its own struct -> struct S* */
         _phase("struct-recovery");
         recover_operator_new();          /* alloc-then-vtable-store callee -> operator_new / void*(size_t) */
         assign_global_struct_locals();   /* cache read-only global struct bases in locals */
@@ -4834,6 +4835,7 @@ struct Decompiler {
         if (!std::getenv("DS_NO_IDIOM")) recognize_idioms();
         detect_for_loops();   /* after idioms so H.cond matches the emitted condition */
         compute_autonames();  /* after for-loops (consumes induction_var_of_header) */
+        scrub_in_placeholders();     /* HARD GUARANTEE: no in_<X> phantom ever reaches output */
         narrow_temp_widths();        /* D1: long long -> int for provably-32-bit-value temps */
         compute_display_renumber();  /* v#/t# -> contiguous v1,v2,... (Hex-Rays naming) */
         /* H2: per-function struct tags were minted `s_<fn>_t1272` at struct-build time, BEFORE

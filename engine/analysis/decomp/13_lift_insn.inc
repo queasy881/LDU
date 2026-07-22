@@ -891,6 +891,19 @@
             if (d0 != R_NONE) { vec_load_addr.erase(d0); vec_fill.erase(d0); }
         }
 
+        /* STALE-FLAG INVALIDATION (snapshot half): record the current flag signature so
+         * the post-switch check can tell whether THIS instruction's handler modeled the
+         * flags. Every set_flags_* does `flags = FlagSrc()` with freshly built a/b
+         * expressions, so an unchanged (valid, kind, a-ptr, b-ptr, width) after the switch
+         * means the handler left the flags untouched. */
+        const void* _flg_a = flags.a.get();
+        const void* _flg_b = flags.b.get();
+        const bool  _flg_v = flags.valid;
+        const unsigned _flg_k = (flags.is_cmp ? 1u : 0u) | (flags.is_test ? 2u : 0u) |
+                                (flags.is_arith ? 4u : 0u) | (flags.is_bt ? 8u : 0u) |
+                                (flags.is_fcmp ? 16u : 0u);
+        const int _flg_w = flags.width;
+
         switch (id) {
             case X86_INS_MOV: case X86_INS_MOVABS: {
                 if (nop < 2) break;
@@ -1205,6 +1218,29 @@
                     acc = acc ? mkBinary("|", acc, term, w, true) : term;
                 }
                 do_dst(b, OP(0), fold(acc), in.addr);
+                break;
+            }
+            case X86_INS_ADC: {
+                /* ADD-WITH-CARRY: dst = dst + src + CF. The carry-IN comes from the preceding
+                 * flag-setter. The dominant use is the 64-bit-add idiom `add lo,x; adc hi,y`:
+                 * after the ADD, flags.a is the sum `(lo + x)` and the carry-out is the
+                 * UNSIGNED wrap `(lo + x) < lo`. cc_to_expr(CC::B) is WRONG here -- it only
+                 * decomposes a SUBTRACTION, so for an add result it folds to the always-false
+                 * `(lo+x) < 0u` and would silently DROP the carry. A preceding compare/subtract
+                 * (the `cmp; adc mask` idiom) does use the below condition. Without this case
+                 * ADC was opaque and the high word lost its carry. Mirrors the SBB case below. */
+                if (nop < 2) break;
+                int w = OP(0).size ? OP(0).size : 4;
+                ExprP cf;
+                if (flags.valid && flags.a && flags.a->kind == EK::Binary &&
+                    flags.a->op == "+" && flags.a->a) {
+                    cf = fold(mkBinary("<", clone(flags.a), clone(flags.a->a), w, true));  /* unsigned add carry-out */
+                } else {
+                    cf = flags.valid ? cc_to_expr(CC::B, flags) : mkConst(0, w);
+                }
+                ExprP r = mkBinary("+", mkBinary("+", rvalue(OP(0)), rvalue(OP(1)), w), cf, w);
+                do_dst(b, OP(0), fold(r), in.addr);
+                set_flags_arith(r, w);
                 break;
             }
             case X86_INS_SBB: {
@@ -3479,6 +3515,28 @@
                     b.stmts.push_back(std::move(s));
                 }
                 break;
+            }
+        }
+
+        /* STALE-FLAG INVALIDATION (check half): if this instruction WRITES an arithmetic
+         * flag (CF/SF/ZF/OF per capstone's eflags MODIFY bits) but its handler did NOT
+         * model the flags (signature unchanged), the previous compare's flags are now
+         * STALE -- a following jcc would render a confidently WRONG condition. Invalidate
+         * so cc_to_expr emits `if (1)` (an honest placeholder) instead of a plausible lie.
+         * EXCLUDE x87 (mnemonic starts with 'f'): cs_x86 unions fpu_flags over eflags, so
+         * an x87 op's status-word bits would be read as bogus eflags MODIFY bits.
+         * DS_NO_FLAGINVAL disables. */
+        if (flags.valid && !in.mnem.empty() && in.mnem[0] != 'f' &&
+            !std::getenv("DS_NO_FLAGINVAL")) {
+            const uint64_t MOD = X86_EFLAGS_MODIFY_CF | X86_EFLAGS_MODIFY_SF |
+                                 X86_EFLAGS_MODIFY_ZF | X86_EFLAGS_MODIFY_OF;
+            if (in.x86.eflags & MOD) {
+                unsigned fk = (flags.is_cmp ? 1u : 0u) | (flags.is_test ? 2u : 0u) |
+                              (flags.is_arith ? 4u : 0u) | (flags.is_bt ? 8u : 0u) |
+                              (flags.is_fcmp ? 16u : 0u);
+                bool modeled = !(flags.a.get() == _flg_a && flags.b.get() == _flg_b &&
+                                 flags.valid == _flg_v && fk == _flg_k && flags.width == _flg_w);
+                if (!modeled) flags.valid = false;
             }
         }
     }
