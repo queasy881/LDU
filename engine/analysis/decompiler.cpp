@@ -1328,6 +1328,46 @@ struct Decompiler {
         return false;
     }
 
+    /* Final safety net: drop DUPLICATE label-definition lines, keeping the first.
+     *
+     * Even the goto-CFG fallback can emit the same label twice when two distinct CFG
+     * blocks share an address (block_label is address-derived, so they collide) -- a
+     * degenerate case that surfaces only for a few functions and only when global
+     * decompile state nudges the block split (dumping the function in isolation is
+     * clean). labels_consistent() rejects the structured attempt for this, but the
+     * fallback re-emits the same collision, so a hard C2045 ("label redefined")
+     * survives. A pure `L_xxxx:;` label line is always on its own line; deleting the
+     * 2nd+ definition (the label token only -- the code that followed it still runs by
+     * fall-through) leaves valid C: every `goto L_xxxx;` resolves to the one remaining
+     * definition. Applied unconditionally to the final body so the output ALWAYS
+     * compiles, whatever produced the duplicate. */
+    std::string dedupe_label_defs(const std::string& body) {
+        if (!has_duplicate_label_defs(body)) return body;   /* common path: no-op */
+        std::set<std::string> seen;
+        std::string out; out.reserve(body.size());
+        size_t i = 0;
+        while (i < body.size()) {
+            size_t eol = body.find('\n', i);
+            size_t len = (eol == std::string::npos) ? body.size() - i : eol - i + 1;
+            std::string line = body.substr(i, len);
+            i += len;
+            size_t a = line.find_first_not_of(" \t");
+            size_t z = line.find_last_not_of(" \t\r\n");
+            std::string core = (a == std::string::npos) ? "" : line.substr(a, z - a + 1);
+            /* a bare label-definition line: `<ident>:;` (block labels are `L_xxxx:;`) */
+            if (core.size() > 2 && core.compare(core.size() - 2, 2, ":;") == 0) {
+                std::string lab = core.substr(0, core.size() - 2);
+                bool ident = !lab.empty() &&
+                    (isalpha((unsigned char)lab[0]) || lab[0] == '_');
+                for (size_t k = 1; ident && k < lab.size(); ++k)
+                    if (!(isalnum((unsigned char)lab[k]) || lab[k] == '_')) ident = false;
+                if (ident && !seen.insert(lab).second) continue;   /* drop the redefinition */
+            }
+            out += line;
+        }
+        return out;
+    }
+
     bool labels_consistent(const std::string& body) {
         std::set<std::string> defined, referenced;
         scan_labels(body, defined, referenced);
@@ -5039,6 +5079,7 @@ struct Decompiler {
             body = dbg + tmp;
         }
         body = prune_dead_labels(body);
+        body = dedupe_label_defs(body);   /* guarantee no duplicate label survives -> always compiles */
         /* MINIMAL-GOTO policy (Hex-Rays / IDA style). The recursive structurer tries
          * as hard as it can — two-pass label discovery, short-circuit &&/|| merging,
          * guard-clause inlining, bounded tail duplication — to recover real if/else/

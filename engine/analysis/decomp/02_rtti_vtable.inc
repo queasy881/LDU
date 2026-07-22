@@ -79,16 +79,35 @@
         ExprP obj = inner->a;
         while (obj && obj->kind == EK::Cast) obj = obj->a;
         if (!obj || obj->kind != EK::Var) return "";
+        /* Identify obj's CLASS -> its vtable. Two sound sources: */
+        std::string tag;
         auto it = param_structs.find(obj->name);
-        if (it == param_structs.end() || !it->second.is_class) return "";   /* obj is a class ptr */
-        uint64_t vt = vtable_rva_for_tag(it->second.tag);
+        if (it != param_structs.end() && it->second.is_class) {
+            tag = it->second.tag;                         /* (a) obj typed a class ptr */
+        } else if (obj->name == "a1" && !self_fname.empty()) {
+            /* (b) THIS function is itself a recovered virtual method `<Class>__vftbl_N`,
+             * so its a1 (this) IS that class -- dispatch through <Class>'s vtable even
+             * though a1 was never explicitly typed. A virtual method's receiver is its
+             * own class by definition, so this is sound. Enables devirtualizing a
+             * virtual call made on `this` inside another virtual method. */
+            size_t p = self_fname.find("__vftbl_");
+            if (p != std::string::npos && p > 0) tag = self_fname.substr(0, p);
+        }
+        if (tag.empty()) return "";
+        uint64_t vt = vtable_rva_for_tag(tag);
         if (!vt) return "";
         int64_t mrva;
         if (!read_i64(vt + (uint64_t)off, mrva)) return "";
         uint64_t mr = ((uint64_t)mrva >= e->base) ? (uint64_t)mrva - e->base : (uint64_t)mrva;
+        if (!ds_rva_is_exec(e, mr)) return "";   /* the slot must point at real code */
         std::string nm = name_for_rva(mr);
-        if (nm.empty() || nm.rfind("sub_", 0) == 0 || nm.rfind("fun_", 0) == 0) return "";
-        virtual_callees.insert(nm);   /* needs an extern decl in the proto block */
+        if (nm.empty()) return "";
+        /* Accept an RTTI-UNNAMED slot too: turning the indirect dispatch into a direct
+         * `fun_XXXX(this)` still reveals the real target (which the reader can navigate
+         * to) -- exactly what IDA does. Only a NAMED method needs an extern proto; a
+         * fun_/sub_ target is emitted/handled by the ordinary call machinery. */
+        if (nm.rfind("sub_", 0) != 0 && nm.rfind("fun_", 0) != 0)
+            virtual_callees.insert(nm);
         return nm;
     }
     std::set<std::string> virtual_callees;   /* resolved vmethod names referenced -> extern decls */
