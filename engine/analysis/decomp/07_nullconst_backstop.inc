@@ -128,6 +128,14 @@
         bool is_fcmp = false;  /* comiss/ucomiss: float compare, unsigned jcc => ordering */
         ExprP a, b;
         int width = 4;
+        /* EXPLICIT CARRY-OUT value (null = derive CF from the kind above). A shift by an
+         * immediate records the bit it shifted out here, so a following RCL/RCR (rotate
+         * THROUGH carry) can read the real incoming CF -- the multi-precision `shl lo,1;
+         * rcl hi,1` / `shr hi,1; rcr lo,1` idioms -- and so a `jc`/`jnc` on a shift's carry
+         * is exact instead of the is_arith fallback. Cleared automatically by `flags =
+         * FlagSrc()`, so any intervening flag-writer (cmp/test/add) drops it; a non-flag op
+         * (mov/lea) preserves it, exactly as the hardware leaves CF untouched. */
+        ExprP cf;
     };
     FlagSrc flags;
     std::vector<FlagSrc> block_flags_out;   /* flag state at each block's exit */
@@ -140,6 +148,8 @@
         if (x.is_cmp != y.is_cmp || x.is_test != y.is_test ||
             x.is_arith != y.is_arith || x.is_bt != y.is_bt ||
             x.is_fcmp != y.is_fcmp || x.width != y.width) return false;
+        if ((bool)x.cf != (bool)y.cf) return false;
+        if (x.cf && !exprEqual(x.cf, y.cf)) return false;
         return exprEqual(x.a, y.a) && exprEqual(x.b, y.b);
     }
 

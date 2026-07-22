@@ -1155,13 +1155,44 @@
                 do_dst(b, OP(0), r, in.addr);
                 break;
             }
-            /* NOT MODELED — RCL/RCR (rotate through carry). Deliberate: the shifted-in
-             * bit is the INCOMING CF, and set_flags_arith records only the result value
-             * (flags.is_arith), so CF after the `shr hi,1` of the canonical 64-bit-shift
-             * idiom `shr hi,1; rcr lo,1` is not the shifted-out bit — cc_to_expr(CC::B)
-             * would fold to a constant false and we would emit a confidently WRONG carry.
-             * A stale destination is bad; plausible-but-wrong C is worse. Modeling this
-             * needs real CF tracking for the shift ops first. */
+            /* RCL/RCR — rotate THROUGH carry by 1. The bit shifted in is the INCOMING CF,
+             * which the shift ops now record in flags.cf (see record_shift_cf). This is the
+             * back half of a multi-precision shift: `shl lo,1; rcl hi,1` is a 64-bit `<<1`
+             * of the (hi:lo) pair; `shr hi,1; rcr lo,1` / `sar hi,1; rcr lo,1` the `>>1`.
+             *   rcl x,1 = (x << 1) | CF_in ;  CF_out = MSB(x)
+             *   rcr x,1 = (x >> 1) | (CF_in << (bits-1)) ;  CF_out = LSB(x)
+             * Only count==1 with a KNOWN incoming CF is modelled (the real idiom); any other
+             * form leaves the destination as the prior deliberate no-model rather than emit a
+             * guessed carry. Emitting the OLD behaviour (drop) here would be unsound now that
+             * a jc could read a real cf, so we bail explicitly. */
+            case X86_INS_RCL: case X86_INS_RCR: {
+                static const bool off = std::getenv("DS_NO_RCLRCR") != nullptr;
+                if (off || nop < 2 || OP(0).type != X86_OP_REG) break;   /* reg dst only (stable value) */
+                int w = OP(0).size ? OP(0).size : 4;
+                int bits = w * 8;
+                ExprP cin = flags.valid ? flags.cf : nullptr;
+                ExprP cnt = fold(rvalue(OP(1)));
+                long n = (cnt && cnt->kind == EK::Const) ? (long)(cnt->cval & (bits==64?63:31)) : -1;
+                if (n != 1 || !cin) break;    /* sound subset: rotate-by-1 with a real CF */
+                ExprP x  = mkCast(cast_str(w, true), rvalue(OP(0)), w, true);  /* unsigned view */
+                ExprP c1 = mkBinary("&", clone(cin), mkConst(1, w, true), w, true);   /* 0/1 */
+                ExprP res, newcf;
+                if (id == X86_INS_RCL) {
+                    res   = mkBinary("|", mkBinary("<<", clone(x), mkConst(1, w, true), w, true),
+                                     c1, w, true);
+                    newcf = mkBinary("&", mkBinary(">>", clone(x), mkConst(bits-1, w, true), w, true),
+                                     mkConst(1, w, true), w, true);
+                } else {
+                    res   = mkBinary("|", mkBinary(">>", clone(x), mkConst(1, w, true), w, true),
+                                     mkBinary("<<", c1, mkConst(bits-1, w, true), w, true), w, true);
+                    newcf = mkBinary("&", clone(x), mkConst(1, w, true), w, true);
+                }
+                do_dst(b, OP(0), res, in.addr);
+                flags = FlagSrc();
+                flags.valid = true; flags.is_arith = true; flags.a = clone(res); flags.width = w;
+                flags.cf = fold(newcf);
+                break;
+            }
             case X86_INS_SHL: case X86_INS_SAL: arith2(b, x, "<<", in.addr); break;
             case X86_INS_SHR: arith2(b, x, ">>", in.addr, true); break;
             case X86_INS_SAR: sar_or_div(b, x, in.addr); break;

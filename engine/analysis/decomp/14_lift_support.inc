@@ -40,6 +40,32 @@
         return mkCast(cast_str(dw, uns), narrow, dw, uns);
     }
 
+    /* Record the bit a shift-by-IMMEDIATE shifts out into flags.cf (the explicit carry),
+     * so a following RCL/RCR reads the real incoming CF and a `jc`/`jnc` on a shift's carry
+     * is exact. Only immediate counts are exactly expressible; a variable count leaves cf
+     * null (unchanged behaviour). `val` is the PRE-shift operand value.
+     *   shl x,n:  CF = bit (bits-n)  of x
+     *   shr/sar x,n: CF = bit (n-1)  of x  */
+    void record_shift_cf(bool left, const ExprP& val, const ExprP& cnt, int w) {
+        if (!val || !cnt) return;
+        ExprP c = fold(clone(cnt));
+        if (!c || c->kind != EK::Const) return;
+        int bits = w * 8;
+        long n = (long)(c->cval & (bits == 64 ? 63 : 31));
+        if (n == 0) return;                       /* count 0: CF unchanged -> keep prior cf */
+        ExprP x = mkCast(cast_str(w, true), clone(val), w, true);   /* logical (unsigned) view */
+        ExprP bit;
+        if (left) {
+            if (n > bits) { flags.cf = mkConst(0, w, true); return; }
+            bit = mkBinary("&", mkBinary(">>", x, mkConst(bits - n, w, true), w, true),
+                           mkConst(1, w, true), w, true);
+        } else {
+            bit = mkBinary("&", mkBinary(">>", x, mkConst(n - 1, w, true), w, true),
+                           mkConst(1, w, true), w, true);
+        }
+        flags.cf = fold(bit);
+    }
+
     void arith2(Block& b, const cs_x86& x, const std::string& op, uint64_t addr,
                 bool unsigned_shift = false) {
         if (x.op_count < 2) return;
@@ -78,6 +104,10 @@
         ExprP res = mkBinary(op, lhs, rhs, w, uns);
         do_dst(b, d, res, addr);
         set_flags_dst(d, res, w);
+        /* Register dst only: a memory `lhs` is a Mem node that would re-read the POST-store
+         * (already-shifted) value at render, giving the wrong carry. */
+        if ((op == "<<" || op == ">>") && d.type == X86_OP_REG)
+            record_shift_cf(op == "<<", lhs, rhs, w);
     }
 
     /* The shift count of a variable shift comes from CL (8-bit), which the lifter
@@ -119,12 +149,14 @@
                 ExprP res = mkBinary("/", base, mkConst(divisor, w), w);
                 do_dst(b, d, res, addr);
                 set_flags_dst(d, res, w);
+                if (d.type == X86_OP_REG) record_shift_cf(false, lhs, rhs, w);   /* sar: bit (k-1) of original */
                 return;
             }
         }
         ExprP res = mkBinary(">>", lhs, rhs, w, false);
         do_dst(b, d, res, addr);
         set_flags_dst(d, res, w);
+        if (rhs && d.type == X86_OP_REG) record_shift_cf(false, lhs, rhs, w);
     }
 
     /* If `e` has the signed-divide sign-bias shape `base + bias` where bias is

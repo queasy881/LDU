@@ -6,6 +6,15 @@
  */
     ExprP cc_to_expr(CC cc, const FlagSrc& fs) {
         if (!fs.valid) return mkConst(1, 4);
+        /* EXPLICIT carry: a shift recorded its shifted-out bit, so the carry codes read
+         * it directly. Only CC::B (jc/jb, taken on CF==1) and CC::AE (jnc/jae, CF==0) are
+         * determined by CF alone; every other code needs ZF/SF, which the is_arith result
+         * below still supplies -- so fall through for those. */
+        if (fs.cf && (cc == CC::B || cc == CC::AE)) {
+            const char* rel = (cc == CC::B) ? "!=" : "==";
+            return fold(mkBinary(rel, clone(fs.cf), mkConst(0, fs.width ? fs.width : 4),
+                                 fs.width ? fs.width : 4));
+        }
         /* bit test: `bt x,n; jc/jb` => bit set; `jnc/jae` => bit clear. CF holds
          * the tested bit (fs.a already = `(x >> n) & 1`). */
         if (fs.is_bt) {
