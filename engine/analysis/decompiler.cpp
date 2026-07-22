@@ -431,7 +431,7 @@ ExprP mkText(const std::string& t, int w = 8) {
 /* ===================================================================== */
 /* Recovered exception-handling structure for one function (from .pdata/.xdata). */
 struct SehScope { uint32_t begin = 0, end = 0, filter = 0, target = 0; }; /* filter==0 => __finally */
-struct CppCatch { std::string type; uint32_t handler = 0; };
+struct CppCatch { std::string type; uint32_t handler = 0; bool by_ref = false; };
 struct CppTry { int low = 0, high = 0; std::vector<CppCatch> catches; };
 struct EHInfo {
     std::vector<SehScope> seh;   /* __C_specific_handler scope table -> __try/__except/__finally */
@@ -473,6 +473,17 @@ static std::string pe_demangle_type(const std::string& raw) {
 static bool pe_rd_u32(const ds_engine* e, uint64_t rva, uint32_t& o) {
     if (!e || !e->image || rva + 4 > e->image_size) return false;
     o = 0; for (int i = 0; i < 4; i++) o |= (uint32_t)e->image[rva + i] << (8 * i);
+    return true;
+}
+/* MSVC __CxxFrameHandler4 variable-length uint: the low bits of the first byte encode the
+ * byte-length (1..4), the value is the rest shifted down. Advances `rva`. */
+static bool pe_rd_fh4uint(const ds_engine* e, uint64_t& rva, uint32_t& out) {
+    uint8_t b; if (!pe_rd_u8(e, rva, b)) return false;
+    if ((b & 1) == 0)      { out = b >> 1; rva += 1; }
+    else if ((b & 2) == 0) { uint16_t w; if (!pe_rd_u16(e, rva, w)) return false; out = w >> 2; rva += 2; }
+    else if ((b & 4) == 0) { uint32_t w = 0; for (int i = 0; i < 3; i++) { uint8_t x; if (!pe_rd_u8(e, rva + i, x)) return false; w |= (uint32_t)x << (8 * i); } out = w >> 3; rva += 3; }
+    else if ((b & 8) == 0) { uint32_t w; if (!pe_rd_u32(e, rva, w)) return false; out = w >> 4; rva += 4; }
+    else return false;
     return true;
 }
 static const ds_segment* pe_seg_named(const ds_engine* e, const char* nm) {
@@ -598,6 +609,65 @@ static std::shared_ptr<const PeTables> compute_pe_tables(const ds_engine* e) {
                             ct.catches.push_back(std::move(cc));
                         }
                         info.cpp.push_back(std::move(ct));
+                    }
+                }
+            }
+        }
+        /* (C) __CxxFrameHandler4 (FH4, modern MSVC /O2 default): the FuncInfo has NO magic and
+         * a compressed variable-length-int layout the v3 test above skips. Decode it to the SAME
+         * CppTry/CppCatch table the renderer consumes. Runs only when v3/SEH found nothing. The
+         * decisive validator is that a non-null caught-type dispType must point at a `.?A`
+         * TypeDescriptor -- random data essentially never satisfies it. All-or-nothing. DS_NO_EH4. */
+        if (info.seh.empty() && info.cpp.empty() && !std::getenv("DS_NO_EH4")) {
+            uint32_t fi;
+            if (pe_rd_u32(e, data, fi) && fi && ds_rva_is_mapped(e, fi) && !ds_rva_is_exec(e, fi)) {
+                uint8_t hdr;
+                if (pe_rd_u8(e, fi, hdr) && !(hdr & 0x80)) {
+                    uint64_t p = fi + 1; uint32_t t32; bool ok = true;
+                    if (hdr & 0x04) { if (!pe_rd_fh4uint(e, p, t32)) ok = false; }   /* bbtFlags */
+                    if (ok && (hdr & 0x08)) p += 4;                                  /* dispUnwindMap */
+                    uint32_t dispTry = 0, dispIP = 0;
+                    if (ok && (hdr & 0x10)) { if (!pe_rd_u32(e, p, dispTry)) ok = false; p += 4; }
+                    if (ok) { if (!pe_rd_u32(e, p, dispIP)) ok = false; p += 4; }
+                    if (ok && dispTry && ds_rva_is_mapped(e, dispTry)) {
+                        uint64_t tp = dispTry; uint32_t nTry = 0;
+                        if (pe_rd_fh4uint(e, tp, nTry) && nTry >= 1 && nTry <= 64) {
+                            for (uint32_t ti = 0; ti < nTry && ok; ++ti) {
+                                uint32_t tl, th, chh, dha;
+                                if (!pe_rd_fh4uint(e, tp, tl) || !pe_rd_fh4uint(e, tp, th) ||
+                                    !pe_rd_fh4uint(e, tp, chh) || !pe_rd_u32(e, tp, dha)) { ok = false; break; }
+                                tp += 4;
+                                if (!ds_rva_is_mapped(e, dha)) { ok = false; break; }
+                                CppTry ct; ct.low = (int)tl; ct.high = (int)th;
+                                uint64_t hp = dha; uint32_t nC = 0;
+                                if (!pe_rd_fh4uint(e, hp, nC) || nC > 32) { ok = false; break; }
+                                for (uint32_t ci = 0; ci < nC && ok; ++ci) {
+                                    uint8_t H; if (!pe_rd_u8(e, hp, H)) { ok = false; break; } hp += 1;
+                                    uint32_t adj = 0, dispType = 0, dc = 0, dh = 0, tmp;
+                                    if ((H & 0x01) && !pe_rd_fh4uint(e, hp, adj)) { ok = false; break; }
+                                    if (H & 0x02) { if (!pe_rd_u32(e, hp, dispType)) { ok = false; break; } hp += 4; }
+                                    if ((H & 0x04) && !pe_rd_fh4uint(e, hp, dc)) { ok = false; break; }
+                                    if (!pe_rd_u32(e, hp, dh)) { ok = false; break; } hp += 4;   /* dispOfHandler */
+                                    if ((H & 0x08) && !pe_rd_fh4uint(e, hp, tmp)) { ok = false; break; }
+                                    if ((H & 0x10) && !pe_rd_fh4uint(e, hp, tmp)) { ok = false; break; }
+                                    if ((H & 0x20) && !pe_rd_fh4uint(e, hp, tmp)) { ok = false; break; }
+                                    CppCatch cc; cc.handler = dh;
+                                    if (dispType) {
+                                        if (!ds_rva_is_mapped(e, dispType)) { ok = false; break; }
+                                        std::string nm;
+                                        for (int j = 0; j < 512; ++j) {
+                                            uint8_t x; if (!pe_rd_u8(e, (uint64_t)dispType + 16 + j, x) || !x) break;
+                                            nm += (char)x;
+                                        }
+                                        if (nm.rfind(".?A", 0) != 0) { ok = false; break; }   /* strong validator */
+                                        cc.type = pe_demangle_type(nm); cc.by_ref = (adj & 0x08) != 0;
+                                    }
+                                    ct.catches.push_back(std::move(cc));
+                                }
+                                if (ok) info.cpp.push_back(std::move(ct));
+                            }
+                            if (!ok) info.cpp.clear();   /* never emit a partial/garbage table */
+                        }
                     }
                 }
             }
@@ -5861,7 +5931,7 @@ struct Decompiler {
             s += "    /* C++ EH: try { ... }";
             if (tb.catches.empty()) s += " catch(...)";
             for (const auto& c : tb.catches)
-                s += " catch( " + (c.type.empty() ? std::string("...") : c.type) +
+                s += " catch( " + (c.type.empty() ? std::string("...") : c.type + (c.by_ref ? " &" : "")) +
                      " @" + hex(c.handler) + " )";
             s += " */\n";
         }
