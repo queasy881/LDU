@@ -63,6 +63,47 @@
         return 0;
     }
 
+    /* RAW qualified name + kind for a class TAG (sani'd) -- the inverse of class_for_vtable,
+     * from the `<raw>__vftable`/`__vfstruct` symbol rtti.cpp seeded. Lets a recovered virtual
+     * method type its `this` (a1) as its own class. */
+    bool class_qual_for_tag(const std::string& tag, std::string& qual_raw, bool& is_struct_kw) {
+        if (!e || tag.empty()) return false;
+        static const struct { const char* suf; bool st; } S[] = {{"__vftable",false},{"__vfstruct",true}};
+        for (size_t i = 0; i < e->symbol_len; ++i) {
+            const char* nm = e->symbols[i].name;
+            if (!nm || !nm[0]) continue;
+            std::string n = nm;
+            for (auto& s : S) {
+                size_t sl = std::strlen(s.suf);
+                if (n.size() > sl && n.compare(n.size()-sl, sl, s.suf) == 0) {
+                    std::string raw = n.substr(0, n.size()-sl);
+                    if (sani(raw) == tag) { qual_raw = raw; is_struct_kw = s.st; return true; }
+                }
+            }
+        }
+        return false;
+    }
+
+    /* RTTI type_info / TypeDescriptor address -> recovered class identifier. The scanner
+     * seeds `<Class>__type_info` (MSVC TypeDescriptor+8 / g++ &_ZTI, the typeid operand) and
+     * `<Class>__typedesc` (MSVC TypeDescriptor base, the __RTDynamicCast dst arg). Maps such an
+     * address (VA or RVA) back to the class. "" if the address is not a recovered type_info. */
+    std::string rtti_type_class_for_addr(uint64_t addr) {
+        if (!e || addr <= 0x1000) return "";
+        static const char* sufs[] = { "__type_info", "__typedesc" };
+        for (uint64_t r : { addr, (addr >= e->base ? addr - e->base : addr) })
+            for (size_t i = 0; i < e->symbol_len; ++i) {
+                if (e->symbols[i].rva != r || !e->symbols[i].name[0]) continue;
+                std::string n = e->symbols[i].name;
+                for (const char* suf : sufs) {
+                    size_t sl = std::strlen(suf);
+                    if (n.size() > sl && n.compare(n.size() - sl, sl, suf) == 0)
+                        return n.substr(0, n.size() - sl);
+                }
+            }
+        return "";
+    }
+
     /* Resolve a virtual-call target `*(long long*)(*obj + off)` to the concrete method
      * NAME via obj's recovered class vtable: obj->__vftable is `&Class__vftable`, so the
      * slot at `off` is `*(vtable_rva + off)` = the method RVA. Turns

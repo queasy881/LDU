@@ -292,6 +292,11 @@ void scan_rtti_itanium(ds_engine* e) {
                  * pointer rather than in-image — only require a readable, non-null qword here. The real
                  * filter is the string<-ti<-vtable double back-link plus the exec-vfunc check below. */
                 if (!read_u64(e, ti_rva, tivt) || tivt == 0) continue;
+                /* TYPEID (Itanium): seed the _ZTI address a static g++ typeid references. */
+                if (!std::getenv("DS_NO_TYPEID") && !already_seeded(e, ti_rva)) {
+                    char ti[176]; std::snprintf(ti, sizeof ti, "%s__type_info", cls.c_str());
+                    ds_engine_add_symbol(e, ti_rva, ti);
+                }
 
                 std::vector<uint64_t> vt_ti_slots; find_refs(e->base + ti_rva, vt_ti_slots);
                 for (uint64_t vs : vt_ti_slots) {             /* _ZTV whose +8 typeinfo-slot -> this typeinfo */
@@ -362,6 +367,19 @@ extern "C" void ds_engine_scan_rtti(ds_engine* e) {
             std::string cls_raw = demangle(dec, &is_struct);   /* RAW: "game::Entity", "game::Pool<int>" */
             if (cls_raw.empty()) continue;
             std::string cls = c_safe(cls_raw);                 /* identifier form for vtbl-slot fn names */
+            /* TYPEID: seed the type_info object so a `typeid(T)` operand (a reference to
+             * &TypeDescriptor._Data == ptd+8, what MSVC compares/passes to .name()) resolves
+             * to `&<Class>__type_info` instead of a raw rodata address. DS_NO_TYPEID. */
+            if (!std::getenv("DS_NO_TYPEID") && !already_seeded(e, ptd + 8)) {
+                char ti[176]; std::snprintf(ti, sizeof ti, "%s__type_info", cls.c_str());
+                ds_engine_add_symbol(e, ptd + 8, ti);
+            }
+            /* DYNAMIC_CAST: __RTDynamicCast's dst arg is the TypeDescriptor BASE (ptd), so seed
+             * `<Class>__typedesc` there to resolve a `dynamic_cast<Class*>` target. DS_NO_DYNCAST. */
+            if (!std::getenv("DS_NO_DYNCAST") && !already_seeded(e, ptd)) {
+                char td[176]; std::snprintf(td, sizeof td, "%s__typedesc", cls.c_str());
+                ds_engine_add_symbol(e, ptd, td);
+            }
             /* Name the VTABLE itself (at `pos`, where slot 0 is — the address an object stores at +0),
              * with the RAW qualified name so the decompiler can recover `namespace X { class Y {...} }`.
              * The decompiler sani()s it for the C tag and keeps the raw form for the namespace block.

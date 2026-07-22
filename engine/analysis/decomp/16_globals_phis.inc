@@ -1920,6 +1920,20 @@
          * const can still be folded away afterwards (`p == 0` becomes `!p`), and flagging
          * at hint-time pulled the header into functions that never print NULL. */
         if (e->null_hint) { used_null = true; return "NULL"; }
+        /* RTTI: a constant that is a recovered type_info object address (MSVC TypeDescriptor+8
+         * / g++ &_ZTI, seeded by the RTTI scanner) is a `typeid(T)` operand -> render
+         * `&<Class>__type_info`. A named-global #define keeps the exact address (`&`/`*`
+         * cancel), so it is behavior-neutral AND C-compile-clean /TC. Gated DS_NO_TYPEID. */
+        if (!e->is_float && (uint64_t)v > 0x1000 && !std::getenv("DS_NO_TYPEID")) {
+            std::string tc = rtti_type_class_for_addr((uint64_t)v);
+            if (!tc.empty()) {
+                std::string nm = tc + "__type_info";
+                char def[96]; std::snprintf(def, sizeof def, "(*(int8_t*)0x%llx)",
+                                            (unsigned long long)v);
+                named_globals[nm] = def;
+                return "&" + nm;
+            }
+        }
         /* A constant that IS a static-data address, passed in a proven pointer position
          * (addr_hint, stamped at the call-arg site from the callee's ptr_param_mask), is the
          * address of a global: render `&byte_<addr>` reusing the existing named_globals #define.
@@ -2558,6 +2572,25 @@
                 return operand(e->a, false) + " " + op + " " + operand(e->b, true);
             }
             case EK::Call: {
+                /* dynamic_cast recovery: MSVC __RTDynamicCast(p, VfDelta, &srcTD, &dstTD, isRef)
+                 * (5 args, dst=arg[3]) / g++ __dynamic_cast(p, &srcTI, &dstTI, hint) (4 args,
+                 * dst=arg[2]). When BOTH the dst and its preceding src arg are recovered RTTI
+                 * type_info addresses, render `dynamic_cast<Class*>(p)`. Two adjacent
+                 * TypeDescriptor pointers are unique to these runtime casts, so no false match.
+                 * Gated DS_NO_DYNCAST. */
+                if (!e->indirect && !std::getenv("DS_NO_DYNCAST")) {
+                    int di = (int)e->args.size() == 5 ? 3 : (int)e->args.size() == 4 ? 2 : -1;
+                    auto cst = [](const ExprP& x, uint64_t& o) {
+                        if (!x || x->kind != EK::Const || x->is_float) return false;
+                        o = (uint64_t)x->cval; return true; };
+                    uint64_t drva = 0, srva = 0;
+                    if (di >= 1 && cst(e->args[di], drva) && cst(e->args[di - 1], srva) &&
+                        !rtti_type_class_for_addr(srva).empty()) {
+                        std::string dc = rtti_type_class_for_addr(drva);
+                        if (!dc.empty())
+                            return "dynamic_cast<" + dc + "*>(" + render(e->args[0]) + ")";
+                    }
+                }
                 /* Indirect call: render the target from the live child so the text
                  * reflects any copy-prop/inlining done after lift (the callee string
                  * is a stale snapshot from construction time). */

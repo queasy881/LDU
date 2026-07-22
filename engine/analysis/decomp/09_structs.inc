@@ -468,6 +468,32 @@
             for (auto& b : blocks) for (auto& s : b.stmts)
                 if (s.kind == SK::Assign) scan_vt(s.lhs, s.rhs);
         }
+        /* VIRTUAL-METHOD `this` TYPING (DS_NO_VMTHIS): a recovered vmethod `<Class>__vftbl_N`
+         * has a1 == this == <Class> -- the exact assumption resolve_virtual_call already trusts.
+         * The RTTI scanner named the fn but never typed the receiver, so a1 renders as a bare
+         * int64_t pointer with a1[k] instead of arrowing through the recovered class layout.
+         * Reject the `_off<digits>` MI
+         * subobject form (its this is a base subobject ptr, not the class base). */
+        if (!std::getenv("DS_NO_VMTHIS") && !struct_class.count("a1")) {
+            size_t vp = self_fname.find("__vftbl_");
+            if (vp != std::string::npos && vp > 0) {
+                std::string ctag = self_fname.substr(0, vp);
+                bool mi = false;
+                size_t op = ctag.rfind("_off");
+                if (op != std::string::npos && op + 4 < ctag.size()) {
+                    mi = true;
+                    for (size_t k = op + 4; k < ctag.size(); ++k)
+                        if (!isdigit((unsigned char)ctag[k])) { mi = false; break; }
+                }
+                std::string qual; bool isst = false;
+                if (!mi && class_qual_for_tag(ctag, qual, isst)) {
+                    struct_class["a1"] = ctag;
+                    struct_class_qual["a1"] = qual;
+                    struct_class_kw["a1"] = isst;
+                    if (!fw["a1"].count(0)) { fw["a1"][0] = 8; fu["a1"][0] = false; ff["a1"][0] = false; }
+                }
+            }
+        }
         /* Vec2/Vec3/Vec4: a by-pointer struct that is EXACTLY 2/3/4 contiguous width-4
          * FLOAT fields at offsets 0,4,8,12 is a math vector — name it Vec<N> (a shared,
          * include-guarded typedef) instead of the opaque per-fn `s_<fn>_<p>`. */
