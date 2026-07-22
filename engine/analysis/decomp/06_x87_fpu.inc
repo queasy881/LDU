@@ -93,6 +93,10 @@
      * block; carried across block edges (see entry_vfill) only when all preds agree. */
     struct VecFill { ExprP val; int esz = 0; };
     std::map<Reg, VecFill> vec_fill;
+    /* snapshot of the fill the current instruction's per-op erase is about to clear, so the
+     * MSVC byte-broadcast memset chain (imul r,0x0101; movq xmm,r; punpcklqdq x,x;
+     * vinsertf128 ymm,ymm,x) can re-establish it each step within a block. Block-local. */
+    std::map<Reg, VecFill> prev_vec_fill;
     /* AVX2/AVX-512: the value an UNMODELED wide-vector (ymm/zmm) register-write op produced,
      * keyed by the capstone register id (NOT a Reg -- ymm and xmm alias one R_XMM slot, so
      * storing here keeps the 256/512-bit opaque result off the 128-bit lane model). A later

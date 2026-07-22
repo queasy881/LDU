@@ -1371,6 +1371,12 @@
                             ExprP av = nullptr; bool adiff = false, aany = false;
                             for (int p : b.pred) {
                                 if (p < 0 || p >= (int)blocks.size()) continue;
+                                /* an UNREACHABLE dead block (no preds, not the entry) carries no
+                                 * real dataflow -- capstone decoded it (alignment/dead tail) but
+                                 * nothing reaches it, yet it lists a fall-through succ, so it
+                                 * appears as a pred here. Skipping it (vs failing the strict
+                                 * merge) lets a genuine cross-block vector fact survive. */
+                                if (blocks[p].pred.empty() && p != eb) continue;
                                 ExprP po = blocks[p].reg_out_vla[r];
                                 if (!po) {
                                     /* OPTIMISTIC LOOP BOOTSTRAP: a back-edge pred (a loop
@@ -1407,6 +1413,7 @@
                             bool fdiff2 = false, fany2 = false;
                             for (int p : b.pred) {
                                 if (p < 0 || p >= (int)blocks.size()) continue;
+                                if (blocks[p].pred.empty() && p != eb) continue;   /* skip dead pred */
                                 ExprP po = blocks[p].reg_out_vfill[r];
                                 int pe = blocks[p].reg_out_vfill_esz[r];
                                 if (!po || pe == 0) {

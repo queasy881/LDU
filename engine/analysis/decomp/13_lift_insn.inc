@@ -105,6 +105,7 @@
         for (int i = 0; i < R_COUNT; ++i) { regfile[i] = nullptr; regfile_hi[i] = nullptr; clear_xmm_f((Reg)i); }
         vec_load_addr.clear();
         vec_fill.clear();
+        prev_vec_fill.clear();
         vec_op_value.clear();
         xmm_packed_var.clear(); stack_packed_var.clear(); int_slots.clear();
         if (b.is_switch) switch_resolved_index.erase(b.id);   /* recapture each pass */
@@ -945,10 +946,16 @@
          * copies from a source that was loaded/filled and NOT since clobbered. The
          * broadcast/zero cases below re-set vec_fill after this erase, so a genuine fill
          * survives while any later overwrite drops it. */
+        prev_vec_fill.clear();
         if (nop >= 1 && OP(0).type == X86_OP_REG &&
             (!vec_load_addr.empty() || !vec_fill.empty() || !vec_op_value.empty())) {
             Reg d0 = vec_reg(OP(0).reg);
-            if (d0 != R_NONE) { vec_load_addr.erase(d0); vec_fill.erase(d0); }
+            if (d0 != R_NONE) {
+                auto pf = vec_fill.find(d0);   /* snapshot for the byte-broadcast memset chain */
+                if (pf != vec_fill.end() && pf->second.val)
+                    prev_vec_fill[d0] = { clone(pf->second.val), pf->second.esz };
+                vec_load_addr.erase(d0); vec_fill.erase(d0);
+            }
             vec_op_value.erase(OP(0).reg);   /* AVX2: overwriting a ymm/zmm drops its op result */
         }
 
@@ -1901,6 +1908,26 @@
                         Reg dr; int dw; map_reg(OP(0).reg, dr, dw);
                         if (is_xmm(dr)) { regfile_hi[dr] = mkConst(0, 8); xmm_packed_var.erase(dr); }
                     }
+                    /* MSVC memset byte-broadcast: `movq xmm, r` where r = c*0x0101010101010101
+                     * (splatting byte c to 8 bytes) -> a byte fill, so the following
+                     * punpcklqdq/vinsertf128 broadcast it and the wide store becomes
+                     * memset(dst,c,n). DS_NO_MEMSETBCAST. */
+                    if (id == X86_INS_MOVQ && OP(0).type == X86_OP_REG &&
+                        OP(1).type == X86_OP_REG && !std::getenv("DS_NO_MEMSETBCAST")) {
+                        Reg dr; int dw; map_reg(OP(0).reg, dr, dw);
+                        Reg sr; int sw; map_reg(OP(1).reg, sr, sw);
+                        if (is_xmm(dr) && !is_xmm(sr)) {
+                            ExprP r = fold(rvalue(OP(1)));
+                            ExprP byte = nullptr;
+                            if (r && r->kind == EK::Binary && r->op == "*") {
+                                if (r->b && r->b->kind == EK::Const &&
+                                    (uint64_t)r->b->cval == 0x0101010101010101ULL) byte = clone(r->a);
+                                else if (r->a && r->a->kind == EK::Const &&
+                                    (uint64_t)r->a->cval == 0x0101010101010101ULL) byte = clone(r->b);
+                            }
+                            if (byte) vec_fill[dr] = { byte, 1 };
+                        }
+                    }
                     /* `movq xmm, m64` LOAD: stock the two low int lanes so a following
                      * 2-wide packed-int op stays faithful (real=false until it reads). */
                     if (id == X86_INS_MOVQ && OP(0).type == X86_OP_REG &&
@@ -1928,6 +1955,15 @@
                 if (!is_xmm(dr)) break;
                 ExprP dlo = xmm_lo(dr), slo = simd_lane0(OP(1));
                 if (dlo && slo) set_xmm_lanes(dr, dlo, slo, b);
+                /* memset byte-broadcast: `punpcklqdq x,x` broadcasts low 64 -> 128; the per-op
+                 * erase dropped the byte fill -- re-establish it from the snapshot so it
+                 * survives to vinsertf128/the store. Same-reg only. */
+                if (OP(1).type == X86_OP_REG && OP(0).reg == OP(1).reg &&
+                    !std::getenv("DS_NO_MEMSETBCAST")) {
+                    auto pf = prev_vec_fill.find(dr);
+                    if (pf != prev_vec_fill.end() && pf->second.val)
+                        vec_fill[dr] = { clone(pf->second.val), pf->second.esz };
+                }
                 break;
             }
             case X86_INS_PADDQ:  case X86_INS_VPADDQ:
@@ -3573,6 +3609,19 @@
                         extern_callees[call->callee] = call->ret_kind;
                         opaque_ops[call->callee]++;
                         vec_op_value[OP(0).reg] = call;
+                        /* memset byte-broadcast: `vinsertf128 ymm,ymm,xmm,1` with the inserted
+                         * xmm the SAME slot as the base -> a uniform 256-bit byte fill.
+                         * Re-establish the snapshotted fill so the wide store becomes memset. */
+                        if ((id == X86_INS_VINSERTF128 || id == X86_INS_VINSERTI128) &&
+                            nop >= 3 && OP(2).type == X86_OP_REG &&
+                            !std::getenv("DS_NO_MEMSETBCAST")) {
+                            Reg dr2 = vec_reg(OP(0).reg);
+                            if (dr2 != R_NONE && vec_reg(OP(2).reg) == dr2) {
+                                auto pf = prev_vec_fill.find(dr2);
+                                if (pf != prev_vec_fill.end() && pf->second.val)
+                                    vec_fill[dr2] = { clone(pf->second.val), pf->second.esz };
+                            }
+                        }
                     }
                     break;
                 }
