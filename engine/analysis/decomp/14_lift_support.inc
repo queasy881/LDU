@@ -284,6 +284,10 @@
      * XMM float/double args). Read by the call-site arg builder to pull each arg
      * from xmm[i] instead of the integer reg. Reset per lift_call. */
     unsigned char cc_float_mask = 0;
+    /* ptr_param_mask + per-position pointee width of the most recently resolved callee.
+     * Read by the call-site arg builder to type each pointer argument's local. */
+    unsigned char cc_ptr_param_mask = 0;
+    unsigned char cc_ptr_param_w[4] = {0,0,0,0};
     bool cc_pc_from_sig = false;   /* did the last resolved callee's pc come from sigtab? */
 
     bool const_callee_name(const ExprP& target, std::string& nm, int& rk, int& pc) {
@@ -301,6 +305,8 @@
         if (sigtab && sigtab->count(rva)) {
             rk = sigtab->at(rva).ret_kind; pc = sigtab->at(rva).param_count;
             cc_float_mask = sigtab->at(rva).float_mask;
+            cc_ptr_param_mask = sigtab->at(rva).ptr_param_mask;
+            for (int p = 0; p < 4; ++p) cc_ptr_param_w[p] = sigtab->at(rva).ptr_param_w[p];
             cc_pc_from_sig = true;
         }
         return true;

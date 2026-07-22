@@ -10,6 +10,8 @@
         const cs_x86& x = in.x86;
         uint64_t target = 0; bool have_target = false;
         cc_float_mask = 0;   /* reset; set when a callee sig is resolved */
+        cc_ptr_param_mask = 0;   /* reset; set when a callee sig is resolved */
+        for (int _p = 0; _p < 4; ++_p) cc_ptr_param_w[_p] = 0;
         cc_pc_from_sig = false;  /* reset; set true when pc comes from sigtab */
 
         /* Drop compiler-inserted security/runtime housekeeping calls entirely:
@@ -52,6 +54,8 @@
                 const FuncSig& s = sigtab->at(in.branch_target);
                 ret_kind = s.ret_kind; pc = s.param_count;
                 cc_float_mask = s.float_mask;
+                cc_ptr_param_mask = s.ptr_param_mask;
+                for (int _p = 0; _p < 4; ++_p) cc_ptr_param_w[_p] = s.ptr_param_w[_p];
                 cc_pc_from_sig = true;
                 extern_callees[callee] = ret_kind;
             } else {
@@ -206,7 +210,13 @@
                     }
                     call->args.push_back(fv);
                 } else {
-                    call->args.push_back(reg_value(argregs[i], 8));
+                    ExprP av = reg_value(argregs[i], 8);
+                    /* the callee dereferences this arg => it is a pointer; type the
+                     * caller's argument local accordingly (cross-function propagation). */
+                    static const bool no_ptrparam = std::getenv("DS_NO_PTRPARAM") != nullptr;
+                    if (!no_ptrparam && av && (cc_ptr_param_mask & (1u << i)))
+                        apply_ptr_param_type(av, cc_ptr_param_w[i]);
+                    call->args.push_back(av);
                 }
             } else {
                 /* 5th+ argument: the caller stores it to the outgoing arg area at

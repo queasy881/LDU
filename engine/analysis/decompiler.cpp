@@ -1077,6 +1077,15 @@ struct FuncSig {
     unsigned char float_mask = 0; /* bit p set => param position p is an XMM float/double arg */
     unsigned char double_mask = 0; /* bit p set (within float_mask) => that arg is DOUBLE (8B), else float (4B) */
     unsigned char float_typed_mask = 0; /* float params whose scalar WIDTH is known (4/8) — safe to type in a proto */
+    /* CROSS-FUNCTION POINTER PARAMS: bit p set => integer arg-register p (rcx/rdx/r8/r9) is
+     * DEREFERENCED inside the callee (used as the base of a real load/store, read-before-write)
+     * before it is written. A dereferenced arg IS a pointer (or NULL) at every call site, which
+     * the CALLER usually cannot see locally — so we propagate it: the caller's argument local is
+     * typed a pointer instead of `long long`. ptr_param_w[p] is the access width at the deref (the
+     * pointee-size hint: `mov al,[rcx]` -> char*, `mov rax,[rcx]` -> long long*). Filled by
+     * build_sig_table, consumed at call sites. DS_NO_PTRPARAM disables. */
+    unsigned char ptr_param_mask = 0;
+    unsigned char ptr_param_w[4] = {0,0,0,0};
     int  ret_kind = 1;      /* 0 void, 1 int, 2 long long, 3 float, 4 double */
     bool ret_byte = false;  /* return is a byte (bool/char): the closest rax write
                              * to a ret is byte-width al WITHOUT zero-extension —
@@ -6039,6 +6048,9 @@ void build_sig_table(ds_engine* e, std::map<uint64_t, FuncSig>& tab) {
         bool seen_write[4] = {false,false,false,false};
         bool used_arg[4] = {false,false,false,false};
         bool homed_arg[4] = {false,false,false,false};
+        /* arg reg p dereferenced (real load/store base, read-before-write) => pointer param */
+        bool arg_is_ptr[4] = {false,false,false,false};
+        int  arg_ptr_w[4]  = {0,0,0,0};   /* first-seen access width at the deref (pointee hint) */
         /* Homed BEFORE `sub rsp`, i.e. at the very top of the prologue. All four of these is
          * the MSVC x64 va_start idiom and nothing else: a variadic callee must spill rcx/rdx/
          * r8/r9 to their shadow slots so va_arg can walk them as one array, and it does that
@@ -6823,6 +6835,18 @@ void build_sig_table(ds_engine* e, std::map<uint64_t, FuncSig>& tab) {
                         int pidx=(r==R_RCX)?0:(r==R_RDX)?1:(r==R_R8)?2:(r==R_R9)?3:-1;
                         if (pidx >= 0 && !seen_write[pidx]) used_arg[pidx] = true;
                     }
+                    /* the BASE (not index) of a REAL memory access — a load/store, never a
+                     * plain LEA address-calc whose result may be an integer — proves the arg
+                     * is a pointer. An index register is a scaled offset (often an int), so
+                     * it does not count. First-seen access width is the pointee hint. */
+                    {
+                        int pb=(bi[0]==R_RCX)?0:(bi[0]==R_RDX)?1:(bi[0]==R_R8)?2:(bi[0]==R_R9)?3:-1;
+                        if (pb >= 0 && !seen_write[pb] && c.id != X86_INS_LEA &&
+                            c.id != X86_INS_NOP) {
+                            arg_is_ptr[pb] = true;
+                            if (arg_ptr_w[pb] == 0 && op.size > 0) arg_ptr_w[pb] = op.size;
+                        }
+                    }
                     /* stack-passed argument (5th+): read from the caller's arg area
                      * at [rsp + frame + 0x28 + 8*(k-5)] under /Od. A slot only
                      * counts as an INCOMING arg if it is read BEFORE the callee
@@ -6910,6 +6934,14 @@ void build_sig_table(ds_engine* e, std::map<uint64_t, FuncSig>& tab) {
         sig.float_typed_mask = tmask;
         if (max_stack_arg > pc) pc = max_stack_arg;   /* args 5+ passed on stack */
         sig.param_count = pc;
+        /* POINTER PARAMS: an arg reg dereferenced before written is a pointer. Exclude
+         * float positions (those args arrive in xmm, so an arg-reg deref there is a
+         * different value) and positions beyond the recovered arity. */
+        for (int p = 0; p < 4 && p < pc; ++p)
+            if (arg_is_ptr[p] && !(fmask & (1u << p))) {
+                sig.ptr_param_mask |= (unsigned char)(1u << p);
+                sig.ptr_param_w[p] = (unsigned char)(arg_ptr_w[p] ? arg_ptr_w[p] : 8);
+            }
         if (!has_ret) sig.ret_kind = 0;
         /* a STRONG float return (`cvt/fp-op xmm0; ret` on some path) beats an
          * incidental rax from a tail `call err(); ret` (a noreturn error path whose
@@ -7013,6 +7045,8 @@ void build_sig_table(ds_engine* e, std::map<uint64_t, FuncSig>& tab) {
                 s.float_mask = tab[callee].float_mask;
                 s.double_mask = tab[callee].double_mask;
                 s.float_typed_mask = tab[callee].float_typed_mask;
+                s.ptr_param_mask = tab[callee].ptr_param_mask;
+                for (int p = 0; p < 4; ++p) s.ptr_param_w[p] = tab[callee].ptr_param_w[p];
             }
         }
     }

@@ -75,6 +75,28 @@
         return typ_str(w ? w : 4, uns, false);
     }
 
+    /* CROSS-FUNCTION POINTER PROPAGATION (consume side). The callee dereferences arg
+     * position `i`, so this argument IS a pointer (or NULL). Type the caller's argument
+     * local as a pointer so it declares `T* v` instead of `long long v` — the caller
+     * usually has no local dereference of its own to reveal this. `w` is the callee's
+     * access width (pointee-size hint). Strips a leading cast to reach the underlying
+     * local; refuses to override a stronger inference (float/bool/packed/conflict) and
+     * a sub-pointer-width local (a genuine 4-byte int passed to a ptr param — leave it).
+     * decl_type's float-wins / signed-veto rules remain the final safety net. */
+    void apply_ptr_param_type(const ExprP& e, int w) {
+        ExprP x = e; int guard = 0;
+        while (x && x->kind == EK::Cast && x->a && guard++ < 4) x = x->a;
+        if (!x || x->kind != EK::Var || x->name.empty()) return;
+        const std::string& nm = x->name;
+        if ((var_is_float.count(nm) && var_is_float[nm]) || bool_vars.count(nm) ||
+            packed_gp_vars.count(nm) || conflict_raw_vars.count(nm) ||
+            force_float_vars.count(nm)) return;
+        if (var_width.count(nm) && var_width[nm] && var_width[nm] < 8) return;
+        var_pointer[nm] = true;
+        if (!ptr_elem_width.count(nm))
+            ptr_elem_width[nm] = (w == 1 || w == 2 || w == 4 || w == 8) ? w : 8;
+    }
+
     /* =================================================================== */
     /*  3. Symbolic execution per block                                     */
     /* =================================================================== */
