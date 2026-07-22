@@ -27,6 +27,8 @@
 #include <cstdlib>
 #include <string>
 #include <vector>
+#include <set>
+#include <map>
 
 namespace {
 
@@ -97,13 +99,42 @@ struct MsvcName {
         if (r) { i++; return r; }
         return "";
     }
+    std::string number() {                       /* MSVC int literal, already past "$0" */
+        bool neg = false; if (peek()=='?') { neg=true; ++i; }
+        if (peek()>='0' && peek()<='9') {        /* 1..10 encoded as '0'..'9' */
+            long v=(peek()-'0')+1; ++i; return (neg?"-":"")+std::to_string(v);
+        }
+        long v=0; bool any=false;                /* >10: nibbles 'A'..'P', '@'-terminated */
+        while (peek()>='A' && peek()<='P') { v=v*16+(peek()-'A'); ++i; any=true; }
+        if (peek()=='@') ++i;
+        if (!any) { ok=false; return "?"; }
+        return (neg?"-":"")+std::to_string(v);
+    }
     std::string type_arg() {                     /* a template argument */
+        static const bool off = std::getenv("DS_NO_TMPLARG") != nullptr;
+        if (off) {                               /* old behaviour: builtins/classes only */
+            std::string b0 = builtin();
+            if (!b0.empty()) return b0;
+            char c0 = peek();
+            if (c0 == 'V' || c0 == 'U' || c0 == 'T') { i++; return qname(); }
+            if (c0 == 'W') { i++; if (peek()=='4') i++; return qname(); }
+            ok = false; return "?";
+        }
+        /* Peel pointer (P/Q/R/S) / reference (A/B) layers, each optionally __ptr64 'E' + a
+         * cv byte A-D; then non-type integer args ($0<num>); then builtins/classes. */
+        std::string suffix;
+        for (;;) { char c = peek();
+            if (c=='P'||c=='Q'||c=='R'||c=='S') { ++i; if(peek()=='E')++i; if(peek()>='A'&&peek()<='D')++i; suffix="*"+suffix; continue; }
+            if (c=='A'||c=='B')                 { ++i; if(peek()=='E')++i; if(peek()>='A'&&peek()<='D')++i; suffix="&"+suffix; continue; }
+            break;
+        }
+        if (peek()=='$') { ++i; if (peek()=='0') { ++i; return number(); } ok=false; return "?"; }
         std::string b = builtin();
-        if (!b.empty()) return b;
+        if (!b.empty()) return b + suffix;
         char c = peek();
-        if (c == 'V' || c == 'U' || c == 'T') { i++; return qname(); }   /* class/struct/union arg */
-        if (c == 'W') { i++; if (peek()=='4') i++; return qname(); }     /* enum: W4<name> */
-        ok = false; return "?";                  /* pointer/ref/const-qualified/other: degrade */
+        if (c == 'V' || c == 'U' || c == 'T') { i++; return qname() + suffix; }   /* class/struct/union arg */
+        if (c == 'W') { i++; if (peek()=='4') i++; return qname() + suffix; }      /* enum: W4<name> */
+        ok = false; return "?";                  /* genuinely unknown: degrade */
     }
     std::string qname() {                        /* qualified name up to '@@' */
         std::vector<std::string> comps;
@@ -223,11 +254,37 @@ struct ItaniumName {
         return nm;
     }
     std::string type_arg() {                       /* a template argument */
+        static const bool tmoff = std::getenv("DS_NO_TMPLARG") != nullptr;
+        if (tmoff) {
+            std::string b0 = builtin();
+            if (!b0.empty()) return b0;
+            if (peek() == 'N') return nested();
+            if (peek() >= '1' && peek() <= '9') return source_name();
+            ok = false; return "?";
+        }
+        /* Peel pointer 'P'->'*', reference 'R'->'&', 'O'->'&&', dropping cv prefixes K/V/r;
+         * handle 'L'<type><value>'E' integer literals; then builtins/nested/source-name. */
+        std::string suffix;
+        for (;;) { char c = peek();
+            if (c=='P') { ++i; suffix="*"+suffix; continue; }
+            if (c=='R') { ++i; suffix="&"+suffix; continue; }
+            if (c=='O') { ++i; suffix="&&"+suffix; continue; }
+            if (c=='K'||c=='V'||c=='r') { ++i; continue; }   /* cv-qualifier prefix: drop */
+            break;
+        }
+        if (peek()=='L') {                         /* literal: L <type> <value> E */
+            ++i; builtin();                        /* consume the type code */
+            std::string num; bool neg=false;
+            if (peek()=='n') { neg=true; ++i; }
+            while (peek()>='0' && peek()<='9') { num+=peek(); ++i; }
+            if (peek()=='E') ++i;
+            return num.empty() ? std::string("?") : (neg?"-":"")+num;
+        }
         std::string b = builtin();
-        if (!b.empty()) return b;
-        if (peek() == 'N') return nested();
-        if (peek() >= '1' && peek() <= '9') return source_name();
-        ok = false; return "?";                    /* pointer/ref/qualified/subst: degrade */
+        if (!b.empty()) return b + suffix;
+        if (peek() == 'N') return nested() + suffix;
+        if (peek() >= '1' && peek() <= '9') return source_name() + suffix;
+        ok = false; return "?";                    /* subst/other: degrade */
     }
     std::string nested() {                          /* N <comp>... E  (outermost-first) */
         if (peek() != 'N') { ok = false; return ""; }
@@ -335,11 +392,49 @@ void scan_rtti_itanium(ds_engine* e) {
     }
 }
 
+/* PURE VIRTUAL: the abstract-call trap (`_purecall`/`__cxa_pure_virtual`) is the ONE code
+ * address MSVC stores into >=2 vtable slots at DISTINCT indices (a real, even inherited,
+ * method sits at ONE index across base+derived vtables). Re-run the exact COL recognition
+ * and return the rvas that occupy >=2 distinct slot indices. Proven: {} on NullWare. */
+std::set<uint64_t> collect_purecall_rvas(ds_engine* e) {
+    std::map<uint64_t, std::set<int>> idx;
+    for (size_t si = 0; si < e->segment_len; ++si) {
+        const ds_segment& s = e->segments[si];
+        if (!(s.flags & DS_FLAG_R) || (s.flags & DS_FLAG_X)) continue;
+        uint64_t start = (s.rva + 7) & ~7ull, end = s.rva + s.size;
+        if (end > e->image_size) end = e->image_size;
+        for (uint64_t pos = start + 8; pos + 8 <= end; pos += 8) {
+            uint64_t metaVA;
+            if (!read_u64(e, pos - 8, metaVA) || metaVA < e->base) continue;
+            uint64_t col = metaVA - e->base;
+            const ds_segment* cs = ds_seg_for_rva(e, col);
+            if (!cs || (cs->flags & DS_FLAG_X)) continue;
+            uint32_t sig, self, ptd;
+            if (!read_u32(e, col+0x00, sig)  || sig != 1) continue;
+            if (!read_u32(e, col+0x14, self) || self != (uint32_t)col) continue;
+            if (!read_u32(e, col+0x0C, ptd)  || !ds_rva_is_mapped(e, ptd) ||
+                ds_rva_is_exec(e, ptd)) continue;
+            for (int i = 0; i < 4096; ++i) {
+                uint64_t v;
+                if (!read_u64(e, pos + 8*(uint64_t)i, v) || v < e->base) break;
+                uint64_t fn = v - e->base;
+                if (!ds_rva_is_exec(e, fn)) break;
+                idx[fn].insert(i);
+            }
+        }
+    }
+    std::set<uint64_t> pure;
+    for (auto& kv : idx) if (kv.second.size() >= 2) pure.insert(kv.first);
+    return pure;
+}
+
 } // namespace
 
 extern "C" void ds_engine_scan_rtti(ds_engine* e) {
     static const bool off = std::getenv("DS_NO_RTTI") != nullptr;
     if (off || !e || e->arch != DS_ARCH_X64 || !e->image) return;
+    static const bool no_pure = std::getenv("DS_NO_PUREVIRT") != nullptr;
+    std::set<uint64_t> purecall = no_pure ? std::set<uint64_t>{} : collect_purecall_rvas(e);
 
     for (size_t si = 0; si < e->segment_len; ++si) {
         const ds_segment& s = e->segments[si];
@@ -421,6 +516,16 @@ extern "C" void ds_engine_scan_rtti(ds_engine* e) {
                 if (!read_u64(e, pos + 8 * (uint64_t)i, v) || v < e->base) break;
                 uint64_t fn = v - e->base;
                 if (!ds_rva_is_exec(e, fn)) break;   /* next vtable's COL-qword -> data: natural stop */
+                /* PURE VIRTUAL: this slot points at the shared abstract-call trap. Name the trap
+                 * `_purecall` (once) and seed a `<Class>__vftbl_N_pure` marker at the slot's data
+                 * address, instead of mislabeling the trap as a real method of this class. */
+                if (purecall.count(fn)) {
+                    if (!already_seeded(e, fn)) ds_engine_add_symbol(e, fn, "_purecall");
+                    char pk[112]; std::snprintf(pk, sizeof pk, "%s__vftbl_%d_pure", cls.c_str(), i);
+                    if (!already_seeded(e, pos + 8*(uint64_t)i))
+                        ds_engine_add_symbol(e, pos + 8*(uint64_t)i, pk);
+                    continue;
+                }
                 /* Seed the name for every exec slot (not only already-recovered
                  * funcs): this pass runs BEFORE build_cfg, whose function-start
                  * seeding considers e->symbols[].rva — so a vtable-ONLY virtual
