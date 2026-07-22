@@ -34,6 +34,7 @@
 
 #include "disasm.h"
 #include "engine_internal.h"
+#include "rust_demangle.h"
 
 #include <cstdint>
 #include <cstdlib>
@@ -226,6 +227,16 @@ BOOL CALLBACK on_symbol(PSYMBOL_INFO si, ULONG, PVOID ctx) {
     std::string raw(si->Name, ::strnlen(si->Name, n));
     if (raw.empty()) return TRUE;
 
+    /* Rust functions reach the PDB as `_ZN..17h<hash>E` (legacy) or `_R..` (v0)
+     * manglings — dbghelp's C++ undecorator leaves both untouched. Demangle to a
+     * real module path (core::fmt::Formatter::pad) so the whole binary, headers
+     * and call sites alike, reads with names instead of hash noise. Non-Rust
+     * symbols (including `_R*` C runtime lookalikes) return "" and are kept. */
+    if (!std::getenv("DS_NO_RUSTNAME")) {
+        std::string rd = ds_rust_demangle(raw);
+        if (!rd.empty()) raw.swap(rd);
+    }
+
     std::string name = raw.substr(0, NAME_MAX_LEN);
     std::string key = render_key(name);
     if (c->used->count(key)) {
@@ -254,15 +265,16 @@ extern "C" void ds_engine_load_pdb(ds_engine* e) {
     static const bool off = std::getenv("DS_NO_PDB") != nullptr;
     if (off || !e || !e->image || !e->image_size) return;
 
+    const bool report = std::getenv("DS_PDB_REPORT") != nullptr;
     CodeView cv;
-    if (!find_codeview(e, cv)) return;
+    if (!find_codeview(e, cv)) { if (report) std::fprintf(stderr, "[pdb] no codeview record\n"); return; }
     /* The RSDS path is absolute and baked in at link time; ds_engine has no
      * path field for the binary itself, so this is the only pdb we can name.
      * A binary copied off its build machine simply keeps fun_<rva>. */
-    if (GetFileAttributesA(cv.path.c_str()) == INVALID_FILE_ATTRIBUTES) return;
+    if (GetFileAttributesA(cv.path.c_str()) == INVALID_FILE_ATTRIBUTES) { if (report) std::fprintf(stderr, "[pdb] file not found: %s\n", cv.path.c_str()); return; }
 
     const Dbghelp* d = dbghelp();
-    if (!d) return;
+    if (!d) { if (report) std::fprintf(stderr, "[pdb] dbghelp unavailable\n"); return; }
 
     /* dbghelp's Sym* state is global per handle and is NOT thread-safe, and the
      * dump tool decompiles across N threads (the get_pe_tables cache in
@@ -279,6 +291,7 @@ extern "C" void ds_engine_load_pdb(ds_engine* e) {
      * the dll on disk nor a live process, which is what makes this work from an
      * image ds_engine only holds in memory. */
     if (!d->load(h, NULL, cv.path.c_str(), NULL, e->base, (DWORD)e->image_size, NULL, 0)) {
+        if (report) std::fprintf(stderr, "[pdb] load failed\n");
         d->cleanup(h);
         return;
     }
@@ -293,6 +306,7 @@ extern "C" void ds_engine_load_pdb(ds_engine* e) {
     if (!d->mod_info(h, e->base, &mi) ||
         std::memcmp(&mi.PdbSig70, &cv.guid, sizeof(GUID)) != 0 ||
         mi.PdbAge != cv.age) {
+        if (report) std::fprintf(stderr, "[pdb] identity mismatch (stale/wrong pdb)\n");
         d->cleanup(h);
         return;
     }
