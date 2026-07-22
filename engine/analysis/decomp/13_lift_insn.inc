@@ -541,6 +541,8 @@
     std::set<std::string> used_rot_fns;
     /* likewise for the __scas*_eq/_ne scan forms (rep scas) -> declare only those */
     std::set<std::string> used_scas_fns;
+    /* likewise for the __cmps*_eq/_ne compare forms (rep cmps = inlined memcmp) */
+    std::set<std::string> used_cmps_fns;
     bool used_cpuid = false;  /* __cpuid_e?x appears -> emit prototypes */
     bool used_segread = false; /* __readgsqword/__readfsqword appears -> emit prototypes */
     bool used_u2f = false;     /* __u2f (uint bits -> float) helper for a movd xmm,r bit reinterpret */
@@ -752,6 +754,61 @@
         flags = FlagSrc();
         flags.valid = true; flags.is_cmp = true;
         flags.a = reg_value(R_RAX, sz);
+        flags.b = mkMem(mkBinary("-", mkVar(tn, 8), mkConst(sz, 8), 8), sz, true);
+        flags.width = sz;
+    }
+
+    /* `rep cmps` is an inlined memcmp: `repe cmps` compares [rsi] vs [rdi] while EQUAL until
+     * a mismatch or rcx==0; `repne cmps` while NOT equal (RtlCompareMemory's inverse). Both
+     * were UNMODELED — the compare vanished and the following jcc read whatever wrote the
+     * flags LAST (two blocks up), a confident LIE, exactly the failure emit_string_scan
+     * documents for scas. There is no MSVC intrinsic for cmps, so declare our own returning
+     * the FINAL rdi: the two pointers advance in lock-step, so that one value expresses the
+     * new rdi, the new rsi (rsi_start + the same advance), the consumed count AND the ZF.
+     * ZF reflects the LAST compare — `*(rsi_end - sz) == *(rdi_end - sz)` — for repe and repne
+     * alike, exact whenever at least one iteration ran (compilers guard rcx==0 with a jcc, as
+     * the movs/scas cases already rely on). Forward direction assumed, as movs/stos/scas do. */
+    void emit_string_cmp(Block& b, const Insn& in, int sz, int rk) {
+        if (rk == 0) {
+            /* bare cmps: `cmp [rsi],[rdi]; rsi += sz; rdi += sz` — exact, no call needed. */
+            flags = FlagSrc();
+            flags.valid = true; flags.is_cmp = true;
+            flags.a = mkMem(reg_value(R_RSI, 8), sz, true);
+            flags.b = mkMem(reg_value(R_RDI, 8), sz, true);
+            flags.width = sz;
+            regfile[R_RSI] = mkBinary("+", reg_value(R_RSI,8), mkConst(sz,8), 8);
+            regfile[R_RDI] = mkBinary("+", reg_value(R_RDI,8), mkConst(sz,8), 8);
+            return;
+        }
+        const char* fn = (rk == 2) ? ((sz==1)?"__cmpsb_ne":(sz==2)?"__cmpsw_ne":
+                                      (sz==4)?"__cmpsd_ne":"__cmpsq_ne")
+                                   : ((sz==1)?"__cmpsb_eq":(sz==2)?"__cmpsw_eq":
+                                      (sz==4)?"__cmpsd_eq":"__cmpsq_eq");
+        const char* pt = (sz==1)?"(const unsigned char*)":(sz==2)?"(const unsigned short*)":
+                         (sz==4)?"(const unsigned long*)":"(const unsigned long long*)";
+        ExprP src  = reg_value(R_RSI, 8), src_pre = reg_value(R_RSI, 8);
+        ExprP dst  = reg_value(R_RDI, 8), dst_pre = reg_value(R_RDI, 8);
+        ExprP cnt  = reg_value(R_RCX, 8);
+        auto call = std::make_shared<Expr>();
+        call->kind = EK::Call; call->callee = fn; call->width = 8; call->ret_kind = 2;
+        if (src) call->args.push_back(mkCast(pt, src, 8, true));
+        if (dst) call->args.push_back(mkCast(pt, dst, 8, true));
+        if (cnt) call->args.push_back(mkCast("(unsigned long long)", cnt, 8, true));
+        std::string tn = "t" + std::to_string(++temp_seq);
+        call_temps.insert(tn);
+        var_width[tn] = 8; var_is_ll[tn] = true;
+        Stmt s; s.kind = SK::Assign; s.lhs = mkVar(tn, 8); s.rhs = call; s.addr = in.addr;
+        b.stmts.push_back(std::move(s));
+        used_cmps_fns.insert(fn);
+        /* advance (bytes) = rdi_end - rdi_start; both pointers move by it, rcx by adv/sz. */
+        ExprP adv = mkBinary("-", mkVar(tn, 8), dst_pre, 8);
+        ExprP advElems = (sz == 1) ? clone(adv) : mkBinary("/", clone(adv), mkConst(sz, 8), 8, true);
+        regfile[R_RDI] = mkVar(tn, 8);
+        regfile[R_RSI] = mkBinary("+", src_pre, clone(adv), 8);
+        regfile[R_RCX] = mkBinary("-", cnt, advElems, 8);
+        flags = FlagSrc();
+        flags.valid = true; flags.is_cmp = true;
+        flags.a = mkMem(mkBinary("-", mkBinary("+", clone(src_pre), clone(adv), 8), mkConst(sz,8), 8), sz, true);
         flags.b = mkMem(mkBinary("-", mkVar(tn, 8), mkConst(sz, 8), 8), sz, true);
         flags.width = sz;
     }
@@ -3285,6 +3342,19 @@
                 if (off) break;
                 int sz = (id==X86_INS_SCASB)?1:(id==X86_INS_SCASW)?2:(id==X86_INS_SCASD)?4:8;
                 emit_string_scan(b, in, sz, rep_kind(x));
+                break;
+            }
+            /* rep cmps -> inlined memcmp. CMPSB/W/Q have capstone ids of their own (no SSE
+             * form collides); CMPSD is deliberately NOT handled here because its id is shared
+             * with SSE scalar `cmpsd`, and the byte form is the memcmp the compiler inlines.
+             * Unmodeled, cmps fell to default:, whose opaque fallback needs a WRITTEN register
+             * operand — cmps has none ([rsi] and [rdi] are both read-only) — so it was a no-op
+             * that left the following jcc reading stale flags. */
+            case X86_INS_CMPSB: case X86_INS_CMPSW: case X86_INS_CMPSQ: {
+                static const bool off = std::getenv("DS_NO_CMPS") != nullptr;
+                if (off) break;
+                int sz = (id==X86_INS_CMPSB)?1:(id==X86_INS_CMPSW)?2:8;
+                emit_string_cmp(b, in, sz, rep_kind(x));
                 break;
             }
             default: {

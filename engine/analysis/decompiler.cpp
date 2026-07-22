@@ -671,6 +671,9 @@ bool is_pure_callee(const std::string& c) {
     /* __scas* only READS memory, but it is not CSE-safe: a store between two identical
      * scans changes what the second one finds, so collapsing them would be wrong. */
     if (c.rfind("__scas", 0) == 0) return false;
+    /* __cmps* (rep cmps = memcmp): READS memory only, but same CSE hazard as __scas —
+     * an intervening store to either buffer changes the second compare's result. */
+    if (c.rfind("__cmps", 0) == 0) return false;
     if (c == "__writemxcsr") return false;              /* writes the SSE control word */
     if (c == "__fastfail") return false;                /* noreturn: aborts the process */
     /* NOT idempotent: each read returns a different value, so CSE must never collapse
@@ -5655,6 +5658,18 @@ struct Decompiler {
             else if (sf == "__scasd_eq") protos += "unsigned long long __scasd_eq(const unsigned long*, unsigned long, unsigned long long);\n";
             else if (sf == "__scasq_ne") protos += "unsigned long long __scasq_ne(const unsigned long long*, unsigned long long, unsigned long long);\n";
             else if (sf == "__scasq_eq") protos += "unsigned long long __scasq_eq(const unsigned long long*, unsigned long long, unsigned long long);\n";
+        }
+        /* rep cmps (inlined memcmp) — like scas, no MSVC intrinsic, so we define it. Each
+         * takes (src, dst, count) and returns the FINAL rdi, from which the new rsi/rdi, the
+         * consumed count and the terminating ZF are all expressible. _eq is repe (compare-
+         * while-equal), _ne is repne. See emit_string_cmp. */
+        for (const auto& cf : used_cmps_fns) {
+            if (cf == "__cmpsb_eq")      protos += "unsigned long long __cmpsb_eq(const unsigned char*, const unsigned char*, unsigned long long);\n";
+            else if (cf == "__cmpsb_ne") protos += "unsigned long long __cmpsb_ne(const unsigned char*, const unsigned char*, unsigned long long);\n";
+            else if (cf == "__cmpsw_eq") protos += "unsigned long long __cmpsw_eq(const unsigned short*, const unsigned short*, unsigned long long);\n";
+            else if (cf == "__cmpsw_ne") protos += "unsigned long long __cmpsw_ne(const unsigned short*, const unsigned short*, unsigned long long);\n";
+            else if (cf == "__cmpsq_eq") protos += "unsigned long long __cmpsq_eq(const unsigned long long*, const unsigned long long*, unsigned long long);\n";
+            else if (cf == "__cmpsq_ne") protos += "unsigned long long __cmpsq_ne(const unsigned long long*, const unsigned long long*, unsigned long long);\n";
         }
         std::set<std::string> seen_proto;
         /* api_types_used is a MEMBER (not a local here) because propagate_api_types fills it
