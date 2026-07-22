@@ -5824,6 +5824,7 @@ struct Decompiler {
             full += buf;
         }
         full += build_confidence_comment(body, referenced);
+        full += thunk_annotation();   /* MI this-adjustor thunk note, if this fn is one */
         if (!protos.empty()) full += protos;
         full += head + eh_annotation() + lock_annotation() + decls;
         if (!decls.empty()) full += "\n";

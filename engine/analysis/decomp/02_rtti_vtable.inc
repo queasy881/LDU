@@ -42,6 +42,66 @@
         }
         return "";
     }
+    /* ALL direct bases of a class TAG, comma-joined (multiple inheritance): every
+     * `<tag>__extends__<Base>` marker rtti.cpp seeded, deduped in seed order. */
+    std::string class_bases_of(const std::string& tag) {
+        if (!e || tag.empty() || std::getenv("DS_NO_RTTIBASE")) return "";
+        static const char* MK = "__extends__";
+        std::vector<std::string> bs;
+        for (size_t i = 0; i < e->symbol_len; ++i) {
+            const char* nm = e->symbols[i].name;
+            if (!nm || !nm[0]) continue;
+            std::string n = nm; size_t p = n.find(MK);
+            if (p == std::string::npos || sani(n.substr(0, p)) != tag) continue;
+            std::string b = n.substr(p + std::strlen(MK));
+            bool dup = false; for (auto& x : bs) if (x == b) { dup = true; break; }
+            if (!dup) bs.push_back(b);
+        }
+        std::string o; for (size_t i = 0; i < bs.size(); ++i) { if (i) o += ", "; o += bs[i]; }
+        return o;
+    }
+    /* the base class living at MI subobject offset `off` (from a `<tag>__baseoff_<off>__<Base>`
+     * marker), so a this-adjustor thunk can name which base subobject it adjusts to. */
+    std::string base_at_offset(const std::string& tag, int64_t off) {
+        if (!e || tag.empty() || off <= 0) return "";
+        char pfx[64]; std::snprintf(pfx, sizeof pfx, "__baseoff_%lld__", (long long)off);
+        for (size_t i = 0; i < e->symbol_len; ++i) {
+            const char* nm = e->symbols[i].name;
+            if (!nm || !nm[0]) continue;
+            std::string n = nm; size_t p = n.find(pfx);
+            if (p == std::string::npos || sani(n.substr(0, p)) != tag) continue;
+            return n.substr(p + std::strlen(pfx));
+        }
+        return "";
+    }
+    /* MI this-adjustor thunk: `sub rcx, N; jmp real_method` adjusts `this` to a base
+     * subobject then tail-calls the real method. Return a header comment naming the
+     * adjustment + target; "" when THIS function is not that 2-insn idiom. DS_NO_THUNKANNOT. */
+    std::string thunk_annotation() {
+        static const bool off = std::getenv("DS_NO_THUNKANNOT") != nullptr;
+        if (off || !e || insns.size() != 2) return "";
+        const Insn& a = insns[0]; const Insn& j = insns[1];
+        if (!(a.id == X86_INS_SUB || a.id == X86_INS_ADD)) return "";
+        if (a.x86.op_count != 2 || a.x86.operands[0].type != X86_OP_REG ||
+            a.x86.operands[1].type != X86_OP_IMM) return "";
+        Reg r; int w; map_reg(a.x86.operands[0].reg, r, w);
+        if (r != R_RCX) return "";                              /* x64 `this` */
+        if (!j.is_jmp || !j.has_branch_target || !ds_rva_is_exec(e, j.branch_target)) return "";
+        std::string tn = name_for_rva(j.branch_target);
+        if (tn.empty()) return "";
+        int64_t adj = (a.id == X86_INS_SUB) ? -a.x86.operands[1].imm : a.x86.operands[1].imm;
+        std::string tag = self_fname; size_t p;
+        if ((p = tag.find("__vftbl_")) != std::string::npos) tag = tag.substr(0, p);
+        if ((p = tag.find("_off")) != std::string::npos)     tag = tag.substr(0, p);
+        std::string b = base_at_offset(tag, -adj);
+        std::string note = b.empty() ? "" : (" (" + b + " base subobject)");
+        char buf[256];
+        std::snprintf(buf, sizeof buf,
+            "/* this-adjustor thunk: this %s 0x%llx%s; tail-call %s */\n",
+            adj < 0 ? "-=" : "+=", (unsigned long long)(adj < 0 ? -adj : adj),
+            note.c_str(), tn.c_str());
+        return buf;
+    }
     /* class TAG (sani'd) -> its vtable RVA, by matching the `<Class>__vftable` /
      * `<Class>__vfstruct` symbol rtti.cpp seeded. Used to resolve virtual calls. */
     uint64_t vtable_rva_for_tag(const std::string& tag) {

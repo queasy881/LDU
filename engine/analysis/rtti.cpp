@@ -545,19 +545,37 @@ extern "C" void ds_engine_scan_rtti(ds_engine* e) {
                     read_u32(e, col + 0x10, chd) && ds_rva_is_mapped(e, chd) &&
                     read_u32(e, chd + 0x08, nbase) && nbase >= 2 && nbase < 64 &&
                     read_u32(e, chd + 0x0C, pba) && ds_rva_is_mapped(e, pba)) {
-                    uint32_t bd1 = 0, btd = 0;                    /* base[1] descriptor -> its TypeDescriptor */
-                    if (read_u32(e, pba + 4, bd1) && ds_rva_is_mapped(e, bd1) &&
-                        read_u32(e, bd1 + 0x00, btd) && ds_rva_is_mapped(e, btd)) {
-                        std::string bdec = read_rtti_name(e, btd + 0x10);
-                        if (bdec.rfind(".?A", 0) == 0) {
-                            std::string base_raw = demangle(bdec, nullptr);
-                            if (!base_raw.empty() && base_raw != cls_raw) {
-                                char mk[192];
-                                std::snprintf(mk, sizeof mk, "%s__extends__%s",
-                                              c_safe(cls_raw).c_str(), c_safe(base_raw).c_str());
-                                ds_engine_add_symbol(e, chd, mk);
+                    /* MULTIPLE INHERITANCE: walk the WHOLE BaseClassArray. base[0] is the class
+                     * itself; each DIRECT base is the next entry after skipping the previous
+                     * direct base's numContainedBases (BCD+0x04) indirect descendants. For each
+                     * direct base seed `<Class>__extends__<Base>` (at the base's BCD rva, unique);
+                     * when its PMD.mdisp (BCD+0x08) > 0 (a non-primary MI subobject) also seed
+                     * `<Class>__baseoff_<mdisp>__<Base>` so an adjustor thunk can name the base. */
+                    for (uint32_t k = 1; k < nbase; ) {
+                        uint32_t bcd = 0, btd = 0, ncont = 0, md = 0;
+                        if (!read_u32(e, pba + 4 * k, bcd) || !ds_rva_is_mapped(e, bcd)) break;
+                        read_u32(e, bcd + 0x04, ncont);
+                        read_u32(e, bcd + 0x00, btd);
+                        read_u32(e, bcd + 0x08, md);
+                        if (ds_rva_is_mapped(e, btd)) {
+                            std::string bdec = read_rtti_name(e, btd + 0x10);
+                            if (bdec.rfind(".?A", 0) == 0) {
+                                std::string base_raw = demangle(bdec, nullptr);
+                                if (!base_raw.empty() && base_raw != cls_raw) {
+                                    char mk[224];
+                                    std::snprintf(mk, sizeof mk, "%s__extends__%s",
+                                                  c_safe(cls_raw).c_str(), c_safe(base_raw).c_str());
+                                    ds_engine_add_symbol(e, bcd, mk);
+                                    if ((int32_t)md > 0) {
+                                        std::snprintf(mk, sizeof mk, "%s__baseoff_%d__%s",
+                                                      c_safe(cls_raw).c_str(), (int)md,
+                                                      c_safe(base_raw).c_str());
+                                        ds_engine_add_symbol(e, bcd + 4, mk);
+                                    }
+                                }
                             }
                         }
+                        k += 1 + ncont;   /* skip this direct base's indirect descendants */
                     }
                 }
             }

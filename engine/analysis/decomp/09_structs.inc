@@ -929,7 +929,7 @@
         std::string kw = (L.is_class && !L.cls_kw_struct) ? "class" : "struct";
         /* RTTI-recovered direct base, as a comment (`: Base` is C++, units compile /TC). */
         std::string base_cmt;
-        if (L.is_class) { std::string bb = class_base_of(L.tag); if (!bb.empty()) base_cmt = " /* : " + bb + " */"; }
+        if (L.is_class) { std::string bb = class_bases_of(L.tag); if (!bb.empty()) base_cmt = " /* : " + bb + " */"; }
         /* build the field-body interior ONCE (padding + fields; field_0 of a class -> `void* __vftable`). */
         std::string body; int64_t pos = 0;
         /* Merge the width-recovered fields (fw) with the API-typed fields (ftype, e.g. a
