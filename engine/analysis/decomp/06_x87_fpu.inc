@@ -93,6 +93,13 @@
      * block; carried across block edges (see entry_vfill) only when all preds agree. */
     struct VecFill { ExprP val; int esz = 0; };
     std::map<Reg, VecFill> vec_fill;
+    /* AVX2/AVX-512: the value an UNMODELED wide-vector (ymm/zmm) register-write op produced,
+     * keyed by the capstone register id (NOT a Reg -- ymm and xmm alias one R_XMM slot, so
+     * storing here keeps the 256/512-bit opaque result off the 128-bit lane model). A later
+     * read of that ymm/zmm picks it up (see rvalue) so `vpaddd ymm; vmovdqu [dst],ymm` renders
+     * `_mm256_storeu_si256(dst, _mm256_add_epi32(a,b))` instead of dropping the op and leaving
+     * the register read-before-write. Cleared per block. */
+    std::map<unsigned, ExprP> vec_op_value;
     std::map<int64_t, int> float_slots;              /* stack slot (norm) last written by movss/movsd -> float width (bit-reinterpret on int read) */
     std::map<int64_t, int> int_slots;                /* stack slot (norm) last written by a GP integer store -> width (bit-reinterpret on movss/movsd load = int->float, the u2f/u2d direction) */
     /* Every GP store to a stack slot, for stack-string recovery (recover_stack_strings).

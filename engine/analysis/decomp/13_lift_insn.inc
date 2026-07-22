@@ -105,6 +105,7 @@
         for (int i = 0; i < R_COUNT; ++i) { regfile[i] = nullptr; regfile_hi[i] = nullptr; clear_xmm_f((Reg)i); }
         vec_load_addr.clear();
         vec_fill.clear();
+        vec_op_value.clear();
         xmm_packed_var.clear(); stack_packed_var.clear(); int_slots.clear();
         if (b.is_switch) switch_resolved_index.erase(b.id);   /* recapture each pass */
         /* x87 stack: reset like regfile, then inherit from a SINGLE predecessor (the
@@ -886,9 +887,10 @@
          * broadcast/zero cases below re-set vec_fill after this erase, so a genuine fill
          * survives while any later overwrite drops it. */
         if (nop >= 1 && OP(0).type == X86_OP_REG &&
-            (!vec_load_addr.empty() || !vec_fill.empty())) {
+            (!vec_load_addr.empty() || !vec_fill.empty() || !vec_op_value.empty())) {
             Reg d0 = vec_reg(OP(0).reg);
             if (d0 != R_NONE) { vec_load_addr.erase(d0); vec_fill.erase(d0); }
+            vec_op_value.erase(OP(0).reg);   /* AVX2: overwriting a ymm/zmm drops its op result */
         }
 
         /* STALE-FLAG INVALIDATION (snapshot half): record the current flag signature so
@@ -3402,6 +3404,35 @@
                         extern_callees[call->callee] = call->ret_kind;
                         opaque_ops[call->callee]++;   /* feeds the confidence header */
                         do_dst(b, OP(0), call, in.addr);
+                    } else if (((OP(0).reg >= X86_REG_YMM0 && OP(0).reg <= X86_REG_YMM15) ||
+                                (OP(0).reg >= X86_REG_ZMM0 && OP(0).reg <= X86_REG_ZMM31)) &&
+                               !std::getenv("DS_NO_SIMDOPAQUE") && !std::getenv("DS_NO_AVXMODEL")) {
+                        /* AVX2/AVX-512 register-write op. map_reg gives R_NONE for ymm/zmm so the
+                         * xmm path above skipped it and the op was DROPPED, leaving the register
+                         * read-before-write (an in_YMM / scrubbed local). DEFINE its value with
+                         * the 256/512-bit Intel intrinsic (or the __mnem fallback) and stash it in
+                         * vec_op_value keyed by the capstone reg id, so a later read (e.g. the
+                         * vmovdqu store) picks it up: `_mm256_storeu_si256(dst, _mm256_add_epi32(
+                         * a, b))` instead of a lost op. DS_NO_AVXMODEL disables. */
+                        auto call = std::make_shared<Expr>();
+                        call->kind = EK::Call;
+                        /* Deliberately use the __mnem extern, NOT the _mm256_/_mm512_ intrinsic
+                         * name: MSVC builtin-recognizes many 256/512-bit intrinsics with strict
+                         * arity, and our pipeline can fold/drop a source operand (C2168 "too few
+                         * parameters"). A plain __vpaddd(...) extern accepts any arity, is never
+                         * mis-modeled as a semantically-wrong short call, and still makes the op
+                         * (and its value) visible instead of dropping it — which is the whole
+                         * point of AVX modeling. */
+                        call->callee = "__" + sani(in.mnem);
+                        call->width = 8; call->ret_kind = 2;
+                        if (OP(0).access & CS_AC_READ) call->args.push_back(rvalue(OP(0)));
+                        for (int k = 1; k < nop && k < 4; ++k)
+                            if (OP(k).type == X86_OP_REG || OP(k).type == X86_OP_MEM ||
+                                OP(k).type == X86_OP_IMM)
+                                call->args.push_back(rvalue(OP(k)));
+                        extern_callees[call->callee] = call->ret_kind;
+                        opaque_ops[call->callee]++;
+                        vec_op_value[OP(0).reg] = call;
                     }
                     break;
                 }

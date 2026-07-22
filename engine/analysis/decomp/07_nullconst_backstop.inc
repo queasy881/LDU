@@ -473,6 +473,11 @@
              * value, and the confidence header counts it. DS_NO_REGPLACEHOLDER restores the
              * old fabricated zero. */
             if (r == R_NONE) {
+                /* AVX2/AVX-512: a wide-vector reg DEFINED by an unmodeled op earlier in this
+                 * block (see the reg-write handler's vec_op_value) reads back as that op's
+                 * value, so the computation flows to its use instead of being lost. */
+                auto vo = vec_op_value.find(op.reg);
+                if (vo != vec_op_value.end() && vo->second) return clone(vo->second);
                 static const bool off = std::getenv("DS_NO_REGPLACEHOLDER") != nullptr;
                 if (off) return mkConst(0, w ? w : 8);
                 return unknown_csreg_value(op.reg, w);

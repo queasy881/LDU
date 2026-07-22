@@ -1292,11 +1292,39 @@ struct Decompiler {
         }
     }
 
+    /* True if any `L_xxxx:` label is DEFINED more than once. scan_labels() uses a
+     * set and so is blind to this, but C forbids two definitions of the same label
+     * in one function (C2045). A structured body can emit a duplicate when a block
+     * is replicated (tail duplication / a degenerate empty landing block that gets
+     * inlined at several sites) yet still keeps its address-derived label at each
+     * copy. Such a body is label-"consistent" (every goto resolves) but does NOT
+     * compile, so labels_consistent() must reject it and force the goto-CFG
+     * fallback, which emits every block exactly once. */
+    bool has_duplicate_label_defs(const std::string& body) {
+        std::map<std::string,int> def_count;
+        size_t pos = 0;
+        while ((pos = body.find("L_", pos)) != std::string::npos) {
+            bool boundary = (pos == 0);
+            if (!boundary) {
+                char prev = body[pos - 1];
+                boundary = !(isalnum((unsigned char)prev) || prev == '_');
+            }
+            size_t e2 = pos;
+            while (e2 < body.size() &&
+                   (isalnum((unsigned char)body[e2]) || body[e2]=='_')) e2++;
+            if (boundary && e2 < body.size() && body[e2] == ':')
+                if (++def_count[body.substr(pos, e2 - pos)] > 1) return true;
+            pos = e2 > pos ? e2 : pos + 1;
+        }
+        return false;
+    }
+
     bool labels_consistent(const std::string& body) {
         std::set<std::string> defined, referenced;
         scan_labels(body, defined, referenced);
         for (auto& r : referenced)
             if (r.rfind("L_",0)==0 && !defined.count(r)) return false;
+        if (has_duplicate_label_defs(body)) return false;
         return true;
     }
 
