@@ -441,6 +441,32 @@ bool name_in_use(const ds_engine* e, const char* nm) {
         if (e->symbols[i].name[0] && !std::strcmp(e->symbols[i].name, nm)) return true;
     return false;
 }
+/* Does the string at `addr` (VA or RVA) parse as a printf/scanf FORMAT string, i.e. contain
+ * at least one real `%<conv>` conversion? The universal signal that a callee is a
+ * formatted-I/O function, independent of symbols/FLIRT/CRT-linkage. */
+bool looks_like_fmt_string(const ds_engine* e, uint64_t addr, bool* has_s = nullptr) {
+    uint64_t rva = (addr >= e->base) ? addr - e->base : addr;
+    if (rva == 0 || rva >= e->image_size) return false;
+    int conv = 0; bool pcts = false;
+    for (uint64_t i = 0; i < 300; ++i) {
+        if (rva + i >= e->image_size) return false;
+        unsigned char c = e->image[rva + i];
+        if (c == 0) break;
+        if (!((c >= 0x20 && c <= 0x7e) || c=='\t' || c=='\n' || c=='\r')) return false;
+        if (c == '%') {
+            uint64_t j = i + 1;
+            if (rva + j < e->image_size && e->image[rva + j] == '%') { i = j; continue; }  /* %% */
+            while (rva + j < e->image_size &&
+                   std::strchr("-+ 0#*.0123456789lhjztLI", (char)e->image[rva + j])) ++j;
+            if (rva + j < e->image_size) {
+                char cc = (char)e->image[rva + j];
+                if (std::strchr("diouxXeEfFgGaAcspn", cc)) { ++conv; if (cc == 's') pcts = true; }
+            }
+        }
+    }
+    if (has_s) *has_s = pcts;
+    return conv >= 1;
+}
 
 /* PURE VIRTUAL: the abstract-call trap (`_purecall`/`__cxa_pure_virtual`) is the ONE code
  * address MSVC stores into >=2 vtable slots at DISTINCT indices (a real, even inherited,
@@ -661,5 +687,74 @@ extern "C" void ds_engine_scan_ctor_dtor(ds_engine* e) {
             std::snprintf(e->symbols[slot].name, sizeof(e->symbols[slot].name), "%s", nm);
         else if (!already_seeded(e, f->rva))   /* CTOR: fun_ has no symbol -> add one */
             ds_engine_add_symbol(e, f->rva, nm);
+    }
+}
+
+/* PRINT / INPUT recognition. A statically-linked CRT printf/scanf (or any user format
+ * wrapper) is otherwise an anonymous fun_XXXX. The universal, compiler-independent signal is
+ * the printf FORMAT-STRING calling convention: a function repeatedly called with a
+ * string-literal argument that contains `%`-conversions IS a formatted-I/O function. Scan
+ * every direct call, note when an arg register was loaded (in the arg-setup window) with a
+ * `lea reg,[format-string]`, aggregate per callee, and name a callee hit at >=3 sites:
+ * printf/fprintf (values -> output) or scanf/sscanf (stack-address args -> input). The
+ * format position (rcx=arg0 -> printf/scanf; rdx=arg1 -> fprintf/sscanf) picks the variant.
+ * Naming-only, runs before resolve_symbols so all call sites use the name. DS_NO_FMTFN. */
+extern "C" void ds_engine_scan_format_fns(ds_engine* e) {
+    if (std::getenv("DS_NO_FMTFN")) return;
+    if (!e || e->arch != DS_ARCH_X64 || !e->image || !e->insn_len) return;
+    struct Agg { int sites = 0; int after_sites = 0, before_sites = 0; int pos[4] = {0,0,0,0}; bool has_s = false; };
+    std::map<uint64_t, Agg> agg;
+    auto argidx = [](const std::string& r) -> int {
+        return r=="rcx"?0 : r=="rdx"?1 : r=="r8"?2 : r=="r9"?3 : -1; };
+    for (size_t i = 0; i < e->insn_len; ++i) {
+        const ds_insn* call = &e->insns[i];
+        if (call->ref_type != DS_REF_CALL || !call->ref_target) continue;
+        uint64_t F = (call->ref_target >= e->base) ? call->ref_target - e->base : call->ref_target;
+        int fmt_pos = -1; unsigned stack_mask = 0; bool fmt_has_s = false;
+        for (size_t b = i; b-- > 0 && i - b <= 14; ) {   /* scan the arg-setup window before the call */
+            const ds_insn* in = &e->insns[b];
+            if (!std::strcmp(in->mnemonic,"call") || !std::strcmp(in->mnemonic,"ret") ||
+                in->mnemonic[0] == 'j') break;           /* prior call/branch = arg-setup boundary */
+            int ai = argidx(first_reg_tok(in->operands));
+            if (ai < 0) continue;
+            bool hs = false;
+            if (!std::strcmp(in->mnemonic,"lea") && in->ref_type==DS_REF_DATA && in->ref_target &&
+                looks_like_fmt_string(e, in->ref_target, &hs)) {
+                if (fmt_pos < 0) { fmt_pos = ai; fmt_has_s = hs; }
+            } else if (!std::strcmp(in->mnemonic,"lea") &&
+                       (std::strstr(in->operands,"[rsp") || std::strstr(in->operands,"[rbp"))) {
+                stack_mask |= (1u << ai);                /* this arg reg = a stack address */
+            }
+        }
+        if (fmt_pos >= 0) {
+            Agg& a = agg[F]; a.sites++; a.pos[fmt_pos]++;
+            /* a stack address AFTER the format = an output target being written (scanf);
+             * BEFORE the format = a destination buffer (sprintf). */
+            for (int k = fmt_pos + 1; k < 4; ++k) if (stack_mask & (1u << k)) { a.after_sites++; break; }
+            for (int k = 0; k < fmt_pos; ++k)     if (stack_mask & (1u << k)) { a.before_sites++; break; }
+            if (fmt_has_s) a.has_s = true;
+        }
+    }
+    for (auto& kv : agg) {
+        const Agg& a = kv.second;
+        if (a.sites < 3) continue;                       /* >=3 format-string sites = confident */
+        uint64_t F = kv.first;
+        bool named = false;                              /* only name still-anonymous funcs */
+        for (size_t i = 0; i < e->symbol_len; ++i)
+            if (e->symbols[i].rva == F && e->symbols[i].name[0]) { named = true; break; }
+        if (named) continue;
+        int pos = 0; for (int k = 1; k < 4; ++k) if (a.pos[k] > a.pos[pos]) pos = k;
+        /* scanf: a stack-ADDRESS arg AFTER the format (an out-var written through) at most sites
+         * AND no %s (a %s address is just a printf string buffer -> not input). sprintf: a stack
+         * buffer BEFORE the format (the destination). Else printf (pos0) / fprintf (pos>=1). */
+        bool input   = !a.has_s && a.after_sites * 2 >= a.sites;
+        bool tobuf   = !input && a.before_sites * 2 >= a.sites;
+        const char* nm = input  ? (pos == 0 ? "scanf" : "sscanf")
+                       : tobuf  ? "sprintf"
+                       : (pos == 0 ? "printf" : "fprintf");
+        char buf[48];
+        if (name_in_use(e, nm)) std::snprintf(buf, sizeof buf, "%s_%llx", nm, (unsigned long long)F);
+        else                    std::snprintf(buf, sizeof buf, "%s", nm);
+        ds_engine_add_symbol(e, F, buf);
     }
 }

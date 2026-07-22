@@ -124,6 +124,10 @@ void ds_engine_scan_rtti(ds_engine* e);
  * [this+0] is a ctor (or a dtor when it is itself a vtable slot). Runs after
  * scan_rtti, before resolve_symbols. Naming-only; gated by DS_NO_CTORDTOR. */
 void ds_engine_scan_ctor_dtor(ds_engine* e);
+/* name statically-linked / wrapper printf & scanf family functions by the universal
+ * format-string calling convention (a callee repeatedly passed a `%`-conversion string
+ * literal). Runs after scan_ctor_dtor, before resolve_symbols. Gated by DS_NO_FMTFN. */
+void ds_engine_scan_format_fns(ds_engine* e);
 /* recover real function names from the PDB named by the PE debug directory's
  * CodeView RSDS record, and seed them as symbols. Runs at build_cfg start,
  * before scan_rtti, so the PDB name wins. Windows-only (dbghelp), gated by

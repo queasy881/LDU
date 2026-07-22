@@ -383,6 +383,8 @@ extern "C" int ds_engine_build_cfg(ds_engine* e) {
     /* name C++ ctors/dtors now that e->funcs is final + sorted and scan_rtti's vtable
      * symbols are seeded, but before resolve_symbols consumes the names. */
     ds_engine_scan_ctor_dtor(e);
+    /* name printf/scanf-family functions by their format-string call convention. */
+    ds_engine_scan_format_fns(e);
 
     return 0;
 }
