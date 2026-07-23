@@ -7,6 +7,7 @@
 #include "engine_internal.h"
 
 #include <string.h>
+#include <stdlib.h>
 
 /* ---- shared helpers (declared in engine_internal.h) ---------------------- */
 
@@ -81,7 +82,19 @@ void ds_engine_destroy(ds_engine* e) {
     free(e->funcs);
     free(e->annos);
     free(e->anno_vars);
+    free(e->pdb_dir);
     free(e);
+}
+
+void ds_engine_set_pdb_dir(ds_engine* e, const char* dir) {
+    if (!e) return;
+    free(e->pdb_dir);
+    e->pdb_dir = NULL;
+    if (dir && dir[0]) {
+        size_t n = strlen(dir);
+        e->pdb_dir = (char*)malloc(n + 1);
+        if (e->pdb_dir) memcpy(e->pdb_dir, dir, n + 1);
+    }
 }
 
 /* ---- seeding ------------------------------------------------------------- */

@@ -137,6 +137,11 @@ void ds_engine_scan_string_names(ds_engine* e);
  * before scan_rtti, so the PDB name wins. Windows-only (dbghelp), gated by
  * DS_NO_PDB. Idempotent-safe: never overwrites an already-seeded rva. */
 void ds_engine_load_pdb(ds_engine* e);
+/* tell the engine which directory the binary was loaded from. ds_engine_load_pdb
+ * uses it to resolve a PDB whose CodeView record baked a relative or bare
+ * filename (Rust/MSVC frequently records just "foo.pdb") against the binary's
+ * own directory rather than the process CWD. Optional; NULL/"" clears it. */
+void ds_engine_set_pdb_dir(ds_engine* e, const char* dir);
 /* seed a known function entry (entry point, export target, TLS callback) */
 void ds_engine_add_entry(ds_engine* e, uint64_t rva);
 /* seed an import: `name` is bound to the IAT slot rva that call/jmp thunks

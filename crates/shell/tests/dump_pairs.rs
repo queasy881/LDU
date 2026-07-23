@@ -33,6 +33,9 @@ fn dump_pairs() {
     let mut engine = Engine::new(image, parsed.base, map_arch(parsed.arch));
     engine.set_is_dll(parsed.is_dll);
     engine.set_entry_rva(parsed.entry);
+    if let Some(dir) = std::path::Path::new(&bin).parent() {
+        engine.set_pdb_dir(&dir.to_string_lossy());
+    }
     for seg in &parsed.segments {
         engine.add_segment(&seg.name, seg.rva, seg.vsize, seg.flags);
     }

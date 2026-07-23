@@ -268,10 +268,25 @@ extern "C" void ds_engine_load_pdb(ds_engine* e) {
     const bool report = std::getenv("DS_PDB_REPORT") != nullptr;
     CodeView cv;
     if (!find_codeview(e, cv)) { if (report) std::fprintf(stderr, "[pdb] no codeview record\n"); return; }
-    /* The RSDS path is absolute and baked in at link time; ds_engine has no
-     * path field for the binary itself, so this is the only pdb we can name.
-     * A binary copied off its build machine simply keeps fun_<rva>. */
-    if (GetFileAttributesA(cv.path.c_str()) == INVALID_FILE_ATTRIBUTES) { if (report) std::fprintf(stderr, "[pdb] file not found: %s\n", cv.path.c_str()); return; }
+    /* Prefer the RSDS path exactly as recorded (an absolute path baked at link
+     * time). MSVC/Rust often record only a relative or bare filename, though,
+     * which resolves against the process CWD and misses — so when the recorded
+     * path is absent, retry the basename inside the binary's own directory
+     * (supplied via ds_engine_set_pdb_dir). */
+    if (GetFileAttributesA(cv.path.c_str()) == INVALID_FILE_ATTRIBUTES) {
+        bool found = false;
+        if (e->pdb_dir && e->pdb_dir[0]) {
+            std::string base = cv.path;
+            size_t slash = base.find_last_of("/\\");
+            if (slash != std::string::npos) base = base.substr(slash + 1);
+            std::string cand = std::string(e->pdb_dir) + "\\" + base;
+            if (GetFileAttributesA(cand.c_str()) != INVALID_FILE_ATTRIBUTES) {
+                cv.path.swap(cand);
+                found = true;
+            }
+        }
+        if (!found) { if (report) std::fprintf(stderr, "[pdb] file not found: %s\n", cv.path.c_str()); return; }
+    }
 
     const Dbghelp* d = dbghelp();
     if (!d) { if (report) std::fprintf(stderr, "[pdb] dbghelp unavailable\n"); return; }

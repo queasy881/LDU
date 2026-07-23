@@ -103,6 +103,12 @@ struct ds_engine {
     size_t   anno_len, anno_cap;
     ds_anno_var* anno_vars;
     size_t       anno_var_len, anno_var_cap;
+
+    /* directory the binary was loaded from, if the caller supplied it. Lets
+     * ds_engine_load_pdb resolve a PDB whose CodeView record baked a relative
+     * or bare filename (Rust/MSVC often records just "foo.pdb") against the
+     * binary's own directory instead of the process CWD. NULL when unset. */
+    char* pdb_dir;
 };
 
 /* ---- shared helpers used across translation units ------------------------ */

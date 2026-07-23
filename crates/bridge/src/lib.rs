@@ -189,6 +189,16 @@ impl Engine {
         }
     }
 
+    /// Tell the engine the directory the binary was loaded from, so a PDB whose
+    /// CodeView record baked a relative/bare filename can be resolved next to
+    /// the binary instead of against the process CWD.
+    pub fn set_pdb_dir(&mut self, dir: &str) {
+        if self.ok() {
+            let c = cstring(dir);
+            unsafe { ffi::ds_engine_set_pdb_dir(self.raw, c.as_ptr()) };
+        }
+    }
+
     /// Seed a known function entry RVA (entry point, export, TLS callback).
     pub fn add_entry(&mut self, rva: u64) {
         if self.ok() {

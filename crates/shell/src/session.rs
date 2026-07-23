@@ -481,6 +481,11 @@ fn run_analysis(
     let mut engine = Engine::new(image, parsed.base, barch);
     engine.set_is_dll(parsed.is_dll);
     engine.set_entry_rva(parsed.entry);
+    // Let the PDB loader resolve a relative/bare CodeView filename (common with
+    // Rust/MSVC) next to the binary instead of against the process CWD.
+    if let Some(dir) = std::path::Path::new(&path).parent() {
+        engine.set_pdb_dir(&dir.to_string_lossy());
+    }
     for seg in &parsed.segments {
         engine.add_segment(&seg.name, seg.rva, seg.vsize, seg.flags);
     }
