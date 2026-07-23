@@ -1,0 +1,64 @@
+=== fun_00050040 @ 0x50040 size=107 blocks=3 calls=2 ===
+--- DISASM ---
+  0x50040: push      rbx
+  0x50042: sub       rsp, 0x30
+  0x50046: movsxd    r10, r8d
+  0x50049: mov       rbx, rcx
+  0x5004c: movsxd    r8, dword ptr [rcx + 0x18]
+  0x50050: add       r8, qword ptr [rcx + 0x20]
+  0x50054: movsxd    rdx, edx
+  0x50057: add       rdx, qword ptr [rcx + 0x20]
+  0x5005b: lea       rcx, [rsp + 0x48]
+  0x50060: add       rdx, r10
+  0x50063: call      0x14040
+  0x50068: mov       edx, dword ptr [rsp + 0x48]
+  0x5006c: cmp       dx, 0xa
+  0x50070: jne       0x50080
+  0x50072: movss     xmm0, dword ptr [0x885e4]
+  0x5007a: add       rsp, 0x30
+  0x5007e: pop       rbx
+  0x5007f: ret       
+  0x50080: mov       rcx, qword ptr [rbx]
+  0x50083: movaps    xmmword ptr [rsp + 0x20], xmm6
+  0x50088: movss     xmm6, dword ptr [rcx + 0x11a0]
+  0x50090: mov       rcx, qword ptr [rcx + 0x1190]
+  0x50097: call      0x2b8e0
+  0x5009c: mulss     xmm0, xmm6
+  0x500a0: movaps    xmm6, xmmword ptr [rsp + 0x20]
+  0x500a5: add       rsp, 0x30
+  0x500a9: pop       rbx
+  0x500aa: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_00050040 @ 0x50040  size=107 */
+/* xrefs: called by fun_00057760 (2 sites), fun_00056b00 (1 site) */
+/* confidence: HIGH */
+struct s_fun_00050040_a1;
+struct s_fun_00050040_a1_0;
+#pragma pack(push, 1)
+struct s_fun_00050040_a1 {
+    struct s_fun_00050040_a1_0* field_0;
+    char _pad_8[16];
+    int32_t field_18;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_00050040_a1_0 {
+    char _pad_0[4496];
+    int64_t field_1190;
+    char _pad_1198[8];
+    float field_11a0;
+};
+#pragma pack(pop)
+int32_t fun_00014040();
+float fun_0002b8e0();
+float fun_00050040(struct s_fun_00050040_a1*a1, int32_t a2, int32_t a3) {
+    char s2[256];
+
+    fun_00014040(s2, (int64_t)a2 + *(int64_t*)((char*)a1 + 0x20) + (int64_t)a3, (int64_t)a1->field_18 + *(int64_t*)((char*)a1 + 0x20));
+    if ((uint16_t)*(int32_t*)s2 != 0xa) {
+        return fun_0002b8e0(a1->field_0->field_1190, (uint32_t)*(int32_t*)s2) * a1->field_0->field_11a0;
+    }
+    return -1.0f;
+}
+

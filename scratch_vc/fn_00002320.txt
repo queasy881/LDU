@@ -1,0 +1,74 @@
+=== fun_00002320 @ 0x2320 size=146 blocks=8 calls=2 ===
+--- DISASM ---
+  0x2320: push      rbx
+  0x2322: push      rbp
+  0x2323: push      rsi
+  0x2324: push      rdi
+  0x2325: sub       rsp, 0x38
+  0x2329: mov       ebx, r9d
+  0x232c: mov       esi, edx
+  0x232e: mov       edi, r8d
+  0x2331: mov       rbp, rcx
+  0x2334: test      r8d, r8d
+  0x2337: je        0x235e
+  0x2339: test      r9d, r9d
+  0x233c: je        0x235e
+  0x233e: xorps     xmm0, xmm0
+  0x2341: xorps     xmm1, xmm1
+  0x2344: cvtsi2ss  xmm0, rdi
+  0x2349: cvtsi2ss  xmm1, rbx
+  0x234e: movss     dword ptr [0x173004], xmm0
+  0x2356: movss     dword ptr [0x173008], xmm1
+  0x235e: cmp       byte ptr [0x173f88], 0
+  0x2365: je        0x236c
+  0x2367: call      0x58cd0
+  0x236c: mov       eax, dword ptr [rsp + 0x88]
+  0x2373: mov       r9d, ebx
+  0x2376: mov       r10, qword ptr [0x173f80]
+  0x237d: mov       r8d, edi
+  0x2380: mov       dword ptr [rsp + 0x28], eax
+  0x2384: mov       edx, esi
+  0x2386: mov       eax, dword ptr [rsp + 0x80]
+  0x238d: mov       rcx, rbp
+  0x2390: mov       dword ptr [rsp + 0x20], eax
+  0x2394: call      r10
+  0x2397: cmp       byte ptr [0x173f88], 0
+  0x239e: mov       ebx, eax
+  0x23a0: je        0x23a9
+  0x23a2: call      0x58660
+  0x23a7: mov       eax, ebx
+  0x23a9: add       rsp, 0x38
+  0x23ad: pop       rdi
+  0x23ae: pop       rsi
+  0x23af: pop       rbp
+  0x23b0: pop       rbx
+  0x23b1: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_00002320 @ 0x2320  size=146 */
+/* confidence: HIGH */
+#define byte_173f88 (*(int8_t*)0x173f88)
+#define flt_173004 (*(float*)0x173004)
+#define flt_173008 (*(float*)0x173008)
+#define qword_173f80 (*(int64_t*)0x173f80)
+int32_t fun_00058660();
+int32_t fun_00058cd0();
+int32_t fun_00002320(int64_t a1, int32_t a2, int32_t a3, int32_t a4) {
+    int64_t result;
+
+    if (a3 && a4) {
+        flt_173004 = (float)((uint32_t)a3);
+        flt_173008 = (float)((uint32_t)a4);
+    }
+    if (byte_173f88) {
+        fun_00058cd0();
+    }
+    result = ((int64_t(*)())(qword_173f80))(a1, a2, a3, a4);
+    if (!byte_173f88) {
+        return (int32_t)result;
+    }
+    fun_00058660();
+    result = (int32_t)result;
+    return (int32_t)result;
+}
+

@@ -1,0 +1,115 @@
+=== fun_00032b60 @ 0x32b60 size=130 blocks=7 calls=1 ===
+--- DISASM ---
+  0x32b60: mov       qword ptr [rsp + 8], rbx
+  0x32b65: mov       qword ptr [rsp + 0x10], rsi
+  0x32b6a: push      rdi
+  0x32b6b: sub       rsp, 0x20
+  0x32b6f: lea       rbx, [rcx + 0xb0]
+  0x32b76: mov       rsi, rdx
+  0x32b79: mov       r8d, dword ptr [rbx + 4]
+  0x32b7d: mov       rdi, rcx
+  0x32b80: mov       r9d, dword ptr [rbx]
+  0x32b83: cmp       r9d, r8d
+  0x32b86: jne       0x32bb4
+  0x32b88: inc       r9d
+  0x32b8b: test      r8d, r8d
+  0x32b8e: je        0x32b9d
+  0x32b90: mov       eax, r8d
+  0x32b93: cdq       
+  0x32b94: sub       eax, edx
+  0x32b96: sar       eax, 1
+  0x32b98: add       eax, r8d
+  0x32b9b: jmp       0x32ba2
+  0x32b9d: mov       eax, 8
+  0x32ba2: cmp       eax, r9d
+  0x32ba5: mov       rcx, rbx
+  0x32ba8: cmovg     r9d, eax
+  0x32bac: mov       edx, r9d
+  0x32baf: call      0x27d80
+  0x32bb4: movsxd    rcx, dword ptr [rbx]
+  0x32bb7: mov       rax, qword ptr [rbx + 8]
+  0x32bbb: add       rcx, rcx
+  0x32bbe: movups    xmm0, xmmword ptr [rsi]
+  0x32bc1: movups    xmmword ptr [rax + rcx*8], xmm0
+  0x32bc5: inc       dword ptr [rbx]
+  0x32bc7: mov       rcx, rdi
+  0x32bca: movups    xmmword ptr [rdi + 0x70], xmm0
+  0x32bce: mov       rbx, qword ptr [rsp + 0x30]
+  0x32bd3: mov       rsi, qword ptr [rsp + 0x38]
+  0x32bd8: add       rsp, 0x20
+  0x32bdc: pop       rdi
+  0x32bdd: jmp       0x35110
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_00032b60 @ 0x32b60  size=130 */
+/* xrefs: called by fun_00009550 (1 site), fun_00012f10 (1 site), fun_0001dba0 (1 site) */
+/* confidence: HIGH */
+struct s_fun_00032b60_a1;
+struct s_fun_00032b60_a2;
+struct s_fun_00032b60_v2;
+#pragma pack(push, 1)
+struct s_fun_00032b60_a1 {
+    char _pad_0[112];
+    int64_t field_70;
+    int64_t field_78;
+    char _pad_80[48];
+    int32_t field_b0;
+    int32_t field_b4;
+    int64_t field_b8;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_00032b60_a2 {
+    int64_t field_0;
+    int64_t field_8;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_00032b60_v2 {
+    int64_t field_0;
+    int64_t field_8;
+};
+#pragma pack(pop)
+#ifndef __max
+#define __max(a,b) ((a)>(b)?(a):(b))
+#endif
+void fun_00027d80();
+void fun_00035110();
+void fun_00032b60(struct s_fun_00032b60_a1*a1, struct s_fun_00032b60_a2*a2) {
+    int32_t v1;
+    struct s_fun_00032b60_v2*v2;
+
+    if (a1->field_b0 != a1->field_b4) {
+        v2 = (struct s_fun_00032b60_v2*)(a1->field_b8 + (int64_t)a1->field_b0 * 0x10);
+        v2->field_0 = a2->field_0;
+        v2->field_8 = a2->field_8;
+        ++a1->field_b0;
+        a1->field_70 = a2->field_0;
+        a1->field_78 = a2->field_8;
+        fun_00035110(a1);
+    return;
+    }
+    if (!a1->field_b4) {
+        v1 = 8;
+        fun_00027d80(&a1->field_b0, (uint32_t)__max(v1, a1->field_b0 + 1));
+        v2 = (struct s_fun_00032b60_v2*)(a1->field_b8 + (int64_t)a1->field_b0 * 0x10);
+        v2->field_0 = a2->field_0;
+        v2->field_8 = a2->field_8;
+        ++a1->field_b0;
+        a1->field_70 = a2->field_0;
+        a1->field_78 = a2->field_8;
+        fun_00035110(a1);
+    return;
+    }
+    v1 = a1->field_b4 / 2 + a1->field_b4;
+    fun_00027d80(&a1->field_b0, (uint32_t)__max(v1, a1->field_b0 + 1));
+    v2 = (struct s_fun_00032b60_v2*)(a1->field_b8 + (int64_t)a1->field_b0 * 0x10);
+    v2->field_0 = a2->field_0;
+    v2->field_8 = a2->field_8;
+    ++a1->field_b0;
+    a1->field_70 = a2->field_0;
+    a1->field_78 = a2->field_8;
+    fun_00035110(a1);
+    return;
+}
+

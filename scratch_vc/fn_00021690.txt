@@ -1,0 +1,86 @@
+=== fun_00021690 @ 0x21690 size=163 blocks=11 calls=1 ===
+--- DISASM ---
+  0x21690: mov       qword ptr [rsp + 8], rbx
+  0x21695: push      rdi
+  0x21696: sub       rsp, 0x20
+  0x2169a: mov       rbx, qword ptr [0x174148]
+  0x216a1: mov       rdi, rcx
+  0x216a4: cmp       qword ptr [rbx + 0x1fd0], rcx
+  0x216ab: je        0x216e6
+  0x216ad: test      byte ptr [rbx + 0x2824], 4
+  0x216b4: je        0x216d4
+  0x216b6: test      rcx, rcx
+  0x216b9: je        0x216c1
+  0x216bb: mov       rdx, qword ptr [rcx + 8]
+  0x216bf: jmp       0x216c8
+  0x216c1: lea       rdx, [0x8a7c8]
+  0x216c8: lea       rcx, [0x8a908]
+  0x216cf: call      0xf0a0
+  0x216d4: mov       qword ptr [rbx + 0x1fd0], rdi
+  0x216db: mov       qword ptr [rbx + 0x2028], 0xffffffffffffffff
+  0x216e6: mov       word ptr [rbx + 0x2070], 0
+  0x216ef: mov       byte ptr [rbx + 0x2032], 0
+  0x216f6: mov       rax, qword ptr [0x174148]
+  0x216fd: cmp       byte ptr [rax + 0x2071], 0
+  0x21704: jne       0x21721
+  0x21706: cmp       byte ptr [rax + 0x2032], 0
+  0x2170d: jne       0x21721
+  0x2170f: mov       byte ptr [rax + 0x2031], 0
+  0x21716: mov       rbx, qword ptr [rsp + 0x30]
+  0x2171b: add       rsp, 0x20
+  0x2171f: pop       rdi
+  0x21720: ret       
+  0x21721: mov       rbx, qword ptr [rsp + 0x30]
+  0x21726: mov       byte ptr [rax + 0x2031], 1
+  0x2172d: add       rsp, 0x20
+  0x21731: pop       rdi
+  0x21732: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_00021690 @ 0x21690  size=163 */
+/* xrefs: called by fun_00011e40 (1 site), fun_000175a0 (1 site), fun_0001ab40 (1 site), fun_00020eb0 (1 site), fun_00024ad0 (1 site) */
+/* confidence: HIGH */
+struct s_fun_00021690_qword_174148;
+#pragma pack(push, 1)
+struct s_fun_00021690_qword_174148 {
+    char _pad_0[8144];
+    int64_t field_1fd0;
+    char _pad_1fd8[80];
+    int64_t field_2028;
+    char _pad_2030[1];
+    int8_t field_2031;
+    int8_t field_2032;
+    char _pad_2033[61];
+    int16_t field_2070;
+    char _pad_2072[1970];
+    int8_t field_2824;
+};
+#pragma pack(pop)
+#define qword_174148 (*(int64_t*)0x174148)
+int32_t fun_0000f0a0();
+void fun_00021690(int64_t*a1) {
+    struct s_fun_00021690_qword_174148* gs_174148 = (struct s_fun_00021690_qword_174148*)qword_174148;
+    int64_t v1;
+
+    if ((int64_t)(gs_174148->field_1fd0) != (int64_t)(a1)) {
+        if (gs_174148->field_2824 & 4) {
+            if (!a1) {
+                v1 = (int64_t)"<NULL>";
+            } else {
+                v1 = a1[1];
+            }
+            fun_0000f0a0("[focus] SetNavWindow(\"%s\")\n", v1);
+        }
+        gs_174148->field_1fd0 = (int64_t)a1;
+        gs_174148->field_2028 = -1;
+    }
+    gs_174148->field_2070 = 0;
+    gs_174148->field_2032 = 0;
+    if (*(int8_t*)(qword_174148 + 0x2071) || gs_174148->field_2032) {
+        gs_174148->field_2031 = 1;
+        return;
+    }
+    gs_174148->field_2031 = 0;
+    return;
+}
+

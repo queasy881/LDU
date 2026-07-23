@@ -1,0 +1,185 @@
+=== fun_00020eb0 @ 0x20eb0 size=351 blocks=13 calls=2 ===
+--- DISASM ---
+  0x20eb0: push      rbx
+  0x20eb2: push      rbp
+  0x20eb3: push      rsi
+  0x20eb4: push      rdi
+  0x20eb5: sub       rsp, 0x28
+  0x20eb9: mov       rdi, qword ptr [0x174148]
+  0x20ec0: mov       rsi, rdx
+  0x20ec3: mov       ebp, ecx
+  0x20ec5: cmp       qword ptr [rdi + 0x1fd0], rdx
+  0x20ecc: je        0x20ed6
+  0x20ece: mov       rcx, rdx
+  0x20ed1: call      0x21690
+  0x20ed6: movsxd    rbx, dword ptr [rsi + 0x170]
+  0x20edd: mov       ecx, dword ptr [rdi + 0x1e14]
+  0x20ee3: mov       dword ptr [rdi + 0x1fdc], ebx
+  0x20ee9: mov       dword ptr [rdi + 0x1fcc], ebp
+  0x20eef: call      0x21420
+  0x20ef4: mov       dword ptr [rsi + rbx*4 + 0x3f0], ebp
+  0x20efb: mov       rax, rbx
+  0x20efe: cmp       dword ptr [rdi + 0x1e58], ebp
+  0x20f04: jne       0x20f7d
+  0x20f06: movss     xmm0, dword ptr [rsi + 0x12c]
+  0x20f0e: add       rax, rax
+  0x20f11: movss     xmm3, dword ptr [rsi + 0x128]
+  0x20f19: movss     xmm4, dword ptr [rdi + 0x1e78]
+  0x20f21: movss     xmm1, dword ptr [rdi + 0x1e80]
+  0x20f29: subss     xmm4, xmm0
+  0x20f2d: movss     xmm2, dword ptr [rdi + 0x1e7c]
+  0x20f35: subss     xmm1, xmm0
+  0x20f39: movss     xmm0, dword ptr [rdi + 0x1e74]
+  0x20f41: subss     xmm2, xmm3
+  0x20f45: subss     xmm0, xmm3
+  0x20f49: movss     dword ptr [rsi + rax*8 + 0x3f8], xmm0
+  0x20f52: movss     dword ptr [rsi + rax*8 + 0x3fc], xmm4
+  0x20f5b: movss     dword ptr [rsi + rax*8 + 0x400], xmm2
+  0x20f64: movss     dword ptr [rsi + rax*8 + 0x404], xmm1
+  0x20f6d: cmp       dword ptr [rdi + 0x1e58], ebp
+  0x20f73: jne       0x20f7d
+  0x20f75: mov       eax, dword ptr [rdi + 0x1e5c]
+  0x20f7b: jmp       0x20f7f
+  0x20f7d: xor       eax, eax
+  0x20f7f: mov       dword ptr [rdi + 0x1fe0], eax
+  0x20f85: cmp       ebp, dword ptr [rdi + 0x14f8]
+  0x20f8b: jne       0x20f94
+  0x20f8d: mov       byte ptr [rdi + 0x1fcb], 1
+  0x20f94: mov       eax, dword ptr [rdi + 0x1514]
+  0x20f9a: sub       eax, 2
+  0x20f9d: cmp       eax, 1
+  0x20fa0: jbe       0x20fb1
+  0x20fa2: cmp       byte ptr [rdi + 0x76], 0
+  0x20fa6: je        0x20fb8
+  0x20fa8: mov       byte ptr [rdi + 0x1fc8], 0
+  0x20faf: jmp       0x20fb8
+  0x20fb1: mov       byte ptr [rdi + 0x1fc9], 1
+  0x20fb8: mov       rax, qword ptr [0x174148]
+  0x20fbf: movsxd    rdx, dword ptr [rax + 0x1fdc]
+  0x20fc6: mov       rax, qword ptr [rax + 0x1fd0]
+  0x20fcd: mov       rcx, qword ptr [rax + 0x3d8]
+  0x20fd4: mov       dword ptr [rcx + rdx*8 + 0x418], 0x7f7fffff
+  0x20fdf: mov       rax, qword ptr [0x174148]
+  0x20fe6: movsxd    rdx, dword ptr [rax + 0x1fdc]
+  0x20fed: mov       rax, qword ptr [rax + 0x1fd0]
+  0x20ff4: mov       rcx, qword ptr [rax + 0x3d8]
+  0x20ffb: mov       dword ptr [rcx + rdx*8 + 0x41c], 0x7f7fffff
+  0x21006: add       rsp, 0x28
+  0x2100a: pop       rdi
+  0x2100b: pop       rsi
+  0x2100c: pop       rbp
+  0x2100d: pop       rbx
+  0x2100e: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_00020eb0 @ 0x20eb0  size=351 */
+/* xrefs: called by fun_00048bf0 (4 sites), fun_0004b530 (1 site), fun_0004f600 (1 site), fun_00052750 (1 site) */
+/* confidence: HIGH */
+struct s_fun_00020eb0_a2;
+struct s_fun_00020eb0_qword_174148;
+struct s_fun_00020eb0_v1;
+struct s_fun_00020eb0_v3;
+#pragma pack(push, 1)
+struct s_fun_00020eb0_a2 {
+    char _pad_0[296];
+    float field_128;
+    float field_12c;
+    char _pad_130[64];
+    int32_t field_170;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_00020eb0_qword_174148 {
+    char _pad_0[118];
+    int8_t field_76;
+    char _pad_77[5249];
+    int32_t field_14f8;
+    char _pad_14fc[24];
+    int32_t field_1514;
+    char _pad_1518[2300];
+    int32_t field_1e14;
+    char _pad_1e18[64];
+    int32_t field_1e58;
+    int32_t field_1e5c;
+    char _pad_1e60[20];
+    float field_1e74;
+    float field_1e78;
+    float field_1e7c;
+    float field_1e80;
+    char _pad_1e84[324];
+    int8_t field_1fc8;
+    int8_t field_1fc9;
+    char _pad_1fca[1];
+    int8_t field_1fcb;
+    int32_t field_1fcc;
+    void* field_1fd0;
+    char _pad_1fd8[4];
+    int32_t field_1fdc;
+    int32_t field_1fe0;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_00020eb0_v1 {
+    char _pad_0[1016];
+    float field_3f8;
+    float field_3fc;
+    float field_400;
+    float field_404;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_00020eb0_v3 {
+    char _pad_0[1048];
+    int32_t field_418;
+    int32_t field_41c;
+};
+#pragma pack(pop)
+#define qword_174148 (*(int64_t*)0x174148)
+void fun_00021420();
+void fun_00021690();
+void fun_00020eb0(int32_t a1, struct s_fun_00020eb0_a2*a2) {
+    struct s_fun_00020eb0_qword_174148* gs_174148 = (struct s_fun_00020eb0_qword_174148*)qword_174148;
+    int32_t v2;
+    struct s_fun_00020eb0_v1*v1;
+    struct s_fun_00020eb0_v3*v3;
+
+    if ((int64_t)(gs_174148->field_1fd0) != (int64_t)(a2)) {
+        fun_00021690(a2, a2);
+    }
+    gs_174148->field_1fdc = a2->field_170;
+    gs_174148->field_1fcc = a1;
+    fun_00021420((uint32_t)gs_174148->field_1e14, a2);
+    *(int32_t*)((char*)((char*)a2 + (int64_t)a2->field_170 * 4) + 0x3f0) = a1;
+    if (gs_174148->field_1e58 != a1) {
+        v2 = 0;
+    } else {
+        v1 = (struct s_fun_00020eb0_v1*)((char*)a2 + (int64_t)a2->field_170 * 0x10);
+        v1->field_3f8 = gs_174148->field_1e74 - a2->field_128;
+        v1->field_3fc = gs_174148->field_1e78 - a2->field_12c;
+        v1->field_400 = gs_174148->field_1e7c - a2->field_128;
+        v1->field_404 = gs_174148->field_1e80 - a2->field_12c;
+        if (gs_174148->field_1e58 != a1) {
+            v2 = 0;
+        } else {
+            v2 = gs_174148->field_1e5c;
+        }
+    }
+    gs_174148->field_1fe0 = v2;
+    if (a1 == gs_174148->field_14f8) {
+        gs_174148->field_1fcb = 1;
+    }
+    if ((uint32_t)(gs_174148->field_1514) >= 2 && (uint32_t)(gs_174148->field_1514) <= 3) {
+        gs_174148->field_1fc9 = 1;
+    } else if (gs_174148->field_76) {
+        gs_174148->field_1fc8 = 0;
+        v3 = (struct s_fun_00020eb0_v3*)(((int64_t*)gs_174148->field_1fd0)[0x7b] + (int64_t)gs_174148->field_1fdc * 8);
+        v3->field_418 = 0x7f7fffff;
+        v3->field_41c = 0x7f7fffff;
+        return;
+    }
+    v3 = (struct s_fun_00020eb0_v3*)(((int64_t*)gs_174148->field_1fd0)[0x7b] + (int64_t)gs_174148->field_1fdc * 8);
+    v3->field_418 = 0x7f7fffff;
+    v3->field_41c = 0x7f7fffff;
+    return;
+}
+

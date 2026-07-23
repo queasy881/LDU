@@ -1,0 +1,61 @@
+=== fun_0004b340 @ 0x4b340 size=92 blocks=10 calls=0 ===
+--- DISASM ---
+  0x4b340: cmp       byte ptr [rcx], 0x25
+  0x4b343: mov       r8, rcx
+  0x4b346: je        0x4b34c
+  0x4b348: mov       rax, rcx
+  0x4b34b: ret       
+  0x4b34c: mov       al, 0x25
+  0x4b34e: nop       
+  0x4b350: lea       ecx, [rax - 0x41]
+  0x4b353: movsx     r9d, al
+  0x4b357: cmp       cl, 0x19
+  0x4b35a: ja        0x4b36f
+  0x4b35c: lea       ecx, [r9 - 0x41]
+  0x4b360: mov       edx, 1
+  0x4b365: shl       edx, cl
+  0x4b367: test      edx, 0x900
+  0x4b36d: je        0x4b397
+  0x4b36f: sub       al, 0x61
+  0x4b371: cmp       al, 0x19
+  0x4b373: ja        0x4b387
+  0x4b375: lea       ecx, [r9 - 0x61]
+  0x4b379: mov       eax, 1
+  0x4b37e: shl       eax, cl
+  0x4b380: test      eax, 0x2480a80
+  0x4b385: je        0x4b397
+  0x4b387: movzx     eax, byte ptr [r8 + 1]
+  0x4b38c: inc       r8
+  0x4b38f: test      al, al
+  0x4b391: jne       0x4b350
+  0x4b393: mov       rax, r8
+  0x4b396: ret       
+  0x4b397: lea       rax, [r8 + 1]
+  0x4b39b: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_0004b340 @ 0x4b340  size=92 */
+/* xrefs: called by fun_00055600 (1 site) */
+/* confidence: HIGH */
+int8_t* fun_0004b340(int8_t*a1) {
+    uint32_t v1 = 0;
+    uint8_t*v2;
+
+    if (*a1 != '%') {
+        return a1;
+    }
+    v1 = 0x25;
+    v2 = (uint8_t*)a1;
+    while ((uint32_t)((uint8_t)(v1 - 0x41)) > 0x19 || (1 << ((int8_t)v1 - 0x41)) & 0x900) {
+        if ((uint32_t)(((int8_t)v1 - 0x61) & 0xff) <= 0x19 && !((1 << ((int8_t)v1 - 0x61)) & 0x2480a80)) {
+            return (int8_t*)(v2 + 1);
+        }
+        v1 = v2[1];
+        ++v2;
+        if (!*v2) {
+            return (int8_t*)(v2 + 1);
+        }
+    }
+    return (int8_t*)(v2 + 1);
+}
+

@@ -1,0 +1,83 @@
+=== fun_00014e60 @ 0x14e60 size=169 blocks=12 calls=2 ===
+--- DISASM ---
+  0x14e60: mov       qword ptr [rsp + 8], rbx
+  0x14e65: push      rdi
+  0x14e66: sub       rsp, 0x20
+  0x14e6a: mov       ebx, r8d
+  0x14e6d: mov       edi, edx
+  0x14e6f: call      0x11ca0
+  0x14e74: mov       rcx, qword ptr [0x174148]
+  0x14e7b: mov       r9d, eax
+  0x14e7e: and       r9d, 0xf000
+  0x14e85: cmp       dword ptr [rcx + 0x120], r9d
+  0x14e8c: jne       0x14efc
+  0x14e8e: and       eax, 0xffff0fff
+  0x14e93: jne       0x14eda
+  0x14e95: cmp       r9d, 0x1000
+  0x14e9c: jne       0x14ea6
+  0x14e9e: mov       r9d, 0x297
+  0x14ea4: jmp       0x14edd
+  0x14ea6: cmp       r9d, 0x2000
+  0x14ead: jne       0x14eb7
+  0x14eaf: mov       r9d, 0x298
+  0x14eb5: jmp       0x14edd
+  0x14eb7: cmp       r9d, 0x4000
+  0x14ebe: jne       0x14ec8
+  0x14ec0: mov       r9d, 0x299
+  0x14ec6: jmp       0x14edd
+  0x14ec8: cmp       r9d, 0x8000
+  0x14ecf: mov       eax, 0x29a
+  0x14ed4: cmove     r9d, eax
+  0x14ed8: jmp       0x14edd
+  0x14eda: mov       r9d, eax
+  0x14edd: movzx     edx, dil
+  0x14ee1: mov       r8d, ebx
+  0x14ee4: mov       ecx, r9d
+  0x14ee7: call      0x14fc0
+  0x14eec: test      al, al
+  0x14eee: setne     al
+  0x14ef1: mov       rbx, qword ptr [rsp + 0x30]
+  0x14ef6: add       rsp, 0x20
+  0x14efa: pop       rdi
+  0x14efb: ret       
+  0x14efc: mov       rbx, qword ptr [rsp + 0x30]
+  0x14f01: xor       al, al
+  0x14f03: add       rsp, 0x20
+  0x14f07: pop       rdi
+  0x14f08: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_00014e60 @ 0x14e60  size=169 */
+/* xrefs: called by fun_00009550 (1 site), fun_0001ab40 (1 site), fun_00021ef0 (1 site) */
+/* confidence: HIGH */
+#define qword_174148 (*(int64_t*)0x174148)
+int32_t fun_00011ca0();
+int32_t fun_00014fc0();
+uint8_t fun_00014e60(int64_t a1, int32_t a2, int32_t a3) {
+    uint32_t v2;
+    int32_t v1;
+
+    v1 = fun_00011ca0(a1);
+    if (*(int32_t*)(qword_174148 + 0x120) != (v1 & 0xf000)) {
+        return 0;
+    }
+    if (v1 & 0xffff0fff) {
+        v2 = v1 & 0xffff0fff;
+    } else {
+        if ((v1 & 0xf000) == 0x1000) {
+            v2 = 0x297;
+            return (int8_t)((uint8_t)fun_00014fc0(v2, (uint8_t)a2, a3) != 0);
+        }
+        if ((v1 & 0xf000) == 0x2000) {
+            v2 = 0x298;
+            return (int8_t)((uint8_t)fun_00014fc0(v2, (uint8_t)a2, a3) != 0);
+        }
+        if ((v1 & 0xf000) != 0x4000) {
+            v2 = (v1 & 0xf000) == 0x8000 ? 0x29a : v1 & 0xf000;
+            return (int8_t)((uint8_t)fun_00014fc0(v2, (uint8_t)a2, a3) != 0);
+        }
+        v2 = 0x299;
+    }
+    return (int8_t)((uint8_t)fun_00014fc0(v2, (uint8_t)a2, a3) != 0);
+}
+

@@ -1,0 +1,212 @@
+=== fun_00037bf0 @ 0x37bf0 size=272 blocks=28 calls=0 ===
+--- DISASM ---
+  0x37bf0: push      rsi
+  0x37bf2: movsxd    rsi, dword ptr [rdx + 8]
+  0x37bf6: mov       r9, rdx
+  0x37bf9: mov       r11d, dword ptr [rdx + 0xc]
+  0x37bfd: mov       eax, esi
+  0x37bff: mov       qword ptr [rsp + 0x10], rbx
+  0x37c04: mov       r10, rcx
+  0x37c07: xor       r8d, r8d
+  0x37c0a: mov       ebx, 2
+  0x37c0f: nop       
+  0x37c10: cmp       eax, r11d
+  0x37c13: jl        0x37c19
+  0x37c15: xor       cl, cl
+  0x37c17: jmp       0x37c29
+  0x37c19: mov       rcx, qword ptr [r9]
+  0x37c1c: movsxd    rdx, eax
+  0x37c1f: inc       eax
+  0x37c21: movzx     ecx, byte ptr [rdx + rcx]
+  0x37c25: mov       dword ptr [r9 + 8], eax
+  0x37c29: shl       r8d, 8
+  0x37c2d: movzx     ecx, cl
+  0x37c30: or        r8d, ecx
+  0x37c33: sub       ebx, 1
+  0x37c36: jne       0x37c10
+  0x37c38: test      r8d, r8d
+  0x37c3b: je        0x37cc4
+  0x37c41: mov       qword ptr [rsp + 0x18], rdi
+  0x37c46: cmp       eax, r11d
+  0x37c49: jl        0x37c4f
+  0x37c4b: xor       cl, cl
+  0x37c4d: jmp       0x37c5b
+  0x37c4f: mov       rcx, qword ptr [r9]
+  0x37c52: movsxd    rdx, eax
+  0x37c55: inc       eax
+  0x37c57: movzx     ecx, byte ptr [rdx + rcx]
+  0x37c5b: movzx     edi, cl
+  0x37c5e: imul      r8d, edi
+  0x37c62: lea       edx, [r8 + rax]
+  0x37c66: cmp       edx, r11d
+  0x37c69: jg        0x37c6f
+  0x37c6b: test      edx, edx
+  0x37c6d: jns       0x37c72
+  0x37c6f: mov       edx, r11d
+  0x37c72: xor       r8d, r8d
+  0x37c75: mov       dword ptr [r9 + 8], edx
+  0x37c79: test      cl, cl
+  0x37c7b: je        0x37ca9
+  0x37c7d: xor       ebx, ebx
+  0x37c7f: nop       
+  0x37c80: cmp       edx, r11d
+  0x37c83: jl        0x37c89
+  0x37c85: xor       al, al
+  0x37c87: jmp       0x37c99
+  0x37c89: mov       rax, qword ptr [r9]
+  0x37c8c: movsxd    rcx, edx
+  0x37c8f: inc       edx
+  0x37c91: movzx     eax, byte ptr [rcx + rax]
+  0x37c95: mov       dword ptr [r9 + 8], edx
+  0x37c99: shl       r8d, 8
+  0x37c9d: inc       ebx
+  0x37c9f: movzx     eax, al
+  0x37ca2: or        r8d, eax
+  0x37ca5: cmp       ebx, edi
+  0x37ca7: jl        0x37c80
+  0x37ca9: mov       rdi, qword ptr [rsp + 0x18]
+  0x37cae: lea       eax, [r8 - 1]
+  0x37cb2: add       eax, edx
+  0x37cb4: cmp       eax, r11d
+  0x37cb7: jg        0x37cbd
+  0x37cb9: test      eax, eax
+  0x37cbb: jns       0x37cc0
+  0x37cbd: mov       eax, r11d
+  0x37cc0: mov       dword ptr [r9 + 8], eax
+  0x37cc4: mov       qword ptr [r10], 0
+  0x37ccb: mov       qword ptr [r10 + 8], 0
+  0x37cd3: mov       rbx, qword ptr [rsp + 0x10]
+  0x37cd8: test      esi, esi
+  0x37cda: js        0x37cfb
+  0x37cdc: sub       eax, esi
+  0x37cde: js        0x37cfb
+  0x37ce0: mov       ecx, dword ptr [r9 + 0xc]
+  0x37ce4: cmp       esi, ecx
+  0x37ce6: jg        0x37cfb
+  0x37ce8: sub       ecx, esi
+  0x37cea: cmp       eax, ecx
+  0x37cec: jg        0x37cfb
+  0x37cee: mov       rcx, rsi
+  0x37cf1: add       rcx, qword ptr [r9]
+  0x37cf4: mov       qword ptr [r10], rcx
+  0x37cf7: mov       dword ptr [r10 + 0xc], eax
+  0x37cfb: mov       rax, r10
+  0x37cfe: pop       rsi
+  0x37cff: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_00037bf0 @ 0x37bf0  size=272 */
+/* xrefs: called by fun_000368e0 (6 sites), fun_00038dd0 (1 site) */
+/* confidence: HIGH */
+struct s_fun_00037bf0_a1;
+struct s_fun_00037bf0_a2;
+#pragma pack(push, 1)
+struct s_fun_00037bf0_a1 {
+    int64_t field_0;
+    int64_t field_8;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_00037bf0_a2 {
+    int64_t field_0;
+    int32_t field_8;
+    int32_t field_c;
+};
+#pragma pack(pop)
+struct s_fun_00037bf0_a1* fun_00037bf0(struct s_fun_00037bf0_a1*a1, struct s_fun_00037bf0_a2*a2) {
+    uint8_t*v3;
+    int32_t v4;
+    uint32_t v5;
+    uint8_t*v12;
+    int32_t v13;
+    uint32_t v14;
+    uint8_t*v6;
+    uint32_t v7;
+    int32_t v1 = 0;
+    uint8_t*v8;
+    uint32_t v9;
+    uint8_t*v10;
+    uint32_t v15;
+    uint32_t v11;
+    int64_t v17;
+    uint8_t*v16;
+    uint8_t*v2 = 0;
+
+    v3 = (uint8_t*)a2->field_8;
+    v4 = 2;
+    v5 = 0;
+    v1 = (int64_t)a2->field_8;
+    do {
+        if ((int32_t)((int32_t)v3) < a2->field_c) {
+            v6 = (uint8_t*)((int32_t)v3 + 1);
+            a2->field_8 = (int64_t)v6;
+            v7 = *(uint8_t*)((char*)((int64_t)((int32_t)v3)) + a2->field_0);
+        } else {
+            v6 = v3;
+            v7 = 0;
+        }
+        v3 = v6;
+        --v4;
+        v5 = (v5 << 8) | (uint8_t)v7;
+    } while (v4);
+    if (v5) {
+        if ((int32_t)((int32_t)v6) < a2->field_c) {
+            v8 = (uint8_t*)((int32_t)v6 + 1);
+            v9 = *(uint8_t*)((char*)((int64_t)((int32_t)v6)) + a2->field_0);
+        } else {
+            v8 = v6;
+            v9 = 0;
+        }
+        if ((int32_t)((int32_t)(((v5 << 8) | (uint8_t)v7) * (uint8_t)v9 + v8)) > a2->field_c) {
+            v10 = (uint8_t*)a2->field_c;
+        } else {
+            v10 = ((v5 << 8) | (uint8_t)v7) * (uint8_t)v9 + v8;
+            if ((int32_t)((int32_t)v10) < 0) {
+                v10 = (uint8_t*)a2->field_c;
+            }
+        }
+        a2->field_8 = (int32_t)v10;
+        v11 = 0;
+        if ((uint8_t)v9) {
+            v12 = v10;
+            v13 = 0;
+            v14 = 0;
+            do {
+                if ((int32_t)((int32_t)v12) < a2->field_c) {
+                    v16 = (uint8_t*)((int32_t)v12 + 1);
+                    a2->field_8 = (int64_t)v16;
+                    v15 = *(uint8_t*)((char*)((int64_t)((int32_t)v12)) + a2->field_0);
+                    v12 = v16;
+                } else {
+                    v15 = 0;
+                }
+                ++v13;
+                v10 = v12;
+                v11 = (v14 << 8) | (uint8_t)v15;
+                v14 = (v14 << 8) | (uint8_t)v15;
+            } while (v13 < (int32_t)((uint8_t)v9));
+        }
+        if ((int32_t)((int32_t)(v11 - 1) + (int32_t)v10) > a2->field_c) {
+            v17 = a2->field_c;
+        } else {
+            v17 = (int32_t)(v11 - 1) + (int32_t)v10;
+            if (v17 < 0) {
+                v17 = a2->field_c;
+            }
+        }
+        a2->field_8 = (int32_t)v17;
+        v6 = (uint8_t*)v17;
+    }
+    a1->field_0 = 0;
+    a1->field_8 = 0;
+    if (v1 >= 0) {
+        v2 = (uint8_t*)((int32_t)v6 - v1);
+        if (v2 >= 0 && v1 <= a2->field_c && (int64_t)(v2) <= (int64_t)(a2->field_c - v1)) {
+            a1->field_0 = v1 + a2->field_0;
+            *(int32_t*)((char*)a1 + 0xc) = (int64_t)v2;
+            return a1;
+        }
+    }
+    return a1;
+}
+

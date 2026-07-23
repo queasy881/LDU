@@ -1,0 +1,94 @@
+=== fun_00038d20 @ 0x38d20 size=170 blocks=9 calls=0 ===
+--- DISASM ---
+  0x38d20: mov       qword ptr [rsp + 8], rbx
+  0x38d25: mov       qword ptr [rsp + 0x10], rdi
+  0x38d2a: mov       eax, edx
+  0x38d2c: mov       r10, r8
+  0x38d2f: mov       rbx, rcx
+  0x38d32: movzx     r11d, byte ptr [rax + rcx + 4]
+  0x38d38: movzx     eax, byte ptr [rax + rcx + 5]
+  0x38d3d: shl       r11d, 8
+  0x38d41: add       r11d, eax
+  0x38d44: je        0x38d93
+  0x38d46: movsx     edi, byte ptr [r10]
+  0x38d4a: lea       r9d, [rdx + 0xc]
+  0x38d4e: xor       r8d, r8d
+  0x38d51: mov       edx, r8d
+  0x38d54: shl       edx, 4
+  0x38d57: add       edx, r9d
+  0x38d5a: add       rdx, rbx
+  0x38d5d: movzx     eax, byte ptr [rdx]
+  0x38d60: cmp       eax, edi
+  0x38d62: jne       0x38d8b
+  0x38d64: movzx     ecx, byte ptr [rdx + 1]
+  0x38d68: movsx     eax, byte ptr [r10 + 1]
+  0x38d6d: cmp       ecx, eax
+  0x38d6f: jne       0x38d8b
+  0x38d71: movzx     ecx, byte ptr [rdx + 2]
+  0x38d75: movsx     eax, byte ptr [r10 + 2]
+  0x38d7a: cmp       ecx, eax
+  0x38d7c: jne       0x38d8b
+  0x38d7e: movzx     ecx, byte ptr [rdx + 3]
+  0x38d82: movsx     eax, byte ptr [r10 + 3]
+  0x38d87: cmp       ecx, eax
+  0x38d89: je        0x38da0
+  0x38d8b: inc       r8d
+  0x38d8e: cmp       r8d, r11d
+  0x38d91: jl        0x38d51
+  0x38d93: xor       eax, eax
+  0x38d95: mov       rbx, qword ptr [rsp + 8]
+  0x38d9a: mov       rdi, qword ptr [rsp + 0x10]
+  0x38d9f: ret       
+  0x38da0: movzx     eax, byte ptr [rdx + 9]
+  0x38da4: movzx     ecx, byte ptr [rdx + 0xa]
+  0x38da8: mov       rbx, qword ptr [rsp + 8]
+  0x38dad: mov       rdi, qword ptr [rsp + 0x10]
+  0x38db2: shl       ecx, 8
+  0x38db5: shl       eax, 0x10
+  0x38db8: add       eax, ecx
+  0x38dba: movzx     ecx, byte ptr [rdx + 8]
+  0x38dbe: shl       ecx, 0x18
+  0x38dc1: add       eax, ecx
+  0x38dc3: movzx     ecx, byte ptr [rdx + 0xb]
+  0x38dc7: add       eax, ecx
+  0x38dc9: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_00038d20 @ 0x38d20  size=170 */
+/* xrefs: called by fun_000368e0 (10 sites) */
+/* confidence: HIGH */
+#include <stdbool.h>
+struct s_fun_00038d20_a3;
+#pragma pack(push, 1)
+struct s_fun_00038d20_a3 {
+    int8_t field_0;
+    int8_t field_1;
+    int8_t field_2;
+    int8_t field_3;
+};
+#pragma pack(pop)
+uint32_t fun_00038d20(uint8_t*a1, uint8_t*a2, struct s_fun_00038d20_a3*a3) {
+    int32_t v1 = 0;
+    uint8_t*v2 = 0;
+    bool v3;
+
+    v3 = 0;
+    if (!(((uint32_t)*(uint8_t*)((char*)(a2 + (int64_t)a1) + 4) << 8) + (uint32_t)*(uint8_t*)((char*)(a2 + (int64_t)a1) + 5))) {
+        v3 = 1;
+    } else {
+        v1 = 0;
+        while (true) {
+            v2 = (uint8_t*)(int32_t)(a2 + 0xc);
+            if ((uint32_t)a1[(int64_t)((v1 << 4) + v2)] == (int32_t)a3->field_0 && (uint32_t)*(uint8_t*)((char*)((uint32_t)((v1 << 4) + v2) + (int64_t)a1) + 1) == (int32_t)a3->field_1 && (uint32_t)*(uint8_t*)((char*)((uint32_t)((v1 << 4) + v2) + (int64_t)a1) + 2) == (int32_t)a3->field_2 && (uint32_t)*(uint8_t*)((char*)((uint32_t)((v1 << 4) + v2) + (int64_t)a1) + 3) == (int32_t)a3->field_3) break;
+            ++v1;
+            if (v1 < (int32_t)(((uint32_t)*(uint8_t*)((char*)(a2 + (int64_t)a1) + 4) << 8) + (uint32_t)*(uint8_t*)((char*)(a2 + (int64_t)a1) + 5))) continue;
+            v3 = 1;
+            break;
+        }
+    }
+    if (v3) {
+        return 0;
+    }
+    return ((uint32_t)*(uint8_t*)((char*)((uint32_t)((v1 << 4) + (int32_t)(a2 + 0xc)) + (int64_t)a1) + 9) << 0x10) + ((uint32_t)*(uint8_t*)((char*)((uint32_t)((v1 << 4) + (int32_t)(a2 + 0xc)) + (int64_t)a1) + 0xa) << 8) + ((uint32_t)*(uint8_t*)((char*)((uint32_t)((v1 << 4) + (int32_t)(a2 + 0xc)) + (int64_t)a1) + 8) << 0x18) + (uint32_t)*(uint8_t*)((char*)((uint32_t)((v1 << 4) + (int32_t)(a2 + 0xc)) + (int64_t)a1) + 0xb);
+}
+

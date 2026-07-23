@@ -1,0 +1,60 @@
+=== fun_00012ec0 @ 0x12ec0 size=69 blocks=7 calls=0 ===
+--- DISASM ---
+  0x12ec0: mov       rcx, qword ptr [0x174148]
+  0x12ec7: mov       eax, dword ptr [rcx + 0x1f88]
+  0x12ecd: sub       eax, 1
+  0x12ed0: js        0x12efe
+  0x12ed2: mov       r8, qword ptr [rcx + 0x1f90]
+  0x12ed9: nop       dword ptr [rax]
+  0x12ee0: mov       ecx, eax
+  0x12ee2: imul      rdx, rcx, 0x38
+  0x12ee6: mov       rcx, qword ptr [rdx + r8 + 8]
+  0x12eeb: test      rcx, rcx
+  0x12eee: je        0x12ef9
+  0x12ef0: test      dword ptr [rcx + 0x14], 0x8000000
+  0x12ef7: jne       0x12f01
+  0x12ef9: sub       eax, 1
+  0x12efc: jns       0x12ee0
+  0x12efe: xor       eax, eax
+  0x12f00: ret       
+  0x12f01: mov       rax, rcx
+  0x12f04: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_00012ec0 @ 0x12ec0  size=69 */
+/* xrefs: called by fun_00024ad0 (2 sites), fun_00011e40 (1 site) */
+/* confidence: HIGH */
+#include <stdbool.h>
+struct s_fun_00012ec0_qword_174148;
+#pragma pack(push, 1)
+struct s_fun_00012ec0_qword_174148 {
+    char _pad_0[8072];
+    int32_t field_1f88;
+    char _pad_1f8c[4];
+    int64_t field_1f90;
+};
+#pragma pack(pop)
+#define qword_174148 (*(int64_t*)0x174148)
+int64_t fun_00012ec0(void) {
+    struct s_fun_00012ec0_qword_174148* gs_174148 = (struct s_fun_00012ec0_qword_174148*)qword_174148;
+    int32_t v1 = 0;
+    bool v2;
+
+    v2 = 0;
+    if (gs_174148->field_1f88 - 1 < 0) {
+        v2 = 1;
+    } else {
+        v1 = gs_174148->field_1f88 - 1;
+        while (!*(int64_t*)((int64_t)((uint32_t)v1) * 0x38 + gs_174148->field_1f90 + 8) || !(*(int32_t*)(*(int64_t*)((int64_t)((uint32_t)v1) * 0x38 + gs_174148->field_1f90 + 8) + 0x14) & 0x8000000)) {
+            --v1;
+            if (v1 >= 0) continue;
+            v2 = 1;
+            break;
+        }
+    }
+    if (v2) {
+        return 0;
+    }
+    return *(int64_t*)((int64_t)((uint32_t)v1) * 0x38 + gs_174148->field_1f90 + 8);
+}
+

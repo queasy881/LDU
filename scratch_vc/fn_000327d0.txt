@@ -1,0 +1,73 @@
+=== fun_000327d0 @ 0x327d0 size=88 blocks=5 calls=0 ===
+--- DISASM ---
+  0x327d0: sub       rsp, 0x38
+  0x327d4: mov       rdx, rcx
+  0x327d7: movsxd    rcx, dword ptr [rcx + 0xb0]
+  0x327de: lea       eax, [rcx - 1]
+  0x327e1: mov       dword ptr [rdx + 0xb0], eax
+  0x327e7: test      eax, eax
+  0x327e9: jne       0x327f9
+  0x327eb: xor       eax, eax
+  0x327ed: mov       qword ptr [rsp + 0x20], rax
+  0x327f2: mov       qword ptr [rsp + 0x28], rax
+  0x327f7: jmp       0x32810
+  0x327f9: mov       rax, qword ptr [rdx + 0xb8]
+  0x32800: sub       rcx, 2
+  0x32804: add       rcx, rcx
+  0x32807: movups    xmm0, xmmword ptr [rax + rcx*8]
+  0x3280b: movups    xmmword ptr [rsp + 0x20], xmm0
+  0x32810: lea       rax, [rsp + 0x20]
+  0x32815: mov       rcx, rdx
+  0x32818: movups    xmm0, xmmword ptr [rax]
+  0x3281b: movups    xmmword ptr [rdx + 0x70], xmm0
+  0x3281f: add       rsp, 0x38
+  0x32823: jmp       0x35110
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_000327d0 @ 0x327d0  size=88 */
+/* xrefs: called by fun_0001dba0 (1 site), fun_00029cb0 (1 site) */
+/* confidence: HIGH */
+struct s_fun_000327d0_a1;
+struct s_fun_000327d0_s1;
+#pragma pack(push, 1)
+struct s_fun_000327d0_a1 {
+    char _pad_0[112];
+    int64_t field_70;
+    int64_t field_78;
+    char _pad_80[48];
+    int32_t field_b0;
+    char _pad_b4[4];
+    void* field_b8;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_000327d0_s1 {
+    int64_t field_0;
+    int64_t field_8;
+};
+#pragma pack(pop)
+void fun_00035110();
+void fun_000327d0(struct s_fun_000327d0_a1*a1) {
+    char s1[16];
+    int64_t v1;
+    int32_t v2;
+
+    v1 = (int64_t)a1->field_b0 - 1;
+    v2 = (int64_t)a1->field_b0;
+    a1->field_b0 = (int32_t)((int64_t)a1->field_b0 - 1);
+    if ((int32_t)v1) {
+        ((struct s_fun_000327d0_s1*)s1)->field_0 = *(int64_t*)((char*)a1->field_b8 + (v2 - 2) * 0x10);
+        ((struct s_fun_000327d0_s1*)s1)->field_8 = *(int64_t*)((char*)((char*)a1->field_b8 + (v2 - 2) * 0x10) + 8);
+        a1->field_70 = ((struct s_fun_000327d0_s1*)s1)->field_0;
+        a1->field_78 = ((struct s_fun_000327d0_s1*)s1)->field_8;
+        fun_00035110(a1, a1);
+    return;
+    }
+    ((struct s_fun_000327d0_s1*)s1)->field_0 = 0;
+    ((struct s_fun_000327d0_s1*)s1)->field_8 = 0;
+    a1->field_70 = ((struct s_fun_000327d0_s1*)s1)->field_0;
+    a1->field_78 = ((struct s_fun_000327d0_s1*)s1)->field_8;
+    fun_00035110(a1, a1);
+    return;
+}
+

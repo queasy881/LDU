@@ -1,0 +1,179 @@
+=== fun_00021c80 @ 0x21c80 size=333 blocks=11 calls=0 ===
+--- DISASM ---
+  0x21c80: test      r8d, r8d
+  0x21c83: je        0x21c95
+  0x21c85: movsx     eax, byte ptr [rcx + 0xf1]
+  0x21c8c: test      r8d, eax
+  0x21c8f: je        0x21dcc
+  0x21c95: mov       eax, dword ptr [rcx + 0xf0]
+  0x21c9b: mov       r8d, eax
+  0x21c9e: movss     xmm0, dword ptr [rcx + 0x28]
+  0x21ca3: and       eax, 0xffff00ff
+  0x21ca8: movss     xmm1, dword ptr [rcx + 0x2c]
+  0x21cad: shr       r8d, 8
+  0x21cb1: and       r8d, 0xf1
+  0x21cb8: mov       dword ptr [rcx + 0xf4], 0x7f7fffff
+  0x21cc2: shl       r8d, 8
+  0x21cc6: or        r8d, eax
+  0x21cc9: mov       dword ptr [rcx + 0xf8], 0x7f7fffff
+  0x21cd3: mov       dword ptr [rcx + 0xf0], r8d
+  0x21cda: cvttss2si eax, dword ptr [rdx]
+  0x21cde: movd      xmm3, eax
+  0x21ce2: cvttss2si eax, dword ptr [rdx + 4]
+  0x21ce7: cvtdq2ps  xmm3, xmm3
+  0x21cea: movd      xmm2, eax
+  0x21cee: cvtdq2ps  xmm2, xmm2
+  0x21cf1: movss     dword ptr [rcx + 0x28], xmm3
+  0x21cf6: subss     xmm3, xmm0
+  0x21cfa: xorps     xmm0, xmm0
+  0x21cfd: movss     dword ptr [rcx + 0x2c], xmm2
+  0x21d02: subss     xmm2, xmm1
+  0x21d06: ucomiss   xmm3, xmm0
+  0x21d09: jp        0x21d18
+  0x21d0b: jne       0x21d18
+  0x21d0d: ucomiss   xmm2, xmm0
+  0x21d10: jp        0x21d18
+  0x21d12: je        0x21dcc
+  0x21d18: test      dword ptr [rcx + 0x14], 0x100
+  0x21d1f: jne       0x21d3a
+  0x21d21: mov       rdx, qword ptr [0x174148]
+  0x21d28: comiss    xmm0, dword ptr [rdx + 0x26e4]
+  0x21d2f: jb        0x21d3a
+  0x21d31: mov       eax, dword ptr [rdx + 0x44]
+  0x21d34: mov       dword ptr [rdx + 0x26e4], eax
+  0x21d3a: movaps    xmm0, xmm3
+  0x21d3d: movaps    xmm1, xmm2
+  0x21d40: addss     xmm0, dword ptr [rcx + 0x118]
+  0x21d48: addss     xmm1, dword ptr [rcx + 0x11c]
+  0x21d50: movss     dword ptr [rcx + 0x118], xmm0
+  0x21d58: movaps    xmm0, xmm3
+  0x21d5b: addss     xmm0, dword ptr [rcx + 0x130]
+  0x21d63: movss     dword ptr [rcx + 0x11c], xmm1
+  0x21d6b: movaps    xmm1, xmm2
+  0x21d6e: addss     xmm1, dword ptr [rcx + 0x134]
+  0x21d76: movss     dword ptr [rcx + 0x130], xmm0
+  0x21d7e: movaps    xmm0, xmm3
+  0x21d81: addss     xmm0, dword ptr [rcx + 0x138]
+  0x21d89: addss     xmm3, dword ptr [rcx + 0x128]
+  0x21d91: movss     dword ptr [rcx + 0x134], xmm1
+  0x21d99: movaps    xmm1, xmm2
+  0x21d9c: addss     xmm1, dword ptr [rcx + 0x13c]
+  0x21da4: addss     xmm2, dword ptr [rcx + 0x12c]
+  0x21dac: movss     dword ptr [rcx + 0x138], xmm0
+  0x21db4: movss     dword ptr [rcx + 0x128], xmm3
+  0x21dbc: movss     dword ptr [rcx + 0x13c], xmm1
+  0x21dc4: movss     dword ptr [rcx + 0x12c], xmm2
+  0x21dcc: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_00021c80 @ 0x21c80  size=333 */
+/* xrefs: called by fun_00009550 (2 sites), fun_00019b80 (1 site), fun_0001ab40 (1 site), fun_00024e90 (1 site) */
+/* confidence: HIGH */
+struct s_fun_00021c80_a1;
+struct Vec2;
+struct s_fun_00021c80_qword_174148;
+#pragma pack(push, 1)
+struct s_fun_00021c80_a1 {
+    char _pad_0[20];
+    int32_t field_14;
+    char _pad_18[16];
+    float field_28;
+    float field_2c;
+    char _pad_30[192];
+    int32_t field_f0;
+    int32_t field_f4;
+    int32_t field_f8;
+    char _pad_fc[28];
+    float field_118;
+    float field_11c;
+    char _pad_120[8];
+    float field_128;
+    float field_12c;
+    float field_130;
+    float field_134;
+    float field_138;
+    float field_13c;
+};
+#pragma pack(pop)
+#ifndef __DS_TY_Vec2
+#define __DS_TY_Vec2
+#pragma pack(push, 1)
+struct Vec2 {
+    float x;
+    float y;
+};
+#pragma pack(pop)
+#endif
+#pragma pack(push, 1)
+struct s_fun_00021c80_qword_174148 {
+    char _pad_0[68];
+    int32_t field_44;
+    char _pad_48[9884];
+    float field_26e4;
+};
+#pragma pack(pop)
+#define qword_174148 (*(int64_t*)0x174148)
+void fun_00021c80(struct s_fun_00021c80_a1*a1, struct Vec2*a2, int32_t a3) {
+    struct s_fun_00021c80_qword_174148* gs_174148 = (struct s_fun_00021c80_qword_174148*)qword_174148;
+    float v1;
+    float v2;
+
+    if (a3 && !(a3 & (int32_t)*(int8_t*)((char*)a1 + 0xf1))) {
+        return;
+    }
+    a1->field_f4 = 0x7f7fffff;
+    a1->field_f8 = 0x7f7fffff;
+    a1->field_f0 = ((((uint32_t)(a1->field_f0) >> 8) & 0xf1) << 8) | (*(int32_t*)((char*)a1 + 0xf0) & 0xffff00ff);
+    v1 = a1->field_28;
+    a1->field_28 = (float)((int32_t)a2->x);
+    v2 = a1->field_2c;
+    a1->field_2c = (float)((int32_t)a2->y);
+    if ((float)((int32_t)a2->x) - v1 != 0.0f) {
+        if (*(int32_t*)((char*)a1 + 0x14) & 0x100 || !(gs_174148->field_26e4 <= 0.0f)) {
+            a1->field_118 = (float)((int32_t)a2->x) - v1 + a1->field_118;
+            a1->field_11c = (float)((int32_t)a2->y) - v2 + a1->field_11c;
+            a1->field_130 = (float)((int32_t)a2->x) - v1 + a1->field_130;
+            a1->field_134 = (float)((int32_t)a2->y) - v2 + a1->field_134;
+            a1->field_138 = (float)((int32_t)a2->x) - v1 + a1->field_138;
+            a1->field_128 = (float)((int32_t)a2->x) - v1 + a1->field_128;
+            a1->field_13c = (float)((int32_t)a2->y) - v2 + a1->field_13c;
+            a1->field_12c = (float)((int32_t)a2->y) - v2 + a1->field_12c;
+            return;
+        }
+        gs_174148->field_26e4 = gs_174148->field_44;
+        a1->field_118 = (float)((int32_t)a2->x) - v1 + a1->field_118;
+        a1->field_11c = (float)((int32_t)a2->y) - v2 + a1->field_11c;
+        a1->field_130 = (float)((int32_t)a2->x) - v1 + a1->field_130;
+        a1->field_134 = (float)((int32_t)a2->y) - v2 + a1->field_134;
+        a1->field_138 = (float)((int32_t)a2->x) - v1 + a1->field_138;
+        a1->field_128 = (float)((int32_t)a2->x) - v1 + a1->field_128;
+        a1->field_13c = (float)((int32_t)a2->y) - v2 + a1->field_13c;
+        a1->field_12c = (float)((int32_t)a2->y) - v2 + a1->field_12c;
+        return;
+    } else {
+        if ((float)((int32_t)a2->y) - v2 != 0.0f) {
+            if (*(int32_t*)((char*)a1 + 0x14) & 0x100 || !(gs_174148->field_26e4 <= 0.0f)) {
+                a1->field_118 = (float)((int32_t)a2->x) - v1 + a1->field_118;
+                a1->field_11c = (float)((int32_t)a2->y) - v2 + a1->field_11c;
+                a1->field_130 = (float)((int32_t)a2->x) - v1 + a1->field_130;
+                a1->field_134 = (float)((int32_t)a2->y) - v2 + a1->field_134;
+                a1->field_138 = (float)((int32_t)a2->x) - v1 + a1->field_138;
+                a1->field_128 = (float)((int32_t)a2->x) - v1 + a1->field_128;
+                a1->field_13c = (float)((int32_t)a2->y) - v2 + a1->field_13c;
+                a1->field_12c = (float)((int32_t)a2->y) - v2 + a1->field_12c;
+            } else {
+                gs_174148->field_26e4 = gs_174148->field_44;
+                a1->field_118 = (float)((int32_t)a2->x) - v1 + a1->field_118;
+                a1->field_11c = (float)((int32_t)a2->y) - v2 + a1->field_11c;
+                a1->field_130 = (float)((int32_t)a2->x) - v1 + a1->field_130;
+                a1->field_134 = (float)((int32_t)a2->y) - v2 + a1->field_134;
+                a1->field_138 = (float)((int32_t)a2->x) - v1 + a1->field_138;
+                a1->field_128 = (float)((int32_t)a2->x) - v1 + a1->field_128;
+                a1->field_13c = (float)((int32_t)a2->y) - v2 + a1->field_13c;
+                a1->field_12c = (float)((int32_t)a2->y) - v2 + a1->field_12c;
+            }
+        }
+        return;
+    }
+}
+

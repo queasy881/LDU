@@ -1,0 +1,141 @@
+=== fun_000286a0 @ 0x286a0 size=217 blocks=3 calls=1 ===
+--- DISASM ---
+  0x286a0: mov       qword ptr [rsp + 0x10], rbx
+  0x286a5: push      rdi
+  0x286a6: sub       rsp, 0x20
+  0x286aa: mov       rbx, rcx
+  0x286ad: xor       edi, edi
+  0x286af: mov       qword ptr [rcx + 0x40], rdi
+  0x286b3: mov       qword ptr [rcx + 0x48], rdi
+  0x286b7: mov       qword ptr [rcx + 0x54], rdi
+  0x286bb: mov       qword ptr [rcx + 0x5c], rdi
+  0x286bf: mov       qword ptr [rcx + 0x68], rdi
+  0x286c3: mov       qword ptr [rcx + 0x70], rdi
+  0x286c7: mov       qword ptr [rcx + 0x78], rdi
+  0x286cb: mov       qword ptr [rcx + 0x80], rdi
+  0x286d2: lea       rax, [rcx + 0x88]
+  0x286d9: mov       ecx, 0x21
+  0x286de: nop       
+  0x286e0: mov       qword ptr [rax], rdi
+  0x286e3: mov       qword ptr [rax + 8], rdi
+  0x286e7: lea       rax, [rax + 0x10]
+  0x286eb: sub       rcx, 1
+  0x286ef: jne       0x286e0
+  0x286f1: mov       qword ptr [rbx + 0x2a0], rdi
+  0x286f8: mov       qword ptr [rbx + 0x2a8], rdi
+  0x286ff: xorps     xmm0, xmm0
+  0x28702: xor       eax, eax
+  0x28704: movups    xmmword ptr [rbx + 0x2e0], xmm0
+  0x2870b: mov       qword ptr [rbx + 0x2f0], rax
+  0x28712: xor       edx, edx
+  0x28714: mov       r8d, 0x2f8
+  0x2871a: mov       rcx, rbx
+  0x2871d: call      0x85240
+  0x28722: mov       dword ptr [rbx + 4], edi
+  0x28725: mov       dword ptr [rbx + 8], 1
+  0x2872c: mov       dword ptr [rbx + 0xc], 0x200
+  0x28733: mov       dword ptr [rbx + 0x10], 0x80
+  0x2873a: mov       dword ptr [rbx + 0x14], 0x2000
+  0x28741: mov       dword ptr [rbx + 0x18], 0x2000
+  0x28748: mov       qword ptr [rbx + 0x30], rdi
+  0x2874c: mov       byte ptr [rbx + 0x51], 0
+  0x28750: mov       dword ptr [rbx + 0x298], 1
+  0x2875a: mov       dword ptr [rbx + 0x29c], 1
+  0x28764: mov       qword ptr [rbx + 0x2b0], rdi
+  0x2876b: mov       rax, rbx
+  0x2876e: mov       rbx, qword ptr [rsp + 0x38]
+  0x28773: add       rsp, 0x20
+  0x28777: pop       rdi
+  0x28778: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_000286a0 @ 0x286a0  size=217 */
+/* xrefs: called by fun_00006aa0 (1 site) */
+/* confidence: HIGH */
+#include <stdbool.h>
+struct s_fun_000286a0_a1;
+struct s_fun_000286a0_v1;
+#pragma pack(push, 1)
+struct s_fun_000286a0_a1 {
+    char _pad_0[4];
+    int32_t field_4;
+    int32_t field_8;
+    int32_t field_c;
+    int32_t field_10;
+    int32_t field_14;
+    int32_t field_18;
+    char _pad_1c[20];
+    int64_t field_30;
+    char _pad_38[8];
+    int64_t field_40;
+    int64_t field_48;
+    char _pad_50[1];
+    int8_t field_51;
+    char _pad_52[2];
+    int64_t field_54;
+    int64_t field_5c;
+    char _pad_64[4];
+    int64_t field_68;
+    int64_t field_70;
+    int64_t field_78;
+    int64_t field_80;
+    char _pad_88[528];
+    int32_t field_298;
+    int32_t field_29c;
+    int64_t field_2a0;
+    int64_t field_2a8;
+    int64_t field_2b0;
+    char _pad_2b8[40];
+    int64_t field_2e0;
+    int64_t field_2e8;
+    int64_t field_2f0;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_000286a0_v1 {
+    int64_t field_0;
+    int64_t field_8;
+};
+#pragma pack(pop)
+float fun_00085240();
+struct s_fun_000286a0_a1* fun_000286a0(struct s_fun_000286a0_a1*a1) {
+    struct s_fun_000286a0_v1*v1;
+    int64_t v2;
+
+    a1->field_40 = 0;
+    a1->field_48 = 0;
+    a1->field_54 = 0;
+    a1->field_5c = 0;
+    a1->field_68 = 0;
+    a1->field_70 = 0;
+    a1->field_78 = 0;
+    a1->field_80 = 0;
+    v1 = (struct s_fun_000286a0_v1*)((char*)a1 + 0x88);
+    v2 = 0x21;
+    while (true) {
+        v1->field_0 = 0;
+        v1->field_8 = 0;
+        v1 = (struct s_fun_000286a0_v1*)((char*)v1 + 0x10);
+        --v2;
+        if (!v2) break;
+    }
+    a1->field_2a0 = 0;
+    a1->field_2a8 = 0;
+    a1->field_2e0 = 0;
+    a1->field_2e8 = 0;
+    a1->field_2f0 = 0;
+    fun_00085240(a1, 0, 0x2f8);
+    a1->field_4 = 0;
+    a1->field_8 = 1;
+    a1->field_c = 0x200;
+    a1->field_10 = 0x80;
+    a1->field_14 = 0x2000;
+    a1->field_18 = 0x2000;
+    a1->field_30 = 0;
+    a1->field_51 = 0;
+    a1->field_298 = 1;
+    a1->field_29c = 1;
+    a1->field_2b0 = 0;
+    return a1;
+}
+

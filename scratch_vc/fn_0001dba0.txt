@@ -1,0 +1,460 @@
+=== fun_0001dba0 @ 0x1dba0 size=1328 blocks=13 calls=12 ===
+--- DISASM ---
+  0x1dba0: mov       r11, rsp
+  0x1dba3: push      rbp
+  0x1dba4: push      rsi
+  0x1dba5: push      rdi
+  0x1dba6: push      r12
+  0x1dba8: push      r13
+  0x1dbaa: push      r14
+  0x1dbac: push      r15
+  0x1dbae: lea       rbp, [r11 - 0xc8]
+  0x1dbb5: sub       rsp, 0x190
+  0x1dbbc: movaps    xmmword ptr [r11 - 0x78], xmm8
+  0x1dbc1: mov       rax, qword ptr [0x1733c0]
+  0x1dbc8: xor       rax, rsp
+  0x1dbcb: mov       qword ptr [rbp - 0x30], rax
+  0x1dbcf: mov       r14, qword ptr [0x174148]
+  0x1dbd6: xor       eax, eax
+  0x1dbd8: cmp       r8d, 0xa
+  0x1dbdc: mov       qword ptr [rsp + 0x70], rcx
+  0x1dbe1: mov       esi, r8d
+  0x1dbe4: mov       r13d, r9d
+  0x1dbe7: cmova     esi, eax
+  0x1dbea: movaps    xmm8, xmm1
+  0x1dbee: mov       rdi, qword ptr [r14 + 0x1fc0]
+  0x1dbf5: movsxd    rax, dword ptr [r14 + 0x1fb8]
+  0x1dbfc: mov       r12, qword ptr [r14 + 0x11c0]
+  0x1dc03: lea       r15, [rdi + rax*8]
+  0x1dc07: cmp       rdi, r15
+  0x1dc0a: je        0x1e0a8
+  0x1dc10: mov       qword ptr [r11 - 0x40], rbx
+  0x1dc14: movaps    xmmword ptr [r11 - 0x58], xmm6
+  0x1dc19: xorps     xmm6, xmm6
+  0x1dc1c: movaps    xmmword ptr [r11 - 0x88], xmm9
+  0x1dc24: movss     xmm9, dword ptr [0x88558]
+  0x1dc2d: movaps    xmmword ptr [r11 - 0x98], xmm10
+  0x1dc35: movss     xmm10, dword ptr [0x88544]
+  0x1dc3e: movaps    xmmword ptr [r11 - 0xa8], xmm11
+  0x1dc46: movss     xmm11, dword ptr [rsp + 0x74]
+  0x1dc4d: movaps    xmmword ptr [r11 - 0xb8], xmm12
+  0x1dc55: movss     xmm12, dword ptr [rsp + 0x70]
+  0x1dc5c: movaps    xmmword ptr [r11 - 0xc8], xmm13
+  0x1dc64: movss     xmm13, dword ptr [0x885b8]
+  0x1dc6d: movaps    xmmword ptr [r11 - 0xd8], xmm14
+  0x1dc75: movss     xmm14, dword ptr [0x8ae54]
+  0x1dc7e: movaps    xmmword ptr [r11 - 0xe8], xmm15
+  0x1dc86: movss     xmm15, dword ptr [0x885bc]
+  0x1dc8f: movaps    xmmword ptr [r11 - 0x68], xmm7
+  0x1dc94: mov       rbx, qword ptr [rdi]
+  0x1dc97: lea       rax, [rbp - 0x40]
+  0x1dc9b: mov       qword ptr [rsp + 0x28], rax
+  0x1dca0: lea       r9, [rsp + 0x48]
+  0x1dca5: lea       rax, [rbp - 0x50]
+  0x1dca9: mov       qword ptr [rsp + 0x50], 0
+  0x1dcb2: xorps     xmm0, xmm0
+  0x1dcb5: mov       qword ptr [rsp + 0x20], rax
+  0x1dcba: xorps     xmm1, xmm1
+  0x1dcbd: mov       qword ptr [rsp + 0x48], 0
+  0x1dcc6: lea       r8, [rsp + 0x50]
+  0x1dccb: mov       edx, esi
+  0x1dccd: mov       rcx, r12
+  0x1dcd0: movups    xmmword ptr [rbp - 0x50], xmm0
+  0x1dcd4: movups    xmmword ptr [rbp - 0x40], xmm1
+  0x1dcd8: call      0x2e990
+  0x1dcdd: test      al, al
+  0x1dcdf: je        0x1e044
+  0x1dce5: movss     xmm5, dword ptr [rbx + 0xc]
+  0x1dcea: movaps    xmm4, xmm11
+  0x1dcee: subss     xmm4, dword ptr [rsp + 0x54]
+  0x1dcf4: movss     xmm1, dword ptr [rsp + 0x48]
+  0x1dcfa: movaps    xmm0, xmm5
+  0x1dcfd: addss     xmm0, dword ptr [rbx + 0x14]
+  0x1dd02: movss     xmm2, dword ptr [rsp + 0x4c]
+  0x1dd08: addss     xmm1, xmm9
+  0x1dd0d: movaps    xmm3, xmm12
+  0x1dd11: addss     xmm2, xmm9
+  0x1dd16: subss     xmm3, dword ptr [rsp + 0x50]
+  0x1dd1c: movss     dword ptr [rsp + 0x44], xmm4
+  0x1dd22: comiss    xmm0, xmm4
+  0x1dd25: movss     dword ptr [rsp + 0x40], xmm3
+  0x1dd2b: jbe       0x1e044
+  0x1dd31: mulss     xmm2, xmm8
+  0x1dd36: addss     xmm2, xmm4
+  0x1dd3a: comiss    xmm2, xmm5
+  0x1dd3d: jbe       0x1e044
+  0x1dd43: movss     xmm2, dword ptr [rbx + 8]
+  0x1dd48: movaps    xmm0, xmm2
+  0x1dd4b: addss     xmm0, dword ptr [rbx + 0x10]
+  0x1dd50: comiss    xmm0, xmm3
+  0x1dd53: jbe       0x1e044
+  0x1dd59: mulss     xmm1, xmm8
+  0x1dd5e: addss     xmm1, xmm3
+  0x1dd62: comiss    xmm1, xmm2
+  0x1dd65: jbe       0x1e044
+  0x1dd6b: lea       r8, [0x89cb0]
+  0x1dd72: mov       edx, 1
+  0x1dd77: mov       rcx, rbx
+  0x1dd7a: call      0x12f10
+  0x1dd7f: movups    xmm7, xmmword ptr [r12 + 0x28]
+  0x1dd85: lea       rdx, [rsp + 0x60]
+  0x1dd8a: mov       rcx, rax
+  0x1dd8d: mov       rbx, rax
+  0x1dd90: movaps    xmmword ptr [rsp + 0x60], xmm7
+  0x1dd95: call      0x32b60
+  0x1dd9a: movss     xmm0, dword ptr [rsp + 0x48]
+  0x1dda0: lea       r9, [rsp + 0x78]
+  0x1dda5: movss     xmm2, dword ptr [rsp + 0x44]
+  0x1ddab: addss     xmm0, xmm10
+  0x1ddb0: movss     xmm1, dword ptr [rsp + 0x4c]
+  0x1ddb6: lea       r8, [rbp - 0x80]
+  0x1ddba: mov       eax, dword ptr [rbp + 0xf8]
+  0x1ddc0: addss     xmm1, xmm6
+  0x1ddc4: mov       dword ptr [rsp + 0x30], eax
+  0x1ddc8: lea       rdx, [rsp + 0x60]
+  0x1ddcd: movaps    xmm6, xmm8
+  0x1ddd1: movdqa    xmmword ptr [rsp + 0x60], xmm7
+  0x1ddd7: mulss     xmm6, dword ptr [0x8adf0]
+  0x1dddf: lea       rax, [rbp - 0x38]
+  0x1dde3: mov       rcx, rbx
+  0x1dde6: mov       qword ptr [rsp + 0x28], rax
+  0x1ddeb: mulss     xmm0, xmm8
+  0x1ddf0: lea       rax, [rbp - 0x40]
+  0x1ddf4: mov       qword ptr [rsp + 0x20], rax
+  0x1ddf9: mulss     xmm1, xmm8
+  0x1ddfe: addss     xmm0, dword ptr [rsp + 0x40]
+  0x1de04: addss     xmm1, xmm2
+  0x1de08: addss     xmm2, xmm6
+  0x1de0c: movss     dword ptr [rsp + 0x78], xmm0
+  0x1de12: movaps    xmm0, xmm8
+  0x1de16: addss     xmm0, dword ptr [rsp + 0x40]
+  0x1de1c: movss     dword ptr [rsp + 0x7c], xmm1
+  0x1de22: movss     dword ptr [rbp - 0x7c], xmm2
+  0x1de27: movss     dword ptr [rbp - 0x80], xmm0
+  0x1de2c: call      0x29cb0
+  0x1de31: movss     xmm0, dword ptr [rsp + 0x48]
+  0x1de37: lea       r9, [rbp - 0x78]
+  0x1de3b: movss     xmm2, dword ptr [rsp + 0x44]
+  0x1de41: addss     xmm0, xmm9
+  0x1de46: movss     xmm1, dword ptr [rsp + 0x4c]
+  0x1de4c: lea       r8, [rbp - 0x70]
+  0x1de50: addss     xmm1, dword ptr [0x8adf0]
+  0x1de58: mov       eax, dword ptr [rbp + 0xf8]
+  0x1de5e: lea       rdx, [rsp + 0x60]
+  0x1de63: mov       dword ptr [rsp + 0x30], eax
+  0x1de67: mov       rcx, rbx
+  0x1de6a: mulss     xmm0, xmm8
+  0x1de6f: lea       rax, [rbp - 0x38]
+  0x1de73: mov       qword ptr [rsp + 0x28], rax
+  0x1de78: lea       rax, [rbp - 0x40]
+  0x1de7c: mulss     xmm1, xmm8
+  0x1de81: mov       qword ptr [rsp + 0x20], rax
+  0x1de86: addss     xmm0, dword ptr [rsp + 0x40]
+  0x1de8c: movdqa    xmmword ptr [rsp + 0x60], xmm7
+  0x1de92: addss     xmm1, xmm2
+  0x1de96: addss     xmm2, xmm6
+  0x1de9a: movss     dword ptr [rbp - 0x78], xmm0
+  0x1de9f: movaps    xmm0, xmm8
+  0x1dea3: addss     xmm0, xmm8
+  0x1dea8: movss     dword ptr [rbp - 0x74], xmm1
+  0x1dead: movss     dword ptr [rbp - 0x6c], xmm2
+  0x1deb2: addss     xmm0, dword ptr [rsp + 0x40]
+  0x1deb8: movss     dword ptr [rbp - 0x70], xmm0
+  0x1debd: call      0x29cb0
+  0x1dec2: mov       eax, dword ptr [rbp + 0xf0]
+  0x1dec8: movaps    xmm0, xmm8
+  0x1decc: mulss     xmm0, dword ptr [rsp + 0x48]
+  0x1ded2: movaps    xmm1, xmm8
+  0x1ded6: mov       dword ptr [rsp + 0x30], eax
+  0x1deda: lea       rax, [rbp - 0x38]
+  0x1dede: mulss     xmm1, dword ptr [rsp + 0x4c]
+  0x1dee4: addss     xmm0, dword ptr [rsp + 0x40]
+  0x1deea: movdqa    xmmword ptr [rsp + 0x60], xmm7
+  0x1def0: addss     xmm1, dword ptr [rsp + 0x44]
+  0x1def6: movss     dword ptr [rbp - 0x68], xmm0
+  0x1defb: movss     dword ptr [rbp - 0x64], xmm1
+  0x1df00: mov       qword ptr [rsp + 0x28], rax
+  0x1df05: lea       r9, [rbp - 0x68]
+  0x1df09: lea       rax, [rbp - 0x40]
+  0x1df0d: mov       rcx, rbx
+  0x1df10: lea       r8, [rsp + 0x40]
+  0x1df15: mov       qword ptr [rsp + 0x20], rax
+  0x1df1a: lea       rdx, [rsp + 0x60]
+  0x1df1f: call      0x29cb0
+  0x1df24: movaps    xmm0, xmm8
+  0x1df28: mov       dword ptr [rsp + 0x30], r13d
+  0x1df2d: mulss     xmm0, dword ptr [rsp + 0x48]
+  0x1df33: lea       rax, [rbp - 0x48]
+  0x1df37: mov       qword ptr [rsp + 0x28], rax
+  0x1df3c: lea       r9, [rbp - 0x60]
+  0x1df40: movaps    xmm1, xmm8
+  0x1df44: movdqa    xmmword ptr [rsp + 0x60], xmm7
+  0x1df4a: mulss     xmm1, dword ptr [rsp + 0x4c]
+  0x1df50: lea       rax, [rbp - 0x50]
+  0x1df54: lea       r8, [rsp + 0x40]
+  0x1df59: mov       rcx, rbx
+  0x1df5c: addss     xmm0, dword ptr [rsp + 0x40]
+  0x1df62: lea       rdx, [rsp + 0x60]
+  0x1df67: mov       qword ptr [rsp + 0x20], rax
+  0x1df6c: addss     xmm1, dword ptr [rsp + 0x44]
+  0x1df72: movss     dword ptr [rbp - 0x60], xmm0
+  0x1df77: movss     dword ptr [rbp - 0x5c], xmm1
+  0x1df7c: call      0x29cb0
+  0x1df81: lea       eax, [rsi - 8]
+  0x1df84: cmp       eax, 1
+  0x1df87: ja        0x1e039
+  0x1df8d: movsd     xmm0, qword ptr [r14 + 0x10]
+  0x1df93: movaps    xmm1, xmm14
+  0x1df97: cvtpd2ps  xmm0, xmm0
+  0x1df9b: mulss     xmm0, xmm13
+  0x1dfa0: call      0x68420
+  0x1dfa5: movaps    xmm1, xmm8
+  0x1dfa9: mov       dword ptr [rsp + 0x28], 0
+  0x1dfb1: mulss     xmm1, xmm15
+  0x1dfb6: lea       rdx, [rbp - 0x58]
+  0x1dfba: mov       rcx, rbx
+  0x1dfbd: movaps    xmm2, xmm8
+  0x1dfc1: movaps    xmm3, xmm0
+  0x1dfc4: addss     xmm3, dword ptr [0x8ae4c]
+  0x1dfcc: addss     xmm1, dword ptr [rsp + 0x40]
+  0x1dfd2: mulss     xmm2, xmm10
+  0x1dfd7: movss     dword ptr [rsp + 0x20], xmm3
+  0x1dfdd: movaps    xmm3, xmm0
+  0x1dfe0: movss     dword ptr [rbp - 0x58], xmm1
+  0x1dfe5: movss     xmm1, dword ptr [rsp + 0x44]
+  0x1dfeb: subss     xmm1, xmm2
+  0x1dfef: movaps    xmm2, xmm8
+  0x1dff3: mulss     xmm2, dword ptr [0x8ae50]
+  0x1dffb: movss     dword ptr [rbp - 0x54], xmm1
+  0x1e000: call      0x31fd0
+  0x1e005: mov       r8d, dword ptr [rbx + 0x50]
+  0x1e009: movaps    xmm0, xmm8
+  0x1e00d: mulss     xmm0, dword ptr [0x88580]
+  0x1e015: mov       r9d, r13d
+  0x1e018: mov       rdx, qword ptr [rbx + 0x58]
+  0x1e01c: mov       rcx, rbx
+  0x1e01f: movss     dword ptr [rsp + 0x28], xmm0
+  0x1e025: mov       dword ptr [rsp + 0x20], 0
+  0x1e02d: call      0x29f30
+  0x1e032: mov       dword ptr [rbx + 0x50], 0
+  0x1e039: mov       rcx, rbx
+  0x1e03c: call      0x327d0
+  0x1e041: xorps     xmm6, xmm6
+  0x1e044: add       rdi, 8
+  0x1e048: cmp       rdi, r15
+  0x1e04b: jne       0x1dc94
+  0x1e051: movaps    xmm15, xmmword ptr [rsp + 0xe0]
+  0x1e05a: movaps    xmm14, xmmword ptr [rsp + 0xf0]
+  0x1e063: movaps    xmm13, xmmword ptr [rsp + 0x100]
+  0x1e06c: movaps    xmm12, xmmword ptr [rsp + 0x110]
+  0x1e075: movaps    xmm11, xmmword ptr [rsp + 0x120]
+  0x1e07e: movaps    xmm10, xmmword ptr [rsp + 0x130]
+  0x1e087: movaps    xmm9, xmmword ptr [rsp + 0x140]
+  0x1e090: movaps    xmm7, xmmword ptr [rsp + 0x160]
+  0x1e098: movaps    xmm6, xmmword ptr [rsp + 0x170]
+  0x1e0a0: mov       rbx, qword ptr [rsp + 0x188]
+  0x1e0a8: mov       rcx, qword ptr [rbp - 0x30]
+  0x1e0ac: xor       rcx, rsp
+  0x1e0af: call      0x5dbe0
+  0x1e0b4: movaps    xmm8, xmmword ptr [rsp + 0x150]
+  0x1e0bd: add       rsp, 0x190
+  0x1e0c4: pop       r15
+  0x1e0c6: pop       r14
+  0x1e0c8: pop       r13
+  0x1e0ca: pop       r12
+  0x1e0cc: pop       rdi
+  0x1e0cd: pop       rsi
+  0x1e0ce: pop       rbp
+  0x1e0cf: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_0001dba0 @ 0x1dba0  size=1328 */
+/* xrefs: called by fun_0001ce80 (1 site) */
+/* confidence: HIGH */
+#include <stdbool.h>
+struct s_fun_0001dba0_qword_174148;
+struct s_fun_0001dba0_qword_174148_11c0;
+struct s_fun_0001dba0_s1;
+struct Vec2;
+struct s_fun_0001dba0_s8;
+struct s_fun_0001dba0_v6;
+#pragma pack(push, 1)
+struct s_fun_0001dba0_qword_174148 {
+    char _pad_0[16];
+    double field_10;
+    char _pad_18[4520];
+    struct s_fun_0001dba0_qword_174148_11c0* field_11c0;
+    char _pad_11c8[3568];
+    int32_t field_1fb8;
+    char _pad_1fbc[4];
+    int64_t field_1fc0;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_0001dba0_qword_174148_11c0 {
+    char _pad_0[40];
+    int64_t field_28;
+    int64_t field_30;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_0001dba0_s1 {
+    int64_t field_0;
+    int64_t field_8;
+    int64_t field_10;
+};
+#pragma pack(pop)
+#ifndef __DS_TY_Vec2
+#define __DS_TY_Vec2
+#pragma pack(push, 1)
+struct Vec2 {
+    float x;
+    float y;
+};
+#pragma pack(pop)
+#endif
+#pragma pack(push, 1)
+struct s_fun_0001dba0_s8 {
+    float field_0;
+    float field_4;
+    char _pad_8[32];
+    int64_t field_28;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_0001dba0_v6 {
+    char _pad_0[80];
+    int32_t field_50;
+    char _pad_54[4];
+    int64_t field_58;
+};
+#pragma pack(pop)
+#define qword_1733c0 (*(int64_t*)0x1733c0)
+#define qword_174148 (*(int64_t*)0x174148)
+float fmodf();
+int64_t fun_00012f10();
+int32_t fun_00029cb0();
+void fun_00029f30();
+int32_t fun_0002e990();
+int32_t fun_00031fd0();
+int64_t fun_000327d0();
+void fun_00032b60();
+int32_t fun_0001dba0(int64_t a1, float a2, int32_t a3, int32_t a4) {
+    char s1[32];
+    char s2[16];
+    char s3[8];
+    char s4[8];
+    char s5[8];
+    char s6[8];
+    char s7[8];
+    char s8[232];
+    char s9[8];
+    char s10[8];
+    char s11[16];
+    char s12[24];
+    char s13[256];
+    struct s_fun_0001dba0_qword_174148* gs_174148 = (struct s_fun_0001dba0_qword_174148*)qword_174148;
+    int64_t v3;
+    int64_t v4;
+    int32_t v7;
+    int64_t*v1;
+    bool v2;
+    int64_t result;
+    int32_t v5;
+    struct s_fun_0001dba0_v6*v6;
+    double v8;
+
+    ((struct s_fun_0001dba0_s8*)s8)->field_28 = qword_1733c0;
+    *(int64_t*)((char*)s12 + 0x10) = a1;
+    result = gs_174148->field_1fb8;
+    if (!(result * 8)) {
+        return (int32_t)result;
+    }
+    v1 = (int64_t*)gs_174148->field_1fc0;
+    v2 = 0;
+    do {
+        v3 = (int64_t)(&((struct s_fun_0001dba0_s1*)s1)->field_10);
+        *(int64_t*)s11 = 0;
+        v4 = (int64_t)s1;
+        *(int64_t*)s10 = 0;
+        ((struct s_fun_0001dba0_s1*)s1)->field_0 = 0;
+        ((struct s_fun_0001dba0_s1*)s1)->field_8 = 0;
+        ((struct s_fun_0001dba0_s1*)s1)->field_10 = 0;
+        *(int64_t*)(&((struct s_fun_0001dba0_s1*)s1)->field_10 + 8) = 0;
+        v5 = fun_0002e990(gs_174148->field_11c0, (uint32_t)((uint32_t)(a3) > 0xa ? 0 : a3), s11, s10, v4, v3);
+        result = v5;
+        if ((uint8_t)v5) {
+            ((struct Vec2*)s9)->y = *(float*)((char*)s12 + 0x14) - *(float*)((char*)s11 + 4);
+            ((struct Vec2*)s9)->x = *(float*)((char*)s12 + 0x10) - *(float*)s11;
+            result = v5;
+            if (*(float*)(*v1 + 0xc) + *(float*)(*v1 + 0x14) > *(float*)((char*)s12 + 0x14) - *(float*)((char*)s11 + 4)) {
+                result = v5;
+                if ((*(float*)((char*)s10 + 4) + 2.0f) * a2 + (*(float*)((char*)s12 + 0x14) - *(float*)((char*)s11 + 4)) > *(float*)(*v1 + 0xc)) {
+                    result = v5;
+                    if (*(float*)(*v1 + 8) + *(float*)(*v1 + 0x10) > *(float*)((char*)s12 + 0x10) - *(float*)s11) {
+                        result = v5;
+                        if ((*(float*)s10 + 2.0f) * a2 + (*(float*)((char*)s12 + 0x10) - *(float*)s11) > *(float*)(*v1 + 8)) {
+                            v6 = (struct s_fun_0001dba0_v6*)fun_00012f10(*v1, 1, "##Foreground", s10, v4, v3);
+                            *(int64_t*)s2 = gs_174148->field_11c0->field_28;
+                            *(int64_t*)((char*)s2 + 8) = gs_174148->field_11c0->field_30;
+                            fun_00032b60(v6, s2);
+                            v7 = *(int32_t*)((char*)s2 + 8);
+                            *(int64_t*)s2 = gs_174148->field_11c0->field_28;
+                            *(int64_t*)((char*)s2 + 8) = gs_174148->field_11c0->field_30;
+                            v3 = (int64_t)(s1 + 24);
+                            v4 = (int64_t)(&((struct s_fun_0001dba0_s1*)s1)->field_10);
+                            ((struct Vec2*)s13)->x = (*(float*)s10 + 1.0f) * a2 + ((struct Vec2*)s9)->x;
+                            ((struct Vec2*)s13)->y = (*(float*)((char*)s10 + 4) + v2) * a2 + ((struct Vec2*)s9)->y;
+                            ((struct Vec2*)s3)->y = ((struct Vec2*)s9)->y + a2 * 0.0f;
+                            ((struct Vec2*)s3)->x = a2 + ((struct Vec2*)s9)->x;
+                            fun_00029cb0(v6, s2, s3, s13, v4, v3, v7);
+                            v7 = *(int32_t*)((char*)s2 + 8);
+                            v3 = (int64_t)(s1 + 24);
+                            v4 = (int64_t)(&((struct s_fun_0001dba0_s1*)s1)->field_10);
+                            *(int64_t*)s2 = gs_174148->field_11c0->field_28;
+                            *(int64_t*)((char*)s2 + 8) = gs_174148->field_11c0->field_30;
+                            ((struct Vec2*)s4)->x = (*(float*)s10 + 2.0f) * a2 + ((struct Vec2*)s9)->x;
+                            ((struct Vec2*)s4)->y = (*(float*)((char*)s10 + 4) + 0.0f) * a2 + ((struct Vec2*)s9)->y;
+                            ((struct Vec2*)s5)->y = ((struct Vec2*)s9)->y + a2 * 0.0f;
+                            ((struct Vec2*)s5)->x = 2.0f * a2 + ((struct Vec2*)s9)->x;
+                            fun_00029cb0(v6, s2, s5, s4, v4, v3, v7);
+                            v7 = *(int32_t*)s2;
+                            *(int64_t*)s2 = gs_174148->field_11c0->field_28;
+                            *(int64_t*)((char*)s2 + 8) = gs_174148->field_11c0->field_30;
+                            ((struct Vec2*)s6)->x = a2 * *(float*)s10 + ((struct Vec2*)s9)->x;
+                            ((struct Vec2*)s6)->y = a2 * *(float*)((char*)s10 + 4) + ((struct Vec2*)s9)->y;
+                            v3 = (int64_t)(s1 + 24);
+                            v4 = (int64_t)(&((struct s_fun_0001dba0_s1*)s1)->field_10);
+                            fun_00029cb0(v6, s2, s9, s6, v4, v3, v7);
+                            v7 = a4;
+                            v3 = (int64_t)(&((struct s_fun_0001dba0_s1*)s1)->field_8);
+                            *(int64_t*)s2 = gs_174148->field_11c0->field_28;
+                            *(int64_t*)((char*)s2 + 8) = gs_174148->field_11c0->field_30;
+                            v4 = (int64_t)s1;
+                            ((struct Vec2*)s7)->x = a2 * *(float*)s10 + ((struct Vec2*)s9)->x;
+                            ((struct Vec2*)s7)->y = a2 * *(float*)((char*)s10 + 4) + ((struct Vec2*)s9)->y;
+                            fun_00029cb0(v6, s2, s9, s7, v4, v3, v7);
+                            if ((uint32_t)((int32_t)(((uint32_t)(a3) > 0xa ? 0 : a3) - 8)) <= 1) {
+                                v8 = fmodf((float)gs_174148->field_10 * 5.0f, 6.2831855f);
+                                *(float*)&v3 = 0.0f;
+                                *(float*)&v4 = *(float*)&v8 + 5.183628f;
+                                ((struct s_fun_0001dba0_s8*)s8)->field_0 = a2 * 14.0f + ((struct Vec2*)s9)->x;
+                                ((struct s_fun_0001dba0_s8*)s8)->field_4 = ((struct Vec2*)s9)->y - a2 * 1.0f;
+                                fun_00031fd0(v6, s8, a2 * 6.0f, v8, v4, v3, v7);
+                                *(float*)&v3 = a2 * 3.0f;
+                                *(float*)&v4 = 0.0f;
+                                fun_00029f30(v6, v6->field_58, (uint32_t)v6->field_50, a4, v4, v3, v7);
+                                v6->field_50 = 0;
+                            }
+                            result = fun_000327d0(v6);
+                            v2 = 0;
+                        }
+                    }
+                }
+            }
+        }
+        v1 = (int64_t*)((char*)v1 + 8);
+    } while ((int64_t)(v1) != (int64_t)(gs_174148->field_1fc0 + (int64_t)gs_174148->field_1fb8 * 8));
+    return (int32_t)result;
+}
+

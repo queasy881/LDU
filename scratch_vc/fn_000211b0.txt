@@ -1,0 +1,87 @@
+=== fun_000211b0 @ 0x211b0 size=129 blocks=12 calls=0 ===
+--- DISASM ---
+  0x211b0: mov       r9, qword ptr [0x174148]
+  0x211b7: test      ecx, 0xf000
+  0x211bd: je        0x211fa
+  0x211bf: cmp       ecx, 0x1000
+  0x211c5: jne       0x211ce
+  0x211c7: mov       ecx, 0x297
+  0x211cc: jmp       0x211fa
+  0x211ce: cmp       ecx, 0x2000
+  0x211d4: jne       0x211dd
+  0x211d6: mov       ecx, 0x298
+  0x211db: jmp       0x211fa
+  0x211dd: cmp       ecx, 0x4000
+  0x211e3: jne       0x211ec
+  0x211e5: mov       ecx, 0x299
+  0x211ea: jmp       0x211fa
+  0x211ec: cmp       ecx, 0x8000
+  0x211f2: mov       eax, 0x29a
+  0x211f7: cmove     ecx, eax
+  0x211fa: movsxd    rax, ecx
+  0x211fd: sub       rax, 0x37
+  0x21201: lea       rax, [rax + rax*2]
+  0x21205: lea       rcx, [r9 + rax*4]
+  0x21209: mov       dword ptr [rcx + 4], edx
+  0x2120c: mov       dword ptr [rcx], edx
+  0x2120e: mov       edx, r8d
+  0x21211: and       edx, 0x200000
+  0x21217: setne     al
+  0x2121a: mov       byte ptr [rcx + 9], al
+  0x2121d: bt        r8d, 0x14
+  0x21222: jb        0x2122c
+  0x21224: test      edx, edx
+  0x21226: jne       0x2122c
+  0x21228: mov       byte ptr [rcx + 8], dl
+  0x2122b: ret       
+  0x2122c: mov       byte ptr [rcx + 8], 1
+  0x21230: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_000211b0 @ 0x211b0  size=129 */
+/* xrefs: called by fun_0004b530 (7 sites), fun_00048bf0 (1 site), fun_00052750 (1 site), fun_00052d00 (1 site) */
+/* confidence: HIGH */
+struct s_fun_000211b0_v3;
+#pragma pack(push, 1)
+struct s_fun_000211b0_v3 {
+    int32_t field_0;
+    int32_t field_4;
+    char _pad_8[1];
+    int8_t field_9;
+};
+#pragma pack(pop)
+#define qword_174148 (*(int64_t*)0x174148)
+void fun_000211b0(int32_t a1, int32_t a2, int32_t a3) {
+    int32_t v1;
+    struct s_fun_000211b0_v3*v3;
+    int64_t v2;
+
+    v1 = a1;
+    if (a1 & 0xf000) {
+        if (a1 != 0x1000) {
+            if (a1 != 0x2000) {
+                if (a1 != 0x4000) {
+                    v1 = a1 == 0x8000 ? 0x29a : a1;
+                } else {
+                    v1 = 0x299;
+                }
+            } else {
+                v1 = 0x298;
+            }
+        } else {
+            v1 = 0x297;
+        }
+    }
+    v2 = ((int64_t)v1 - 0x37) * 0xc;
+    v3 = (struct s_fun_000211b0_v3*)(qword_174148 + v2);
+    v3->field_4 = a2;
+    v3->field_0 = a2;
+    v3->field_9 = (int8_t)((a3 & 0x200000) != 0);
+    if ((a3 >> 0x14) & 1 || a3 & 0x200000) {
+        *(int8_t*)(qword_174148 + v2 + 8) = 1;
+        return;
+    }
+    *(int8_t*)(qword_174148 + v2 + 8) = 0;
+    return;
+}
+

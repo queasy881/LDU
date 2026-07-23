@@ -1,0 +1,31 @@
+=== fun_00015370 @ 0x15370 size=54 blocks=4 calls=1 ===
+--- DISASM ---
+  0x15370: sub       rsp, 0x28
+  0x15374: mov       rax, qword ptr [0x174148]
+  0x1537b: movsxd    r8, ecx
+  0x1537e: cmp       byte ptr [r8 + rax + 0x108], 0
+  0x15387: je        0x1539f
+  0x15389: add       ecx, 0x290
+  0x1538f: call      0x22c40
+  0x15394: test      al, al
+  0x15396: je        0x1539f
+  0x15398: mov       al, 1
+  0x1539a: add       rsp, 0x28
+  0x1539e: ret       
+  0x1539f: xor       al, al
+  0x153a1: add       rsp, 0x28
+  0x153a5: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_00015370 @ 0x15370  size=54 */
+/* xrefs: called by fun_00048bf0 (1 site) */
+/* confidence: HIGH */
+#define qword_174148 (*(int64_t*)0x174148)
+int32_t fun_00022c40();
+uint8_t fun_00015370(int8_t*a1) {
+    if (!*(int8_t*)((char*)((int64_t)a1 + qword_174148) + 0x108) || !((uint8_t)fun_00022c40((uint32_t)(a1 + 0x290)))) {
+        return 0;
+    }
+    return 1;
+}
+

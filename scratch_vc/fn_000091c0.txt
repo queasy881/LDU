@@ -1,0 +1,15 @@
+=== fun_000091c0 @ 0x91c0 size=14 blocks=1 calls=0 ===
+--- DISASM ---
+  0x91c0: mov       rax, qword ptr [rcx + 0xd0]
+  0x91c7: mov       dword ptr [rax + 0x1418], edx
+  0x91cd: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_000091c0 @ 0x91c0  size=14 */
+/* xrefs: called by fun_0005b1c0 (3 sites) */
+/* confidence: HIGH */
+void fun_000091c0(int64_t*a1, int32_t a2) {
+    *(int32_t*)(a1[0x1a] + 0x1418) = a2;
+    return;
+}
+

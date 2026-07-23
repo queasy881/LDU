@@ -1,0 +1,45 @@
+=== fun_00006190 @ 0x6190 size=91 blocks=1 calls=2 ===
+--- DISASM ---
+  0x6190: mov       qword ptr [rsp + 0x18], r8
+  0x6195: mov       qword ptr [rsp + 0x20], r9
+  0x619a: push      rbx
+  0x619b: push      rbp
+  0x619c: push      rsi
+  0x619d: push      rdi
+  0x619e: sub       rsp, 0x38
+  0x61a2: mov       rsi, r8
+  0x61a5: lea       rbp, [rsp + 0x78]
+  0x61aa: mov       rbx, rdx
+  0x61ad: mov       rdi, rcx
+  0x61b0: call      0x1300
+  0x61b5: mov       qword ptr [rsp + 0x28], rbp
+  0x61ba: mov       r9, rsi
+  0x61bd: mov       r8, rbx
+  0x61c0: mov       qword ptr [rsp + 0x20], 0
+  0x61c9: mov       rdx, rdi
+  0x61cc: mov       rcx, qword ptr [rax]
+  0x61cf: or        rcx, 2
+  0x61d3: call      0x6708c
+  0x61d8: test      eax, eax
+  0x61da: mov       ecx, 0xffffffff
+  0x61df: cmovs     eax, ecx
+  0x61e2: add       rsp, 0x38
+  0x61e6: pop       rdi
+  0x61e7: pop       rsi
+  0x61e8: pop       rbp
+  0x61e9: pop       rbx
+  0x61ea: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_00006190 @ 0x6190  size=91 */
+/* xrefs: called by fun_000026d0 (1 site) */
+/* confidence: HIGH */
+int64_t fun_0006708c();
+int64_t ptr_173f60();
+int32_t fun_00006190(int64_t a1, int64_t a2, int64_t a3, int64_t a4) {
+    int64_t v1;
+
+    v1 = fun_0006708c(*(int64_t*)(ptr_173f60()) | 2, a1, a2, a3, 0, &a4);
+    return (int32_t)v1 < 0 ? -1 : (int32_t)v1;
+}
+

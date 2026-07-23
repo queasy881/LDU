@@ -1,0 +1,363 @@
+=== fun_00031fd0 @ 0x31fd0 size=912 blocks=32 calls=15 ===
+--- DISASM ---
+  0x31fd0: push      rbx
+  0x31fd2: push      rsi
+  0x31fd3: push      rdi
+  0x31fd4: sub       rsp, 0xa0
+  0x31fdb: movss     xmm0, dword ptr [0x88530]
+  0x31fe3: mov       rdi, rdx
+  0x31fe6: movaps    xmmword ptr [rsp + 0x70], xmm7
+  0x31feb: mov       rsi, rcx
+  0x31fee: movaps    xmm7, xmm2
+  0x31ff1: movaps    xmmword ptr [rsp + 0x60], xmm8
+  0x31ff7: comiss    xmm0, xmm7
+  0x31ffa: movaps    xmm8, xmm3
+  0x31ffe: jbe       0x3204d
+  0x32000: mov       ecx, dword ptr [rcx + 0x54]
+  0x32003: mov       r8d, dword ptr [rsi + 0x50]
+  0x32007: cmp       r8d, ecx
+  0x3200a: jne       0x32036
+  0x3200c: inc       r8d
+  0x3200f: test      ecx, ecx
+  0x32011: je        0x3201e
+  0x32013: mov       eax, ecx
+  0x32015: cdq       
+  0x32016: sub       eax, edx
+  0x32018: sar       eax, 1
+  0x3201a: add       eax, ecx
+  0x3201c: jmp       0x32023
+  0x3201e: mov       eax, 8
+  0x32023: cmp       eax, r8d
+  0x32026: lea       rcx, [rsi + 0x50]
+  0x3202a: cmovg     r8d, eax
+  0x3202e: mov       edx, r8d
+  0x32031: call      0x27ca0
+  0x32036: movsxd    rdx, dword ptr [rsi + 0x50]
+  0x3203a: mov       rax, qword ptr [rdi]
+  0x3203d: mov       rcx, qword ptr [rsi + 0x58]
+  0x32041: mov       qword ptr [rcx + rdx*8], rax
+  0x32045: inc       dword ptr [rsi + 0x50]
+  0x32048: jmp       0x322e3
+  0x3204d: mov       eax, dword ptr [rsp + 0xe8]
+  0x32054: test      eax, eax
+  0x32056: jle       0x32075
+  0x32058: movss     xmm0, dword ptr [rsp + 0xe0]
+  0x32061: mov       dword ptr [rsp + 0x28], eax
+  0x32065: movss     dword ptr [rsp + 0x20], xmm0
+  0x3206b: call      0x354c0
+  0x32070: jmp       0x322e3
+  0x32075: mov       rax, qword ptr [rcx + 0x38]
+  0x32079: movaps    xmmword ptr [rsp + 0x80], xmm6
+  0x32081: movss     xmm0, dword ptr [rax + 0x1f0]
+  0x32089: comiss    xmm0, xmm7
+  0x3208c: jb        0x322f9
+  0x32092: mov       qword ptr [rsp + 0xc0], rbp
+  0x3209a: movaps    xmm1, xmm8
+  0x3209e: mov       qword ptr [rsp + 0xc8], r12
+  0x320a6: mov       qword ptr [rsp + 0xd0], r13
+  0x320ae: mov       qword ptr [rsp + 0x98], r14
+  0x320b6: mov       qword ptr [rsp + 0x90], r15
+  0x320be: movaps    xmmword ptr [rsp + 0x50], xmm9
+  0x320c4: movss     xmm9, dword ptr [rsp + 0xe0]
+  0x320ce: comiss    xmm8, xmm9
+  0x320d2: movaps    xmmword ptr [rsp + 0x40], xmm10
+  0x320d8: movaps    xmm6, xmm9
+  0x320dc: movss     xmm10, dword ptr [0x92044]
+  0x320e5: mulss     xmm6, xmm10
+  0x320ea: mulss     xmm1, xmm10
+  0x320ef: divss     xmm6, dword ptr [0x8ae54]
+  0x320f7: divss     xmm1, dword ptr [0x8ae54]
+  0x320ff: jbe       0x3213e
+  0x32101: xorps     xmm0, xmm0
+  0x32104: comiss    xmm1, xmm0
+  0x32107: cvttss2si eax, xmm1
+  0x3210b: jae       0x3211d
+  0x3210d: movd      xmm0, eax
+  0x32111: cvtdq2ps  xmm0, xmm0
+  0x32114: ucomiss   xmm0, xmm1
+  0x32117: jp        0x3211b
+  0x32119: je        0x3211d
+  0x3211b: dec       eax
+  0x3211d: movd      xmm0, eax
+  0x32121: cvtdq2ps  xmm0, xmm0
+  0x32124: cvttss2si r15d, xmm0
+  0x32129: movaps    xmm0, xmm6
+  0x3212c: call      0x709f0
+  0x32131: cvttss2si r14d, xmm0
+  0x32136: mov       eax, r15d
+  0x32139: sub       eax, r14d
+  0x3213c: jmp       0x3217f
+  0x3213e: movaps    xmm0, xmm1
+  0x32141: call      0x709f0
+  0x32146: xorps     xmm1, xmm1
+  0x32149: comiss    xmm6, xmm1
+  0x3214c: cvttss2si r15d, xmm0
+  0x32151: jae       0x32169
+  0x32153: cvttss2si eax, xmm6
+  0x32157: movd      xmm0, eax
+  0x3215b: cvtdq2ps  xmm0, xmm0
+  0x3215e: ucomiss   xmm0, xmm6
+  0x32161: jp        0x32165
+  0x32163: je        0x32169
+  0x32165: dec       eax
+  0x32167: jmp       0x3216d
+  0x32169: cvttss2si eax, xmm6
+  0x3216d: movd      xmm0, eax
+  0x32171: cvtdq2ps  xmm0, xmm0
+  0x32174: cvttss2si r14d, xmm0
+  0x32179: mov       eax, r14d
+  0x3217c: sub       eax, r15d
+  0x3217f: movd      xmm0, r15d
+  0x32184: lea       rcx, [rsi + 0x50]
+  0x32188: cvtdq2ps  xmm0, xmm0
+  0x3218b: mov       ebp, 0
+  0x32190: cmovns    ebp, eax
+  0x32193: movd      xmm1, r14d
+  0x32198: mulss     xmm0, dword ptr [0x88584]
+  0x321a0: cvtdq2ps  xmm1, xmm1
+  0x321a3: addss     xmm0, xmm0
+  0x321a7: mulss     xmm1, dword ptr [0x88584]
+  0x321af: divss     xmm0, xmm10
+  0x321b4: addss     xmm1, xmm1
+  0x321b8: subss     xmm0, xmm8
+  0x321bd: divss     xmm1, xmm10
+  0x321c2: andps     xmm0, xmmword ptr [0x88610]
+  0x321c9: comiss    xmm0, dword ptr [0x8adf8]
+  0x321d0: movaps    xmm0, xmm9
+  0x321d4: subss     xmm0, xmm1
+  0x321d8: setae     bl
+  0x321db: movzx     eax, bl
+  0x321de: andps     xmm0, xmmword ptr [0x88610]
+  0x321e5: comiss    xmm0, dword ptr [0x8adf8]
+  0x321ec: setae     r13b
+  0x321f0: inc       eax
+  0x321f2: movzx     edx, r13b
+  0x321f6: add       edx, eax
+  0x321f8: add       edx, dword ptr [rsi + 0x50]
+  0x321fb: add       edx, ebp
+  0x321fd: call      0x27ca0
+  0x32202: movaps    xmm10, xmmword ptr [rsp + 0x40]
+  0x32208: test      bl, bl
+  0x3220a: je        0x32249
+  0x3220c: movaps    xmm0, xmm8
+  0x32210: call      0x68200
+  0x32215: mulss     xmm0, xmm7
+  0x32219: addss     xmm0, dword ptr [rdi]
+  0x3221d: movss     dword ptr [rsp + 0x30], xmm0
+  0x32223: movaps    xmm0, xmm8
+  0x32227: call      0x69060
+  0x3222c: mulss     xmm0, xmm7
+  0x32230: lea       rdx, [rsp + 0x30]
+  0x32235: lea       rcx, [rsi + 0x50]
+  0x32239: addss     xmm0, dword ptr [rdi + 4]
+  0x3223e: movss     dword ptr [rsp + 0x34], xmm0
+  0x32244: call      0x27b30
+  0x32249: test      ebp, ebp
+  0x3224b: mov       rbp, qword ptr [rsp + 0xc0]
+  0x32253: jle       0x32273
+  0x32255: mov       dword ptr [rsp + 0x28], 0
+  0x3225d: mov       r9d, r15d
+  0x32260: movaps    xmm2, xmm7
+  0x32263: mov       dword ptr [rsp + 0x20], r14d
+  0x32268: mov       rdx, rdi
+  0x3226b: mov       rcx, rsi
+  0x3226e: call      0x351d0
+  0x32273: mov       r15, qword ptr [rsp + 0x90]
+  0x3227b: test      r13b, r13b
+  0x3227e: mov       r13, qword ptr [rsp + 0xd0]
+  0x32286: mov       r14, qword ptr [rsp + 0x98]
+  0x3228e: je        0x322cd
+  0x32290: movaps    xmm0, xmm9
+  0x32294: call      0x68200
+  0x32299: mulss     xmm0, xmm7
+  0x3229d: addss     xmm0, dword ptr [rdi]
+  0x322a1: movss     dword ptr [rsp + 0x30], xmm0
+  0x322a7: movaps    xmm0, xmm9
+  0x322ab: call      0x69060
+  0x322b0: mulss     xmm0, xmm7
+  0x322b4: lea       rdx, [rsp + 0x30]
+  0x322b9: lea       rcx, [rsi + 0x50]
+  0x322bd: addss     xmm0, dword ptr [rdi + 4]
+  0x322c2: movss     dword ptr [rsp + 0x34], xmm0
+  0x322c8: call      0x27b30
+  0x322cd: mov       r12, qword ptr [rsp + 0xc8]
+  0x322d5: movaps    xmm9, xmmword ptr [rsp + 0x50]
+  0x322db: movaps    xmm6, xmmword ptr [rsp + 0x80]
+  0x322e3: movaps    xmm7, xmmword ptr [rsp + 0x70]
+  0x322e8: movaps    xmm8, xmmword ptr [rsp + 0x60]
+  0x322ee: add       rsp, 0xa0
+  0x322f5: pop       rdi
+  0x322f6: pop       rsi
+  0x322f7: pop       rbx
+  0x322f8: ret       
+  0x322f9: movaps    xmm1, xmm7
+  0x322fc: call      0x34ef0
+  0x32301: movss     xmm6, dword ptr [rsp + 0xe0]
+  0x3230a: movaps    xmm1, xmm6
+  0x3230d: subss     xmm1, xmm8
+  0x32312: movd      xmm0, eax
+  0x32316: cvtdq2ps  xmm0, xmm0
+  0x32319: andps     xmm1, xmmword ptr [0x88610]
+  0x32320: mulss     xmm0, xmm1
+  0x32324: divss     xmm0, dword ptr [0x8ae54]
+  0x3232c: call      0x709f0
+  0x32331: cvttss2si ecx, xmm0
+  0x32335: mov       eax, 1
+  0x3233a: mov       rdx, rdi
+  0x3233d: movaps    xmm3, xmm8
+  0x32341: movaps    xmm2, xmm7
+  0x32344: cmp       ecx, eax
+  0x32346: cmovge    eax, ecx
+  0x32349: mov       rcx, rsi
+  0x3234c: mov       dword ptr [rsp + 0x28], eax
+  0x32350: movss     dword ptr [rsp + 0x20], xmm6
+  0x32356: call      0x354c0
+  0x3235b: jmp       0x322db
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_00031fd0 @ 0x31fd0  size=912 */
+/* xrefs: called by fun_000333e0 (4 sites), fun_0001fbe0 (2 sites), fun_0001dba0 (1 site), fun_00028ab0 (1 site), fun_00032dd0 (1 site) */
+/* confidence: HIGH */
+struct s_fun_00031fd0_a1;
+struct Vec2;
+#pragma pack(push, 1)
+struct s_fun_00031fd0_a1 {
+    char _pad_0[56];
+    void* field_38;
+    char _pad_40[16];
+    int32_t field_50;
+    int32_t field_54;
+    void* field_58;
+};
+#pragma pack(pop)
+#ifndef __DS_TY_Vec2
+#define __DS_TY_Vec2
+#pragma pack(push, 1)
+struct Vec2 {
+    float x;
+    float y;
+};
+#pragma pack(pop)
+#endif
+#ifndef __DS_FABS_DEFINED
+#define __DS_FABS_DEFINED
+static double __fabs(double x){ return x<0.0?-x:x; }
+static float __fabsf(float x){ return x<0.0f?-x:x; }
+#endif
+#ifndef __max
+#define __max(a,b) ((a)>(b)?(a):(b))
+#endif
+int64_t fun_00027b30();
+int64_t fun_00027ca0();
+int32_t fun_00034ef0();
+int64_t fun_000351d0();
+int64_t fun_000354c0();
+int32_t fun_00068200();
+float fun_00069060();
+float fun_000709f0();
+int32_t fun_00031fd0(struct s_fun_00031fd0_a1*a1, int64_t*a2, float a3, float a4, float a5, int32_t a6) {
+    char s2[112];
+    int32_t v1;
+    int32_t v2;
+    int32_t v9;
+    int32_t v5;
+    int32_t v6;
+    int32_t v7;
+    int64_t result;
+    uint64_t v14;
+    int64_t*v15;
+    double v3;
+    double v8;
+    double v16;
+    int32_t v4;
+    int32_t v10;
+    float v11;
+    int32_t v13;
+    float v12;
+
+    if (!(a3 < 0.5f)) {
+        if (a6 > 0) {
+            result = fun_000354c0(a1, a2, a3, a4, a5, a6);
+            return (int32_t)result;
+        }
+        if (!(((float*)a1->field_38)[0x7c] >= a3)) {
+            v16 = fun_000709f0((float)fun_00034ef0(a1, a3) * __fabsf(a5 - a4) / 6.2831855f);
+            result = fun_000354c0(a1, a2, a3, a4, a5, __max((int32_t)v16, 1));
+            return (int32_t)result;
+        }
+        if (!(a4 > a5)) {
+            v8 = fun_000709f0(a4 * 48.0f / 6.2831855f);
+            if (a5 * 48.0f / 6.2831855f >= 0.0f) {
+                v9 = (int32_t)(a5 * 48.0f / 6.2831855f);
+            } else if ((float)((int32_t)(a5 * 48.0f / 6.2831855f)) == a5 * 48.0f / 6.2831855f) {
+                v9 = (int32_t)(a5 * 48.0f / 6.2831855f);
+            } else {
+                v9 = (int32_t)(a5 * 48.0f / 6.2831855f) - 1;
+            }
+            v10 = (int32_t)((float)v9);
+            v5 = v10 - (int32_t)v8;
+            v6 = v10;
+            v7 = (int32_t)v8;
+        } else {
+            v2 = (int32_t)(a4 * 48.0f / 6.2831855f);
+            if (!(a4 * 48.0f / 6.2831855f >= 0.0f)) {
+                v2 = (int32_t)(a4 * 48.0f / 6.2831855f);
+                if ((float)v2 != a4 * 48.0f / 6.2831855f) {
+                    v2 = (int32_t)(a4 * 48.0f / 6.2831855f) - 1;
+                }
+            }
+            v3 = fun_000709f0(a5 * 48.0f / 6.2831855f);
+            v4 = (int32_t)((float)v2);
+            v5 = v4 - (int32_t)v3;
+            v6 = (int32_t)v3;
+            v7 = v4;
+        }
+        v11 = 2.0f * ((float)v7 * 3.1415927f) / 48.0f - a4;
+        v12 = 2.0f * ((float)v6 * 3.1415927f);
+        v13 = 1 ? v5 : 0;
+        result = fun_00027ca0(&a1->field_50, (uint32_t)((uint8_t)(__fabsf(a5 - v12 / 48.0f) >= 1e-05f) + ((uint8_t)(__fabsf(v11) >= 1e-05f) + 1) + a1->field_50 + v13));
+        v14 = (uint8_t)(__fabsf(a5 - v12 / 48.0f) >= 1e-05f) + ((uint8_t)(__fabsf(v11) >= 1e-05f) + 1) + a1->field_50 + v13;
+        if (__fabsf(v11) >= 1e-05f != 0) {
+            fun_00068200(a4);
+            ((struct Vec2*)s2)->x = a4 * a3 + *(float*)a2;
+            ((struct Vec2*)s2)->y = fun_00069060(a4, (uint32_t)((uint8_t)(__fabsf(a5 - v12 / 48.0f) >= 1e-05f) + ((uint8_t)(__fabsf(2.0f * ((float)v7 * 3.1415927f) / 48.0f - a4) >= 1e-05f) + 1) + a1->field_50 + v13)) * a3 + *(float*)((char*)a2 + 4);
+            result = fun_00027b30(&a1->field_50, s2);
+            v14 = (int64_t)s2;
+        }
+        v15 = (int64_t*)v14;
+        if (v13 > 0) {
+            result = fun_000351d0(a1, a2, a3, v7, v6, 0);
+            v15 = a2;
+        }
+        if (__fabsf(a5 - v12 / 48.0f) >= 1e-05f == 0) {
+            return (int32_t)result;
+        }
+        fun_00068200(a5);
+        ((struct Vec2*)s2)->x = a5 * a3 + *(float*)a2;
+        ((struct Vec2*)s2)->y = fun_00069060(a5, v15) * a3 + *(float*)((char*)a2 + 4);
+        result = fun_00027b30(&a1->field_50, s2);
+        return (int32_t)result;
+    } else {
+        if (a1->field_50 != a1->field_54) {
+            ((int64_t*)a1->field_58)[a1->field_50] = *a2;
+            ++a1->field_50;
+            result = *a2;
+            return (int32_t)result;
+        }
+        if (!a1->field_54) {
+            v1 = 8;
+            fun_00027ca0(&a1->field_50, (uint32_t)__max(v1, a1->field_50 + 1));
+            ((int64_t*)a1->field_58)[a1->field_50] = *a2;
+            ++a1->field_50;
+            result = *a2;
+            return (int32_t)result;
+        }
+        v1 = a1->field_54 / 2 + a1->field_54;
+        fun_00027ca0(&a1->field_50, (uint32_t)__max(v1, a1->field_50 + 1));
+        ((int64_t*)a1->field_58)[a1->field_50] = *a2;
+        ++a1->field_50;
+        result = *a2;
+        return (int32_t)result;
+    }
+}
+

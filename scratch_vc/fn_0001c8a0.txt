@@ -1,0 +1,45 @@
+=== fun_0001c8a0 @ 0x1c8a0 size=138 blocks=1 calls=1 ===
+--- DISASM ---
+  0x1c8a0: push      rbx
+  0x1c8a2: sub       rsp, 0x20
+  0x1c8a6: mov       r9, qword ptr [0x174148]
+  0x1c8ad: mov       rax, qword ptr [r9 + 0x1480]
+  0x1c8b4: mov       byte ptr [rax + 0xce], 1
+  0x1c8bb: mov       rbx, qword ptr [r9 + 0x1480]
+  0x1c8c2: movzx     r9d, r8b
+  0x1c8c6: mov       r8, rdx
+  0x1c8c9: mov       rdx, rcx
+  0x1c8cc: mov       rcx, qword ptr [rbx + 0x2c8]
+  0x1c8d3: call      0x32a30
+  0x1c8d8: mov       rax, qword ptr [rbx + 0x2c8]
+  0x1c8df: movsxd    rcx, dword ptr [rax + 0xa0]
+  0x1c8e6: mov       rax, qword ptr [rax + 0xa8]
+  0x1c8ed: add       rcx, rcx
+  0x1c8f0: movss     xmm0, dword ptr [rax + rcx*8 - 0xc]
+  0x1c8f6: movss     xmm1, dword ptr [rax + rcx*8 - 8]
+  0x1c8fc: movss     xmm2, dword ptr [rax + rcx*8 - 4]
+  0x1c902: mov       eax, dword ptr [rax + rcx*8 - 0x10]
+  0x1c906: mov       dword ptr [rbx + 0x268], eax
+  0x1c90c: movss     dword ptr [rbx + 0x26c], xmm0
+  0x1c914: movss     dword ptr [rbx + 0x270], xmm1
+  0x1c91c: movss     dword ptr [rbx + 0x274], xmm2
+  0x1c924: add       rsp, 0x20
+  0x1c928: pop       rbx
+  0x1c929: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_0001c8a0 @ 0x1c8a0  size=138 */
+/* xrefs: called by fun_00009550 (1 site), fun_000546e0 (1 site) */
+/* confidence: HIGH */
+#define qword_174148 (*(int64_t*)0x174148)
+void fun_00032a30();
+void fun_0001c8a0(int64_t a1, int64_t a2, int32_t a3) {
+    *(int8_t*)(*(int64_t*)(qword_174148 + 0x1480) + 0xce) = 1;
+    fun_00032a30(*(int64_t*)(*(int64_t*)(qword_174148 + 0x1480) + 0x2c8), a1, a2, (uint8_t)a3);
+    *(int32_t*)(*(int64_t*)(qword_174148 + 0x1480) + 0x268) = *(int32_t*)(*(int64_t*)(*(int64_t*)(*(int64_t*)(qword_174148 + 0x1480) + 0x2c8) + 0xa8) + (int64_t)*(int32_t*)(*(int64_t*)(*(int64_t*)(qword_174148 + 0x1480) + 0x2c8) + 0xa0) * 0x10 - 0x10);
+    *(float*)(*(int64_t*)(qword_174148 + 0x1480) + 0x26c) = *(float*)(*(int64_t*)(*(int64_t*)(*(int64_t*)(qword_174148 + 0x1480) + 0x2c8) + 0xa8) + (int64_t)*(int32_t*)(*(int64_t*)(*(int64_t*)(qword_174148 + 0x1480) + 0x2c8) + 0xa0) * 0x10 - 0xc);
+    *(float*)(*(int64_t*)(qword_174148 + 0x1480) + 0x270) = *(float*)(*(int64_t*)(*(int64_t*)(*(int64_t*)(qword_174148 + 0x1480) + 0x2c8) + 0xa8) + (int64_t)*(int32_t*)(*(int64_t*)(*(int64_t*)(qword_174148 + 0x1480) + 0x2c8) + 0xa0) * 0x10 - 8);
+    *(float*)(*(int64_t*)(qword_174148 + 0x1480) + 0x274) = *(float*)(*(int64_t*)(*(int64_t*)(*(int64_t*)(qword_174148 + 0x1480) + 0x2c8) + 0xa8) + (int64_t)*(int32_t*)(*(int64_t*)(*(int64_t*)(qword_174148 + 0x1480) + 0x2c8) + 0xa0) * 0x10 - 4);
+    return;
+}
+

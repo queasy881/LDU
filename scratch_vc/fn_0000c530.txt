@@ -1,0 +1,143 @@
+=== fun_0000c530 @ 0xc530 size=326 blocks=3 calls=1 ===
+--- DISASM ---
+  0xc530: mov       qword ptr [rsp + 8], rbx
+  0xc535: mov       qword ptr [rsp + 0x10], rsi
+  0xc53a: push      rdi
+  0xc53b: sub       rsp, 0x20
+  0xc53f: mov       rsi, qword ptr [0x174148]
+  0xc546: mov       edx, dword ptr [rsi + 0x1f78]
+  0xc54c: lea       rcx, [rsi + 0x1f78]
+  0xc553: mov       rdi, qword ptr [rsi + 0x1480]
+  0xc55a: inc       edx
+  0xc55c: call      0x281a0
+  0xc561: movsxd    rax, dword ptr [rsi + 0x1f78]
+  0xc568: mov       rcx, qword ptr [rsi + 0x1f80]
+  0xc56f: imul      rdx, rax, 0x3c
+  0xc573: mov       eax, dword ptr [rdi + 0x10]
+  0xc576: mov       dword ptr [rdx + rcx - 0x3c], eax
+  0xc57a: movsd     xmm0, qword ptr [rdi + 0x118]
+  0xc582: movsd     qword ptr [rdx + rcx - 0x38], xmm0
+  0xc588: movsd     xmm1, qword ptr [rdi + 0x120]
+  0xc590: movsd     qword ptr [rdx + rcx - 0x28], xmm1
+  0xc596: movsd     xmm0, qword ptr [rdi + 0x130]
+  0xc59e: movsd     qword ptr [rdx + rcx - 0x30], xmm0
+  0xc5a4: movss     xmm1, dword ptr [rdi + 0x15c]
+  0xc5ac: movss     dword ptr [rdx + rcx - 0x20], xmm1
+  0xc5b2: movss     xmm0, dword ptr [rdi + 0x164]
+  0xc5ba: movss     dword ptr [rdx + rcx - 0x1c], xmm0
+  0xc5c0: movsd     xmm1, qword ptr [rdi + 0x140]
+  0xc5c8: movsd     qword ptr [rdx + rcx - 0x18], xmm1
+  0xc5ce: mov       eax, dword ptr [rdi + 0x150]
+  0xc5d4: mov       dword ptr [rdx + rcx - 0x10], eax
+  0xc5d8: mov       eax, dword ptr [rsi + 0x14f8]
+  0xc5de: mov       dword ptr [rdx + rcx - 0xc], eax
+  0xc5e2: cmp       dword ptr [rsi + 0x14dc], 0
+  0xc5e9: setne     al
+  0xc5ec: mov       byte ptr [rdx + rcx - 6], al
+  0xc5f0: movzx     eax, byte ptr [rdi + 0x158]
+  0xc5f7: mov       byte ptr [rdx + rcx - 5], al
+  0xc5fb: movzx     eax, byte ptr [rsi + 0x1505]
+  0xc602: mov       byte ptr [rdx + rcx - 8], al
+  0xc606: movzx     eax, byte ptr [rsi + 0x152d]
+  0xc60d: mov       byte ptr [rdx + rcx - 7], al
+  0xc611: xor       eax, eax
+  0xc613: mov       byte ptr [rdx + rcx - 4], 1
+  0xc618: movss     xmm0, dword ptr [rdi + 0x118]
+  0xc620: subss     xmm0, dword ptr [rdi + 0x28]
+  0xc625: mov       qword ptr [rdi + 0x140], rax
+  0xc62c: subss     xmm0, dword ptr [rdi + 0x160]
+  0xc634: movss     dword ptr [rdi + 0x164], xmm0
+  0xc63c: movss     dword ptr [rdi + 0x15c], xmm0
+  0xc644: movsd     xmm0, qword ptr [rdi + 0x118]
+  0xc64c: movsd     qword ptr [rdi + 0x130], xmm0
+  0xc654: cmp       byte ptr [rsi + 0x2798], al
+  0xc65a: je        0xc666
+  0xc65c: mov       dword ptr [rsi + 0x27d0], 0xff7fffff
+  0xc666: mov       rbx, qword ptr [rsp + 0x30]
+  0xc66b: mov       rsi, qword ptr [rsp + 0x38]
+  0xc670: add       rsp, 0x20
+  0xc674: pop       rdi
+  0xc675: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_0000c530 @ 0xc530  size=326 */
+/* xrefs: called by fun_0004b530 (1 site) */
+/* confidence: HIGH */
+struct s_fun_0000c530_qword_174148;
+struct s_fun_0000c530_qword_174148_1480;
+#pragma pack(push, 1)
+struct s_fun_0000c530_qword_174148 {
+    char _pad_0[5248];
+    struct s_fun_0000c530_qword_174148_1480* field_1480;
+    char _pad_1488[84];
+    int32_t field_14dc;
+    char _pad_14e0[24];
+    int32_t field_14f8;
+    char _pad_14fc[9];
+    uint8_t field_1505;
+    char _pad_1506[39];
+    uint8_t field_152d;
+    char _pad_152e[2634];
+    int32_t field_1f78;
+    char _pad_1f7c[4];
+    int64_t field_1f80;
+    char _pad_1f88[2064];
+    int8_t field_2798;
+    char _pad_2799[55];
+    int32_t field_27d0;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_0000c530_qword_174148_1480 {
+    char _pad_0[16];
+    int32_t field_10;
+    char _pad_14[260];
+    double field_118;
+    double field_120;
+    char _pad_128[8];
+    double field_130;
+    char _pad_138[8];
+    double field_140;
+    char _pad_148[8];
+    int32_t field_150;
+    char _pad_154[4];
+    uint8_t field_158;
+    char _pad_159[3];
+    float field_15c;
+    char _pad_160[4];
+    float field_164;
+};
+#pragma pack(pop)
+#define qword_174148 (*(int64_t*)0x174148)
+void fun_000281a0();
+void fun_0000c530(void) {
+    struct s_fun_0000c530_qword_174148* gs_174148 = (struct s_fun_0000c530_qword_174148*)qword_174148;
+    float*v1;
+
+    fun_000281a0(&gs_174148->field_1f78, (uint32_t)(gs_174148->field_1f78 + 1));
+    v1 = (float*)((int64_t)gs_174148->field_1f78 * 0x3c + gs_174148->field_1f80);
+    *(int32_t*)((char*)v1 - 0x3c) = gs_174148->field_1480->field_10;
+    *(double*)((char*)v1 - 0x38) = gs_174148->field_1480->field_118;
+    *(double*)((char*)v1 - 0x28) = gs_174148->field_1480->field_120;
+    *(double*)((char*)v1 - 0x30) = gs_174148->field_1480->field_130;
+    *(float*)((char*)v1 - 0x20) = gs_174148->field_1480->field_15c;
+    *(float*)((char*)v1 - 0x1c) = gs_174148->field_1480->field_164;
+    *(double*)((char*)v1 - 0x18) = gs_174148->field_1480->field_140;
+    *(int32_t*)((char*)v1 - 0x10) = gs_174148->field_1480->field_150;
+    *(int32_t*)((char*)v1 - 0xc) = gs_174148->field_14f8;
+    *(int8_t*)((char*)v1 - 6) = (int8_t)(gs_174148->field_14dc != 0);
+    *(int8_t*)((char*)v1 - 5) = (int8_t)gs_174148->field_1480->field_158;
+    *(int8_t*)((char*)v1 - 8) = (int8_t)gs_174148->field_1505;
+    *(int8_t*)((char*)v1 - 7) = (int8_t)gs_174148->field_152d;
+    *(int8_t*)((char*)v1 - 4) = 1;
+    gs_174148->field_1480->field_140 = 0.0;
+    gs_174148->field_1480->field_164 = ((float*)gs_174148->field_1480)[0x46] - ((float*)gs_174148->field_1480)[0xa] - ((float*)gs_174148->field_1480)[0x58];
+    gs_174148->field_1480->field_15c = ((float*)gs_174148->field_1480)[0x46] - ((float*)gs_174148->field_1480)[0xa] - ((float*)gs_174148->field_1480)[0x58];
+    gs_174148->field_1480->field_130 = gs_174148->field_1480->field_118;
+    if (!gs_174148->field_2798) {
+        return;
+    }
+    gs_174148->field_27d0 = -8388609;
+    return;
+}
+

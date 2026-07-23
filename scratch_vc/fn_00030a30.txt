@@ -1,0 +1,398 @@
+=== fun_00030a30 @ 0x30a30 size=641 blocks=46 calls=5 ===
+--- DISASM ---
+  0x30a30: push      rbx
+  0x30a32: push      rbp
+  0x30a33: push      rsi
+  0x30a34: push      rdi
+  0x30a35: push      r12
+  0x30a37: push      r13
+  0x30a39: push      r14
+  0x30a3b: push      r15
+  0x30a3d: sub       rsp, 0x88
+  0x30a44: movss     xmm2, dword ptr [0x885e4]
+  0x30a4c: mov       r15, r9
+  0x30a4f: movaps    xmmword ptr [rsp + 0x70], xmm6
+  0x30a54: mov       r13, r8
+  0x30a57: movaps    xmmword ptr [rsp + 0x60], xmm7
+  0x30a5c: movaps    xmm6, xmm1
+  0x30a5f: movaps    xmmword ptr [rsp + 0x50], xmm8
+  0x30a65: movaps    xmmword ptr [rsp + 0x40], xmm9
+  0x30a6b: movaps    xmmword ptr [rsp + 0x30], xmm10
+  0x30a71: movaps    xmmword ptr [rsp + 0x20], xmm11
+  0x30a77: call      0x2b9d0
+  0x30a7c: mov       r12d, dword ptr [rsp + 0xf8]
+  0x30a84: mov       esi, 2
+  0x30a89: movss     xmm10, dword ptr [rsp + 0xf0]
+  0x30a93: and       r12d, esi
+  0x30a96: mov       rdi, rax
+  0x30a99: xorps     xmm9, xmm9
+  0x30a9d: xorps     xmm7, xmm7
+  0x30aa0: xorps     xmm8, xmm8
+  0x30aa4: mov       rbx, r13
+  0x30aa7: mov       rbp, r13
+  0x30aaa: divss     xmm6, dword ptr [rax + 0x14]
+  0x30aaf: divss     xmm10, xmm6
+  0x30ab4: xorps     xmm6, xmm6
+  0x30ab7: cmp       r13, r15
+  0x30aba: jae       0x30c78
+  0x30ac0: movss     xmm11, dword ptr [0x9204c]
+  0x30ac9: nop       dword ptr [rax]
+  0x30ad0: movsx     edx, byte ptr [rbx]
+  0x30ad3: mov       dword ptr [rsp + 0xf0], edx
+  0x30ada: cmp       edx, 0x80
+  0x30ae0: jae       0x30aea
+  0x30ae2: mov       r14d, 1
+  0x30ae8: jmp       0x30b07
+  0x30aea: mov       r8, r15
+  0x30aed: lea       rcx, [rsp + 0xf0]
+  0x30af5: mov       rdx, rbx
+  0x30af8: call      0x14040
+  0x30afd: mov       edx, dword ptr [rsp + 0xf0]
+  0x30b04: movsxd    r14, eax
+  0x30b07: cmp       edx, 0x20
+  0x30b0a: jae       0x30b1e
+  0x30b0c: cmp       edx, 0xa
+  0x30b0f: je        0x30c78
+  0x30b15: cmp       edx, 0xd
+  0x30b18: je        0x30c4a
+  0x30b1e: cmp       edx, dword ptr [rdi]
+  0x30b20: jae       0x30b33
+  0x30b22: mov       rax, qword ptr [rdi + 8]
+  0x30b26: mov       ecx, edx
+  0x30b28: movss     xmm0, dword ptr [rax + rcx*4]
+  0x30b2d: comiss    xmm9, xmm0
+  0x30b31: jbe       0x30b9c
+  0x30b33: movss     xmm0, dword ptr [rdi + 0x14]
+  0x30b38: comiss    xmm0, xmm11
+  0x30b3c: jae       0x30b65
+  0x30b3e: test      dword ptr [rdi + 0x4c], 0x10000000
+  0x30b45: jne       0x30b65
+  0x30b47: xor       r8d, r8d
+  0x30b4a: mov       rcx, rdi
+  0x30b4d: call      0x30320
+  0x30b52: test      rax, rax
+  0x30b55: je        0x30b5e
+  0x30b57: movss     xmm0, dword ptr [rax + 4]
+  0x30b5c: jmp       0x30b95
+  0x30b5e: movss     xmm0, dword ptr [rdi + 0x10]
+  0x30b63: jmp       0x30b95
+  0x30b65: lea       r8, [rsp + 0xf8]
+  0x30b6d: mov       dword ptr [rsp + 0xf8], 0
+  0x30b78: mov       rcx, rdi
+  0x30b7b: call      0x30320
+  0x30b80: test      rax, rax
+  0x30b83: je        0x30b8c
+  0x30b85: movss     xmm0, dword ptr [rax + 4]
+  0x30b8a: jmp       0x30b95
+  0x30b8c: movss     xmm0, dword ptr [rsp + 0xf8]
+  0x30b95: mov       edx, dword ptr [rsp + 0xf0]
+  0x30b9c: cmp       edx, 0x80
+  0x30ba2: jae       0x30bb7
+  0x30ba4: mov       eax, edx
+  0x30ba6: lea       r8, [0x1741b0]
+  0x30bad: shr       rax, 4
+  0x30bb1: mov       r8d, dword ptr [r8 + rax*4]
+  0x30bb5: jmp       0x30bc9
+  0x30bb7: lea       eax, [rdx - 0x3000]
+  0x30bbd: cmp       eax, 0xf
+  0x30bc0: ja        0x30bf7
+  0x30bc2: mov       r8d, dword ptr [0x1741d0]
+  0x30bc9: mov       ecx, edx
+  0x30bcb: and       ecx, 0xf
+  0x30bce: add       ecx, ecx
+  0x30bd0: shr       r8d, cl
+  0x30bd3: and       r8d, 3
+  0x30bd7: test      r8d, r8d
+  0x30bda: jne       0x30bfd
+  0x30bdc: test      esi, esi
+  0x30bde: je        0x30bf0
+  0x30be0: test      r12d, r12d
+  0x30be3: jne       0x30bf0
+  0x30be5: addss     xmm7, xmm6
+  0x30be9: mov       rbp, rbx
+  0x30bec: movaps    xmm6, xmm9
+  0x30bf0: addss     xmm8, xmm0
+  0x30bf5: jmp       0x30c32
+  0x30bf7: mov       r8d, 2
+  0x30bfd: cmp       esi, 1
+  0x30c00: jne       0x30c11
+  0x30c02: cmp       r8d, esi
+  0x30c05: je        0x30c2e
+  0x30c07: lea       eax, [rdx - 0x30]
+  0x30c0a: cmp       eax, 9
+  0x30c0d: jbe       0x30c2e
+  0x30c0f: jmp       0x30c1a
+  0x30c11: test      esi, esi
+  0x30c13: jne       0x30c2e
+  0x30c15: test      r12d, r12d
+  0x30c18: je        0x30c2e
+  0x30c1a: addss     xmm6, xmm8
+  0x30c1f: mov       rbp, rbx
+  0x30c22: movaps    xmm8, xmm9
+  0x30c26: addss     xmm7, xmm6
+  0x30c2a: movaps    xmm6, xmm9
+  0x30c2e: addss     xmm6, xmm0
+  0x30c32: movaps    xmm1, xmm6
+  0x30c35: addss     xmm1, xmm8
+  0x30c3a: movaps    xmm0, xmm1
+  0x30c3d: addss     xmm0, xmm7
+  0x30c41: comiss    xmm0, xmm10
+  0x30c45: ja        0x30c6d
+  0x30c47: mov       esi, r8d
+  0x30c4a: add       rbx, r14
+  0x30c4d: cmp       rbx, r15
+  0x30c50: jb        0x30ad0
+  0x30c56: cmp       rbx, r13
+  0x30c59: jne       0x30c78
+  0x30c5b: mov       rdx, r15
+  0x30c5e: mov       rcx, rbx
+  0x30c61: call      0x14290
+  0x30c66: cdqe      
+  0x30c68: add       rax, rbx
+  0x30c6b: jmp       0x30c7b
+  0x30c6d: comiss    xmm1, xmm10
+  0x30c71: ja        0x30c56
+  0x30c73: mov       rax, rbp
+  0x30c76: jmp       0x30c7b
+  0x30c78: mov       rax, rbx
+  0x30c7b: movaps    xmm6, xmmword ptr [rsp + 0x70]
+  0x30c80: movaps    xmm7, xmmword ptr [rsp + 0x60]
+  0x30c85: movaps    xmm8, xmmword ptr [rsp + 0x50]
+  0x30c8b: movaps    xmm9, xmmword ptr [rsp + 0x40]
+  0x30c91: movaps    xmm10, xmmword ptr [rsp + 0x30]
+  0x30c97: movaps    xmm11, xmmword ptr [rsp + 0x20]
+  0x30c9d: add       rsp, 0x88
+  0x30ca4: pop       r15
+  0x30ca6: pop       r14
+  0x30ca8: pop       r13
+  0x30caa: pop       r12
+  0x30cac: pop       rdi
+  0x30cad: pop       rsi
+  0x30cae: pop       rbp
+  0x30caf: pop       rbx
+  0x30cb0: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_00030a30 @ 0x30a30  size=641 */
+/* xrefs: called by fun_000339b0 (2 sites), fun_000306d0 (1 site), fun_0004e8e0 (1 site), fun_00050280 (1 site), fun_00050390 (1 site) */
+/* confidence: LOW - 3 residual gotos */
+#include <stdbool.h>
+struct s_fun_00030a30_v1;
+#pragma pack(push, 1)
+struct s_fun_00030a30_v1 {
+    int32_t field_0;
+    char _pad_4[4];
+    int64_t field_8;
+    float field_10;
+    float field_14;
+    char _pad_18[52];
+    int32_t field_4c;
+};
+#pragma pack(pop)
+#define dword_1741d0 (*(int32_t*)0x1741d0)
+int32_t fun_00014040();
+int32_t fun_00014290();
+int32_t fun_0002b9d0(int64_t, float, float);
+int64_t fun_00030320();
+int8_t* fun_00030a30(int64_t a1, float a2, int64_t a3, int64_t a4, float a5, int64_t a6) {
+    char s3[256];
+    int32_t v10;
+    int8_t*v3;
+    uint32_t v4;
+    float v5;
+    float v6;
+    float v7;
+    int32_t v11;
+    int32_t v12;
+    int32_t v8;
+    float v13;
+    int32_t v16;
+    int8_t*result;
+    float v18;
+    uint32_t v17;
+    float v19;
+    struct s_fun_00030a30_v1*v1 = 0;
+    float v9;
+    int8_t*v20;
+    float*v2;
+    float*v14;
+    float*v15;
+
+    v2 = (float*)fun_0002b9d0(a1, a2, -1.0f);
+    v3 = (int8_t*)a3;
+    if ((uint64_t)(a3) >= (uint64_t)(a4)) {
+        result = v3;
+        return result;
+    }
+    v3 = (int8_t*)a3;
+    v4 = 2;
+    v5 = 0.0f;
+    v6 = 0.0f;
+    v7 = 0.0f;
+    result = (int8_t*)a3;
+    v1 = (struct s_fun_00030a30_v1*)(uint32_t)v2;
+    v8 = *(int32_t*)s3 & 2;
+    v9 = a5 / (a2 / v2[5]);
+    while (true) {
+        v10 = *v3;
+        if ((uint32_t)(v10) >= 0x80) {
+            v11 = v10;
+            v12 = (int64_t)fun_00014040(&v10, v3, a4);
+        } else {
+            v11 = *v3;
+            v12 = 1;
+        }
+        if ((uint32_t)(v11) >= 0x20) {
+L_30b1e:;
+            if ((uint32_t)(v11) >= (uint32_t)(v1->field_0)) {
+                if (v1->field_14 >= 128.0f || v1->field_4c & 0x10000000) {
+                    *(float*)s3 = 0.0f;
+                    v15 = (float*)fun_00030320(v1, v11, s3, a4);
+                    if (!v15) {
+                        v13 = *(float*)s3;
+                    } else {
+                        v13 = v15[1];
+                    }
+                } else {
+                    v14 = (float*)fun_00030320(v1, v11, 0, a4);
+                    if (!v14) {
+                        v13 = v1->field_10;
+                    } else {
+                        v13 = v14[1];
+                    }
+                }
+            } else {
+                v13 = *(float*)(v1->field_8 + v11 * 4);
+                if (v13 < 0.0f) {
+                    if (v1->field_14 >= 128.0f || v1->field_4c & 0x10000000) {
+                        *(float*)s3 = 0.0f;
+                        v15 = (float*)fun_00030320(v1, v11, s3, a4);
+                        if (!v15) {
+                            v13 = *(float*)s3;
+                            v11 = v10;
+                        } else {
+                            v13 = v15[1];
+                            v11 = v10;
+                        }
+                    } else {
+                        v14 = (float*)fun_00030320(v1, v11, 0, a4);
+                        if (!v14) {
+                            v13 = v1->field_10;
+                            v11 = v10;
+                        } else {
+                            v13 = v14[1];
+                            v11 = v10;
+                        }
+                    }
+                }
+            }
+            if ((uint32_t)(v11) >= 0x80) {
+                if ((uint32_t)((int32_t)(v11 - 0x3000)) > 0xf) {
+                    v17 = 2;
+L_30bfd:;
+                    if (v4 != 1) {
+                        v19 = v5;
+                        if (!v4) {
+                            v19 = v5;
+                            if (v8) {
+                                result = v3;
+                                v19 = 0.0f;
+                                v6 += v5 + v7;
+                                v7 = 0.0f;
+                            }
+                        }
+                    } else {
+                        v19 = v5;
+                        if (v17 != v4) {
+                            v19 = v5;
+                            if ((uint32_t)((int32_t)(v11 - 0x30)) > 9) {
+                                result = v3;
+                                v19 = 0.0f;
+                                v6 += v5 + v7;
+                                v7 = 0.0f;
+                            }
+                        }
+                    }
+                } else {
+                    v16 = dword_1741d0;
+L_30bc9:;
+                    v17 = ((uint32_t)(v16) >> (v11 & 0xf) * 2) & 3;
+                    if (v17) {
+                        goto L_30bfd;
+                    } else {
+                        v18 = v5;
+                        if (v4) {
+                            v18 = v5;
+                            if (!v8) {
+                                result = v3;
+                                v18 = 0.0f;
+                                v6 += v5;
+                            }
+                        }
+                    }
+                }
+            } else {
+                v16 = ((int32_t*)0x1741b0)[((uint64_t)((uint32_t)v11) >> 4)];
+                goto L_30bc9;
+            }
+            if (v18 + v7 + v6 > v9) {
+                v20 = v3;
+                if (v18 + v7 > v9) break;
+            } else {
+                v4 = v17;
+                v5 = v18;
+                v20 = v3 + v12;
+                v3 += v12;
+                if ((uint64_t)(v3) >= (uint64_t)(a4)) break;
+            }
+        } else {
+            if (v11 == 0xa) {
+                result = v3;
+                return result;
+            }
+            if (v11 == 0xd) {
+                v20 = v3 + v12;
+                v3 += v12;
+                if ((uint64_t)(v3) < (uint64_t)(a4)) {
+                    continue;
+                } else {
+                    break;
+                }
+            } else {
+                goto L_30b1e;
+            }
+        }
+        return result;
+        if (v18 + v7 + v6 > v9) {
+            v20 = v3;
+            if (v18 + v7 > v9) {
+                break;
+            } else {
+                return result;
+            }
+        } else {
+            v4 = v17;
+            v5 = v18;
+        }
+        v18 = v19 + v13;
+        if (v18 + v7 + v6 > v9) {
+            v20 = v3;
+            if (v18 + v7 > v9) {
+                break;
+            } else {
+                return result;
+            }
+        } else {
+            v4 = v17;
+            v5 = v18;
+        }
+    }
+    v3 = v20;
+    if ((int64_t)(v20) != (int64_t)(a3)) {
+        result = v3;
+        return result;
+    }
+    result = (int8_t*)((int64_t)fun_00014290(v20, a4) + v20);
+    return result;
+}
+

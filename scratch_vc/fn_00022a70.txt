@@ -1,0 +1,132 @@
+=== fun_00022a70 @ 0x22a70 size=224 blocks=10 calls=2 ===
+--- DISASM ---
+  0x22a70: mov       qword ptr [rsp + 8], rbx
+  0x22a75: push      rdi
+  0x22a76: sub       rsp, 0x20
+  0x22a7a: mov       rdi, qword ptr [0x174148]
+  0x22a81: xor       edx, edx
+  0x22a83: mov       rbx, rcx
+  0x22a86: call      0x11e40
+  0x22a8b: mov       ecx, dword ptr [rbx + 0x8c]
+  0x22a91: mov       rdx, rbx
+  0x22a94: call      0x20b40
+  0x22a99: cmp       byte ptr [rdi + 0x76], 0
+  0x22a9d: je        0x22aa6
+  0x22a9f: mov       byte ptr [rdi + 0x1fc8], 0
+  0x22aa6: mov       rax, qword ptr [rbx + 0x3c0]
+  0x22aad: movss     xmm1, dword ptr [rdi + 0xae4]
+  0x22ab5: movss     xmm0, dword ptr [rdi + 0xae0]
+  0x22abd: subss     xmm1, dword ptr [rax + 0x2c]
+  0x22ac2: subss     xmm0, dword ptr [rax + 0x28]
+  0x22ac7: mov       byte ptr [rdi + 0x1502], 1
+  0x22ace: movss     dword ptr [rdi + 0x1510], xmm1
+  0x22ad6: movss     dword ptr [rdi + 0x150c], xmm0
+  0x22ade: mov       rax, qword ptr [0x174148]
+  0x22ae5: mov       dword ptr [rax + 0x1e08], 0xf
+  0x22aef: mov       byte ptr [rax + 0x1e0c], 1
+  0x22af6: mov       rax, qword ptr [0x174148]
+  0x22afd: mov       word ptr [rax + 0x2070], 0
+  0x22b06: mov       rcx, qword ptr [0x174148]
+  0x22b0d: cmp       byte ptr [rcx + 0x2071], 0
+  0x22b14: jne       0x22b23
+  0x22b16: cmp       byte ptr [rcx + 0x2032], 0
+  0x22b1d: jne       0x22b23
+  0x22b1f: xor       al, al
+  0x22b21: jmp       0x22b25
+  0x22b23: mov       al, 1
+  0x22b25: mov       byte ptr [rcx + 0x2031], al
+  0x22b2b: test      byte ptr [rbx + 0x14], 4
+  0x22b2f: jne       0x22b45
+  0x22b31: mov       rax, qword ptr [rbx + 0x3c0]
+  0x22b38: test      byte ptr [rax + 0x14], 4
+  0x22b3c: jne       0x22b45
+  0x22b3e: mov       qword ptr [rdi + 0x14a0], rbx
+  0x22b45: mov       rbx, qword ptr [rsp + 0x30]
+  0x22b4a: add       rsp, 0x20
+  0x22b4e: pop       rdi
+  0x22b4f: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_00022a70 @ 0x22a70  size=224 */
+/* xrefs: called by fun_00049e40 (1 site) */
+/* confidence: HIGH */
+#include <stdbool.h>
+struct s_fun_00022a70_a1;
+struct s_fun_00022a70_a1_3c0;
+struct s_fun_00022a70_qword_174148;
+#pragma pack(push, 1)
+struct s_fun_00022a70_a1 {
+    char _pad_0[20];
+    int8_t field_14;
+    char _pad_15[119];
+    int32_t field_8c;
+    char _pad_90[816];
+    struct s_fun_00022a70_a1_3c0* field_3c0;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_00022a70_a1_3c0 {
+    char _pad_0[20];
+    int8_t field_14;
+    char _pad_15[19];
+    float field_28;
+    float field_2c;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_00022a70_qword_174148 {
+    char _pad_0[118];
+    int8_t field_76;
+    char _pad_77[2665];
+    float field_ae0;
+    float field_ae4;
+    char _pad_ae8[2488];
+    int64_t field_14a0;
+    char _pad_14a8[90];
+    int8_t field_1502;
+    char _pad_1503[9];
+    float field_150c;
+    float field_1510;
+    char _pad_1514[2292];
+    int32_t field_1e08;
+    int8_t field_1e0c;
+    char _pad_1e0d[443];
+    int8_t field_1fc8;
+    char _pad_1fc9[104];
+    int8_t field_2031;
+    int8_t field_2032;
+    char _pad_2033[61];
+    int16_t field_2070;
+};
+#pragma pack(pop)
+#define qword_174148 (*(int64_t*)0x174148)
+int32_t fun_00011e40();
+void fun_00020b40();
+void fun_00022a70(struct s_fun_00022a70_a1*a1) {
+    struct s_fun_00022a70_qword_174148* gs_174148 = (struct s_fun_00022a70_qword_174148*)qword_174148;
+    bool v1;
+
+    fun_00011e40(a1, 0);
+    fun_00020b40((uint32_t)a1->field_8c, a1);
+    if (gs_174148->field_76) {
+        gs_174148->field_1fc8 = 0;
+    }
+    gs_174148->field_1502 = 1;
+    gs_174148->field_1510 = gs_174148->field_ae4 - a1->field_3c0->field_2c;
+    gs_174148->field_150c = gs_174148->field_ae0 - a1->field_3c0->field_28;
+    gs_174148->field_1e08 = 0xf;
+    gs_174148->field_1e0c = 1;
+    gs_174148->field_2070 = 0;
+    if (*(int8_t*)(qword_174148 + 0x2071) || gs_174148->field_2032) {
+        v1 = 1;
+    } else {
+        v1 = 0;
+    }
+    gs_174148->field_2031 = (int8_t)v1;
+    if (a1->field_14 & 4 || a1->field_3c0->field_14 & 4) {
+        return;
+    }
+    gs_174148->field_14a0 = (int64_t)a1;
+    return;
+}
+

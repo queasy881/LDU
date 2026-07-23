@@ -1,0 +1,168 @@
+=== fun_000500b0 @ 0x500b0 size=262 blocks=14 calls=4 ===
+--- DISASM ---
+  0x500b0: push      rbx
+  0x500b2: push      rbp
+  0x500b3: push      rsi
+  0x500b4: push      rdi
+  0x500b5: push      r12
+  0x500b7: push      r14
+  0x500b9: sub       rsp, 0x28
+  0x500bd: mov       ebp, dword ptr [rcx + 0x10]
+  0x500c0: mov       r12, r8
+  0x500c3: mov       esi, dword ptr [rcx + 0x18]
+  0x500c6: mov       rdi, rcx
+  0x500c9: movsxd    rbx, r9d
+  0x500cc: movsxd    r14, edx
+  0x500cf: and       ebp, 0x400000
+  0x500d5: jne       0x500ff
+  0x500d7: mov       ecx, dword ptr [rcx + 0x58]
+  0x500da: mov       r9d, esi
+  0x500dd: not       r9d
+  0x500e0: add       ecx, r9d
+  0x500e3: cmp       ebx, ecx
+  0x500e5: jle       0x500ff
+  0x500e7: movsxd    r8, ecx
+  0x500ea: lea       rdx, [r12 + rbx]
+  0x500ee: add       r8, r12
+  0x500f1: mov       rcx, r12
+  0x500f4: call      0x142f0
+  0x500f9: mov       rbx, rax
+  0x500fc: sub       ebx, r12d
+  0x500ff: test      ebx, ebx
+  0x50101: jne       0x50112
+  0x50103: xor       eax, eax
+  0x50105: add       rsp, 0x28
+  0x50109: pop       r14
+  0x5010b: pop       r12
+  0x5010d: pop       rdi
+  0x5010e: pop       rsi
+  0x5010f: pop       rbp
+  0x50110: pop       rbx
+  0x50111: ret       
+  0x50112: lea       eax, [rsi + 1]
+  0x50115: mov       qword ptr [rsp + 0x60], r15
+  0x5011a: add       eax, ebx
+  0x5011c: cmp       eax, dword ptr [rdi + 0x28]
+  0x5011f: jle       0x5015a
+  0x50121: test      ebp, ebp
+  0x50123: je        0x5015a
+  0x50125: mov       eax, 0x100
+  0x5012a: mov       ecx, ebx
+  0x5012c: cmp       ebx, eax
+  0x5012e: cmovle    ecx, eax
+  0x50131: cmp       ebx, 0x20
+  0x50134: jge       0x5013d
+  0x50136: mov       eax, 0x20
+  0x5013b: jmp       0x50144
+  0x5013d: cmp       ebx, ecx
+  0x5013f: mov       eax, ebx
+  0x50141: cmovg     eax, ecx
+  0x50144: lea       edx, [rsi + 1]
+  0x50147: add       edx, eax
+  0x50149: lea       rcx, [rdi + 0x28]
+  0x5014d: call      0x27e60
+  0x50152: mov       rax, qword ptr [rdi + 0x30]
+  0x50156: mov       qword ptr [rdi + 0x20], rax
+  0x5015a: mov       rax, qword ptr [rdi + 0x30]
+  0x5015e: mov       rcx, r14
+  0x50161: movsxd    rbp, ebx
+  0x50164: lea       r15, [r14 + rax]
+  0x50168: cmp       r14d, esi
+  0x5016b: je        0x50181
+  0x5016d: sub       esi, r14d
+  0x50170: add       rcx, rax
+  0x50173: movsxd    r8, esi
+  0x50176: add       rcx, rbp
+  0x50179: mov       rdx, r15
+  0x5017c: call      0x84b90
+  0x50181: mov       r8, rbp
+  0x50184: mov       rdx, r12
+  0x50187: mov       rcx, r15
+  0x5018a: call      0x84b90
+  0x5018f: add       dword ptr [rdi + 0x18], ebx
+  0x50192: movsxd    rcx, dword ptr [rdi + 0x18]
+  0x50196: mov       r15, qword ptr [rsp + 0x60]
+  0x5019b: mov       byte ptr [rdi + 0x73], 1
+  0x5019f: mov       rax, qword ptr [rdi + 0x30]
+  0x501a3: mov       byte ptr [rcx + rax], 0
+  0x501a7: mov       eax, ebx
+  0x501a9: add       rsp, 0x28
+  0x501ad: pop       r14
+  0x501af: pop       r12
+  0x501b1: pop       rdi
+  0x501b2: pop       rsi
+  0x501b3: pop       rbp
+  0x501b4: pop       rbx
+  0x501b5: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_000500b0 @ 0x500b0  size=262 */
+/* xrefs: called by fun_0004fcb0 (2 sites), fun_0004b530 (1 site), fun_00056e10 (1 site), fun_00056f70 (1 site), fun_000585e0 (1 site) */
+/* confidence: HIGH */
+struct s_fun_000500b0_a1;
+#pragma pack(push, 1)
+struct s_fun_000500b0_a1 {
+    char _pad_0[16];
+    int32_t field_10;
+    char _pad_14[4];
+    int32_t field_18;
+    char _pad_1c[4];
+    int64_t field_20;
+    int32_t field_28;
+    char _pad_2c[4];
+    int64_t field_30;
+    char _pad_38[32];
+    int32_t field_58;
+    char _pad_5c[23];
+    int8_t field_73;
+};
+#pragma pack(pop)
+#ifndef __min
+#define __min(a,b) ((a)<(b)?(a):(b))
+#endif
+#ifndef __max
+#define __max(a,b) ((a)>(b)?(a):(b))
+#endif
+int64_t fun_000142f0();
+void fun_00027e60();
+int64_t fun_00084b90();
+int32_t fun_000500b0(struct s_fun_000500b0_a1*a1, int32_t a2, int64_t a3, int32_t a4) {
+    int32_t result;
+    int32_t v2;
+    int32_t v1;
+
+    result = (int64_t)a4;
+    if (!(a1->field_10 & 0x400000)) {
+        result = (int64_t)a4;
+        if (a4 > a1->field_58 + ~a1->field_18) {
+            result = (int32_t)fun_000142f0(a3, a3 + (int64_t)a4, (int64_t)(a1->field_58 + ~a1->field_18) + a3) - (int32_t)a3;
+        }
+    }
+    if (!result) {
+        return 0;
+    }
+    if ((int32_t)(a1->field_18 + 1) + result > a1->field_28 && a1->field_10 & 0x400000) {
+        v1 = __max(result, 0x100);
+        if (result >= 0x20) {
+            v2 = __min(result, v1);
+        } else {
+            v2 = 0x20;
+        }
+        fun_00027e60(&a1->field_28, (uint32_t)((int32_t)(a1->field_18 + 1) + v2));
+        a1->field_20 = a1->field_30;
+    }
+    if (a2 == a1->field_18) {
+        fun_00084b90((int64_t)a2 + a1->field_30, a3, (int64_t)result);
+        a1->field_18 += result;
+        a1->field_73 = 1;
+        *(int8_t*)((int64_t)a1->field_18 + a1->field_30) = 0;
+        return result;
+    }
+    fun_00084b90((int64_t)a2 + a1->field_30 + (int64_t)result, (int64_t)a2 + a1->field_30, (int64_t)(a1->field_18 - a2));
+    fun_00084b90((int64_t)a2 + a1->field_30, a3, (int64_t)result);
+    a1->field_18 += result;
+    a1->field_73 = 1;
+    *(int8_t*)((int64_t)a1->field_18 + a1->field_30) = 0;
+    return result;
+}
+

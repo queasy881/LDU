@@ -1,0 +1,85 @@
+=== fun_000504f0 @ 0x504f0 size=114 blocks=9 calls=3 ===
+--- DISASM ---
+  0x504f0: mov       qword ptr [rsp + 8], rbx
+  0x504f5: push      rdi
+  0x504f6: sub       rsp, 0x20
+  0x504fa: mov       rdi, rcx
+  0x504fd: test      edx, edx
+  0x504ff: jle       0x50549
+  0x50501: mov       rcx, qword ptr [rcx + 0x20]
+  0x50505: movsxd    rdx, edx
+  0x50508: add       rdx, rcx
+  0x5050b: call      0x142c0
+  0x50510: mov       rbx, rax
+  0x50513: sub       ebx, dword ptr [rdi + 0x20]
+  0x50516: js        0x5054e
+  0x50518: nop       dword ptr [rax + rax]
+  0x50520: mov       edx, ebx
+  0x50522: mov       rcx, rdi
+  0x50525: call      0x567e0
+  0x5052a: test      eax, eax
+  0x5052c: jne       0x5054e
+  0x5052e: test      ebx, ebx
+  0x50530: je        0x50549
+  0x50532: mov       rcx, qword ptr [rdi + 0x20]
+  0x50536: mov       edx, ebx
+  0x50538: add       rdx, rcx
+  0x5053b: call      0x142c0
+  0x50540: sub       eax, dword ptr [rdi + 0x20]
+  0x50543: mov       ebx, eax
+  0x50545: jns       0x50520
+  0x50547: jmp       0x5054e
+  0x50549: mov       ebx, 0xffffffff
+  0x5054e: xor       eax, eax
+  0x50550: test      ebx, ebx
+  0x50552: cmovs     ebx, eax
+  0x50555: mov       eax, ebx
+  0x50557: mov       rbx, qword ptr [rsp + 0x30]
+  0x5055c: add       rsp, 0x20
+  0x50560: pop       rdi
+  0x50561: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_000504f0 @ 0x504f0  size=114 */
+/* xrefs: called by fun_00057760 (2 sites) */
+/* confidence: HIGH */
+#include <stdbool.h>
+#ifndef __max
+#define __max(a,b) ((a)>(b)?(a):(b))
+#endif
+int64_t fun_000142c0();
+int32_t fun_000567e0();
+int32_t fun_000504f0(int64_t*a1, int32_t a2) {
+    int64_t v2;
+    int64_t v1;
+    int64_t v3;
+
+    if (a2 <= 0) {
+        v2 = 0xffffffff;
+    } else {
+        v1 = fun_000142c0(a1[4], (int64_t)a2 + a1[4]);
+        v2 = (int32_t)v1 - *(int32_t*)((char*)a1 + 0x20);
+        if (v2 >= 0) {
+            v2 = (int32_t)v1 - *(int32_t*)((char*)a1 + 0x20);
+            while (true) {
+                if (fun_000567e0(a1, (uint32_t)v2)) {
+                    return __max((int32_t)v2, 0);
+                }
+                if (!((int32_t)v2)) {
+                    v2 = 0xffffffff;
+                    return __max((int32_t)v2, 0);
+                }
+                v3 = fun_000142c0(a1[4], (uint32_t)v2 + a1[4]);
+                v2 = (int32_t)v3 - *(int32_t*)((char*)a1 + 0x20);
+                if (v2 < 0) {
+                    v2 = (int32_t)v3 - *(int32_t*)((char*)a1 + 0x20);
+                    return __max((int32_t)v2, 0);
+                }
+            }
+            v2 = (int32_t)v3 - *(int32_t*)((char*)a1 + 0x20);
+            return __max((int32_t)v2, 0);
+        }
+    }
+    return __max((int32_t)v2, 0);
+}
+

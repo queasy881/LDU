@@ -1,0 +1,133 @@
+=== fun_00056720 @ 0x56720 size=190 blocks=14 calls=0 ===
+--- DISASM ---
+  0x56720: mov       qword ptr [rsp + 8], rbx
+  0x56725: mov       qword ptr [rsp + 0x10], rdi
+  0x5672a: mov       rdx, rcx
+  0x5672d: test      r8b, r8b
+  0x56730: je        0x56740
+  0x56732: xor       eax, eax
+  0x56734: xor       r10d, r10d
+  0x56737: mov       qword ptr [rcx + 0x12], rax
+  0x5673b: xor       r8d, r8d
+  0x5673e: jmp       0x5674a
+  0x56740: movzx     r10d, word ptr [rcx + 0x16]
+  0x56745: movzx     r8d, word ptr [rcx + 0x18]
+  0x5674a: cvttss2si r11d, xmm1
+  0x5674f: mov       word ptr [rcx + 8], r11w
+  0x56754: movzx     ecx, word ptr [rcx + 0x12]
+  0x56758: movzx     ebx, word ptr [rdx + 0x14]
+  0x5675c: test      cx, cx
+  0x5675f: setne     dil
+  0x56763: test      cx, cx
+  0x56766: je        0x56771
+  0x56768: test      bx, bx
+  0x5676b: je        0x56774
+  0x5676d: add       cx, r11w
+  0x56771: test      bx, bx
+  0x56774: setne     al
+  0x56777: mov       word ptr [rdx + 0xc], cx
+  0x5677b: add       cx, bx
+  0x5677e: or        al, dil
+  0x56781: je        0x5678d
+  0x56783: test      r10w, r10w
+  0x56787: je        0x5678d
+  0x56789: add       cx, r11w
+  0x5678d: mov       word ptr [rdx + 0xe], cx
+  0x56791: mov       ebx, 1
+  0x56796: add       cx, r10w
+  0x5679a: movzx     eax, al
+  0x5679d: test      r10w, r10w
+  0x567a1: cmovne    eax, ebx
+  0x567a4: test      al, al
+  0x567a6: je        0x567b2
+  0x567a8: test      r8w, r8w
+  0x567ac: je        0x567b2
+  0x567ae: add       cx, r11w
+  0x567b2: mov       rbx, qword ptr [rsp + 8]
+  0x567b7: add       r8w, cx
+  0x567bb: mov       rdi, qword ptr [rsp + 0x10]
+  0x567c0: mov       word ptr [rdx + 0x10], cx
+  0x567c4: movzx     eax, r8w
+  0x567c8: mov       dword ptr [rdx + 4], eax
+  0x567cb: xor       eax, eax
+  0x567cd: mov       qword ptr [rdx + 0x12], rax
+  0x567d1: mov       eax, dword ptr [rdx + 4]
+  0x567d4: mov       dword ptr [rdx], eax
+  0x567d6: mov       dword ptr [rdx + 4], 0
+  0x567dd: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_00056720 @ 0x56720  size=190 */
+/* xrefs: called by fun_00009550 (1 site) */
+/* confidence: HIGH */
+struct s_fun_00056720_a1;
+#pragma pack(push, 1)
+struct s_fun_00056720_a1 {
+    int32_t field_0;
+    int32_t field_4;
+    int16_t field_8;
+    char _pad_a[2];
+    int16_t field_c;
+    int16_t field_e;
+    int16_t field_10;
+    char _pad_12[2];
+    uint16_t field_14;
+    uint16_t field_16;
+    uint16_t field_18;
+};
+#pragma pack(pop)
+void fun_00056720(struct s_fun_00056720_a1*a1, float a2, int32_t a3) {
+    uint32_t v1;
+    uint32_t v2;
+    uint32_t v3;
+    uint32_t v4;
+    uint32_t v6;
+    int32_t v5;
+
+    if (!((uint8_t)a3)) {
+        v1 = a1->field_18;
+        v2 = a1->field_16;
+    } else {
+        *(int64_t*)((char*)a1 + 0x12) = 0;
+        v1 = 0;
+        v2 = 0;
+    }
+    a1->field_8 = (int16_t)a2;
+    v3 = *(uint16_t*)((char*)a1 + 0x12);
+    if (*(uint16_t*)((char*)a1 + 0x12)) {
+        v3 = *(uint16_t*)((char*)a1 + 0x12);
+        if (a1->field_14) {
+            v3 = ((uint32_t)*(uint16_t*)((char*)a1 + 0x12) & 0xffff0000) | (((int16_t)*(uint16_t*)((char*)a1 + 0x12) + (int32_t)a2) & 0xffff);
+        }
+    }
+    a1->field_c = (int16_t)v3;
+    v4 = (v3 & 0xffff0000) | (((int16_t)v3 + (uint32_t)a1->field_14) & 0xffff);
+    if (a1->field_14 != 0 | *(uint16_t*)((char*)a1 + 0x12) != 0) {
+        v4 = (v3 & 0xffff0000) | (((int16_t)v3 + (uint32_t)a1->field_14) & 0xffff);
+        if ((uint16_t)v2) {
+            v4 = (v3 & 0xffff0000) | (((((int16_t)v3 + (uint32_t)a1->field_14) & 0xffff) + (int32_t)a2) & 0xffff);
+        }
+    }
+    a1->field_e = (int16_t)v4;
+    v5 = ((int16_t)v4 + v2) & 0xffff;
+    v6 = (v4 & 0xffff0000) | v5;
+    if ((uint8_t)((uint16_t)v2 != 0 ? 1 : (a1->field_14 != 0 | *(uint16_t*)((char*)a1 + 0x12) != 0) & 0xff)) {
+        v6 = (v4 & 0xffff0000) | v5;
+        if ((uint16_t)v1) {
+            v6 = (v4 & 0xffff0000) | ((v5 + (int32_t)a2) & 0xffff);
+            a1->field_10 = (int16_t)v6;
+            a1->field_4 = ((int16_t)v1 + v6) & 0xffff;
+            *(int64_t*)((char*)a1 + 0x12) = 0;
+            a1->field_0 = a1->field_4;
+            a1->field_4 = 0;
+            return;
+        }
+    }
+    a1->field_10 = (int16_t)v6;
+    a1->field_4 = ((int16_t)v1 + v6) & 0xffff;
+    *(int64_t*)((char*)a1 + 0x12) = 0;
+    a1->field_0 = a1->field_4;
+    a1->field_4 = 0;
+    return;
+}
+

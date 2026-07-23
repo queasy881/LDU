@@ -1,0 +1,14 @@
+=== fun_000122b0 @ 0x122b0 size=8 blocks=1 calls=0 ===
+--- DISASM ---
+  0x122b0: mov       rax, qword ptr [0x174148]
+  0x122b7: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* get_174148 @ 0x122b0  size=8 */
+/* xrefs: called by fun_0002d120 (2 sites), fun_00001710 (1 site), fun_00001b70 (1 site), fun_00058660 (1 site), fun_00058cd0 (1 site), fun_00058e80 (1 site), fun_00058ec0 (1 site), fun_000598a0 (1 site), +5 more */
+/* confidence: HIGH */
+#define qword_174148 (*(int64_t*)0x174148)
+int64_t get_174148(void) {
+    return qword_174148;
+}
+

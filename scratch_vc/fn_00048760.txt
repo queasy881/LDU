@@ -1,0 +1,358 @@
+=== fun_00048760 @ 0x48760 size=686 blocks=47 calls=2 ===
+--- DISASM ---
+  0x48760: push      rbx
+  0x48762: push      rbp
+  0x48763: push      rsi
+  0x48764: push      rdi
+  0x48765: sub       rsp, 0x78
+  0x48769: mov       rbp, qword ptr [0x174148]
+  0x48770: mov       rdi, r8
+  0x48773: movss     xmm0, dword ptr [r8 + 8]
+  0x48779: mov       rbx, rdx
+  0x4877c: movaps    xmmword ptr [rsp + 0x60], xmm6
+  0x48781: mov       rsi, rcx
+  0x48784: movaps    xmmword ptr [rsp + 0x50], xmm7
+  0x48789: xorps     xmm6, xmm6
+  0x4878c: movss     xmm1, dword ptr [rbp + 0x100]
+  0x48794: comiss    xmm1, xmm0
+  0x48797: movaps    xmmword ptr [rsp + 0x40], xmm8
+  0x4879d: movss     xmm8, dword ptr [0x88544]
+  0x487a6: movaps    xmmword ptr [rsp + 0x30], xmm9
+  0x487ac: movaps    xmmword ptr [rsp + 0x20], xmm10
+  0x487b2: movss     xmm10, dword ptr [0x885e4]
+  0x487bb: ja        0x487cb
+  0x487bd: movss     xmm0, dword ptr [r8]
+  0x487c2: comiss    xmm0, xmm1
+  0x487c5: jbe       0x488cc
+  0x487cb: subss     xmm1, xmm0
+  0x487cf: ucomiss   xmm1, xmm6
+  0x487d2: jp        0x487da
+  0x487d4: je        0x488cc
+  0x487da: comiss    xmm6, xmm1
+  0x487dd: movss     xmm5, dword ptr [rdx + 0x98]
+  0x487e5: jbe       0x487f0
+  0x487e7: comiss    xmm6, xmm5
+  0x487ea: ja        0x488cc
+  0x487f0: comiss    xmm1, xmm6
+  0x487f3: jbe       0x48802
+  0x487f5: comiss    xmm5, dword ptr [rdx + 0xa0]
+  0x487fc: jae       0x488cc
+  0x48802: movss     xmm4, dword ptr [rbp + 0x1198]
+  0x4880a: movaps    xmm3, xmm1
+  0x4880d: movdqa    xmm9, xmmword ptr [0x88610]
+  0x48816: movaps    xmm0, xmm4
+  0x48819: mulss     xmm0, dword ptr [0x885b8]
+  0x48821: andps     xmm3, xmm9
+  0x48825: subss     xmm3, xmm4
+  0x48829: subss     xmm0, xmm4
+  0x4882d: divss     xmm3, xmm0
+  0x48831: comiss    xmm6, xmm3
+  0x48834: jbe       0x4883b
+  0x48836: xorps     xmm2, xmm2
+  0x48839: jmp       0x48843
+  0x4883b: movaps    xmm2, xmm8
+  0x4883f: minss     xmm2, xmm3
+  0x48843: comiss    xmm6, xmm1
+  0x48846: jbe       0x4884e
+  0x48848: movaps    xmm0, xmm10
+  0x4884c: jmp       0x4885c
+  0x4884e: comiss    xmm1, xmm6
+  0x48851: jbe       0x48859
+  0x48853: movaps    xmm0, xmm8
+  0x48857: jmp       0x4885c
+  0x48859: xorps     xmm0, xmm0
+  0x4885c: mulss     xmm2, dword ptr [0x88580]
+  0x48864: mulss     xmm4, dword ptr [0x8ae68]
+  0x4886c: addss     xmm2, xmm8
+  0x48871: mulss     xmm2, xmm4
+  0x48875: mulss     xmm2, xmm0
+  0x48879: mulss     xmm2, dword ptr [rbp + 0x40]
+  0x4887e: addss     xmm2, dword ptr [rcx + 0x20]
+  0x48883: comiss    xmm2, xmm6
+  0x48886: movss     dword ptr [rcx + 0x20], xmm2
+  0x4888b: cvttss2si eax, xmm2
+  0x4888f: jae       0x488a1
+  0x48891: movd      xmm0, eax
+  0x48895: cvtdq2ps  xmm0, xmm0
+  0x48898: ucomiss   xmm0, xmm2
+  0x4889b: jp        0x4889f
+  0x4889d: je        0x488a1
+  0x4889f: dec       eax
+  0x488a1: movd      xmm7, eax
+  0x488a5: cvtdq2ps  xmm7, xmm7
+  0x488a8: ucomiss   xmm7, xmm6
+  0x488ab: jp        0x488af
+  0x488ad: je        0x488d5
+  0x488af: movaps    xmm1, xmm7
+  0x488b2: mov       rcx, rbx
+  0x488b5: addss     xmm1, xmm5
+  0x488b9: call      0x21820
+  0x488be: movss     xmm0, dword ptr [rsi + 0x20]
+  0x488c3: subss     xmm0, xmm7
+  0x488c7: movss     dword ptr [rsi + 0x20], xmm0
+  0x488cc: movdqa    xmm9, xmmword ptr [0x88610]
+  0x488d5: movss     xmm1, dword ptr [rbp + 0x104]
+  0x488dd: movss     xmm0, dword ptr [rdi + 0xc]
+  0x488e2: comiss    xmm1, xmm0
+  0x488e5: ja        0x488f5
+  0x488e7: movss     xmm0, dword ptr [rdi + 4]
+  0x488ec: comiss    xmm0, xmm1
+  0x488ef: jbe       0x489e9
+  0x488f5: subss     xmm1, xmm0
+  0x488f9: ucomiss   xmm1, xmm6
+  0x488fc: jp        0x48904
+  0x488fe: je        0x489e9
+  0x48904: comiss    xmm6, xmm1
+  0x48907: movss     xmm3, dword ptr [rbx + 0x9c]
+  0x4890f: jbe       0x4891a
+  0x48911: comiss    xmm6, xmm3
+  0x48914: ja        0x489e9
+  0x4891a: comiss    xmm1, xmm6
+  0x4891d: jbe       0x4892c
+  0x4891f: comiss    xmm3, dword ptr [rbx + 0xa4]
+  0x48926: jae       0x489e9
+  0x4892c: movss     xmm5, dword ptr [rbp + 0x1198]
+  0x48934: movaps    xmm4, xmm1
+  0x48937: andps     xmm4, xmm9
+  0x4893b: movaps    xmm0, xmm5
+  0x4893e: mulss     xmm0, dword ptr [0x885b8]
+  0x48946: subss     xmm4, xmm5
+  0x4894a: subss     xmm0, xmm5
+  0x4894e: divss     xmm4, xmm0
+  0x48952: comiss    xmm6, xmm4
+  0x48955: jbe       0x4895c
+  0x48957: xorps     xmm2, xmm2
+  0x4895a: jmp       0x48964
+  0x4895c: movaps    xmm2, xmm8
+  0x48960: minss     xmm2, xmm4
+  0x48964: comiss    xmm6, xmm1
+  0x48967: ja        0x48978
+  0x48969: comiss    xmm1, xmm6
+  0x4896c: jbe       0x48974
+  0x4896e: movaps    xmm10, xmm8
+  0x48972: jmp       0x48978
+  0x48974: xorps     xmm10, xmm10
+  0x48978: mulss     xmm2, dword ptr [0x88580]
+  0x48980: mulss     xmm5, dword ptr [0x8ae68]
+  0x48988: addss     xmm2, xmm8
+  0x4898d: mulss     xmm2, xmm5
+  0x48991: mulss     xmm2, xmm10
+  0x48996: mulss     xmm2, dword ptr [rbp + 0x40]
+  0x4899b: addss     xmm2, dword ptr [rsi + 0x24]
+  0x489a0: comiss    xmm2, xmm6
+  0x489a3: movss     dword ptr [rsi + 0x24], xmm2
+  0x489a8: cvttss2si eax, xmm2
+  0x489ac: jae       0x489be
+  0x489ae: movd      xmm0, eax
+  0x489b2: cvtdq2ps  xmm0, xmm0
+  0x489b5: ucomiss   xmm0, xmm2
+  0x489b8: jp        0x489bc
+  0x489ba: je        0x489be
+  0x489bc: dec       eax
+  0x489be: movd      xmm7, eax
+  0x489c2: cvtdq2ps  xmm7, xmm7
+  0x489c5: ucomiss   xmm7, xmm6
+  0x489c8: jp        0x489cc
+  0x489ca: je        0x489e9
+  0x489cc: addss     xmm3, xmm7
+  0x489d0: mov       rcx, rbx
+  0x489d3: movaps    xmm1, xmm3
+  0x489d6: call      0x21840
+  0x489db: movss     xmm0, dword ptr [rsi + 0x24]
+  0x489e0: subss     xmm0, xmm7
+  0x489e4: movss     dword ptr [rsi + 0x24], xmm0
+  0x489e9: movaps    xmm6, xmmword ptr [rsp + 0x60]
+  0x489ee: movaps    xmm7, xmmword ptr [rsp + 0x50]
+  0x489f3: movaps    xmm8, xmmword ptr [rsp + 0x40]
+  0x489f9: movaps    xmm9, xmmword ptr [rsp + 0x30]
+  0x489ff: movaps    xmm10, xmmword ptr [rsp + 0x20]
+  0x48a05: add       rsp, 0x78
+  0x48a09: pop       rdi
+  0x48a0a: pop       rsi
+  0x48a0b: pop       rbp
+  0x48a0c: pop       rbx
+  0x48a0d: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_00048760 @ 0x48760  size=686 */
+/* xrefs: called by fun_0004aaf0 (1 site) */
+/* confidence: MEDIUM - 1 residual goto */
+#include <stdbool.h>
+struct s_fun_00048760_a1;
+struct s_fun_00048760_a2;
+struct Vec4;
+struct s_fun_00048760_qword_174148;
+#pragma pack(push, 1)
+struct s_fun_00048760_a1 {
+    char _pad_0[32];
+    float field_20;
+    float field_24;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_00048760_a2 {
+    char _pad_0[152];
+    float field_98;
+    float field_9c;
+    float field_a0;
+    float field_a4;
+};
+#pragma pack(pop)
+#ifndef __DS_TY_Vec4
+#define __DS_TY_Vec4
+#pragma pack(push, 1)
+struct Vec4 {
+    float x;
+    float y;
+    float z;
+    float w;
+};
+#pragma pack(pop)
+#endif
+#pragma pack(push, 1)
+struct s_fun_00048760_qword_174148 {
+    char _pad_0[64];
+    float field_40;
+    char _pad_44[188];
+    float field_100;
+    float field_104;
+    char _pad_108[4240];
+    float field_1198;
+};
+#pragma pack(pop)
+#define qword_174148 (*(int64_t*)0x174148)
+#ifndef __DS_FABS_DEFINED
+#define __DS_FABS_DEFINED
+static double __fabs(double x){ return x<0.0?-x:x; }
+static float __fabsf(float x){ return x<0.0f?-x:x; }
+#endif
+#ifndef __min
+#define __min(a,b) ((a)<(b)?(a):(b))
+#endif
+void fun_00021820(int64_t, float);
+void fun_00021840(int64_t, float);
+void fun_00048760(struct s_fun_00048760_a1*a1, struct s_fun_00048760_a2*a2, struct Vec4*a3) {
+    struct s_fun_00048760_qword_174148* gs_174148 = (struct s_fun_00048760_qword_174148*)qword_174148;
+    float v2 = 0;
+    float v5;
+    float v7;
+    int32_t v10;
+    float v1 = 0;
+    float v11;
+    float v13;
+    int32_t v16;
+    float v9;
+    float v15;
+    float v6;
+    float v12;
+    float v8;
+    float v14;
+    bool v3;
+    bool v4 = 0;
+
+    v4 = 0;
+    v3 = 0;
+    v2 = a3->z;
+    if (gs_174148->field_100 > v2) {
+L_487cb:;
+        if (gs_174148->field_100 - v2 == 0.0f || gs_174148->field_100 - v2 < 0.0f && a2->field_98 < 0.0f || gs_174148->field_100 - v2 > 0.0f && a2->field_98 >= a2->field_a0) {
+            v3 = 1;
+        } else {
+            if (!((__fabsf(gs_174148->field_100 - v2) - gs_174148->field_1198) / (gs_174148->field_1198 * 5.0f - gs_174148->field_1198) < 0.0f)) {
+                v6 = (__fabsf(gs_174148->field_100 - v2) - gs_174148->field_1198) / (gs_174148->field_1198 * 5.0f - gs_174148->field_1198);
+                v5 = __min(1.0f, v6);
+            } else {
+                v5 = 0.0f;
+            }
+            if (!(gs_174148->field_100 - v2 < 0.0f)) {
+                if (!(gs_174148->field_100 - v2 > 0.0f)) {
+                    v7 = 0.0f;
+                } else {
+                    v7 = 1.0f;
+                }
+            } else {
+                v7 = -1.0f;
+            }
+            v8 = v5 * 3.0f + 1.0f;
+            v9 = v8 * (gs_174148->field_1198 * 35.0f) * v7 * gs_174148->field_40 + a1->field_20;
+            a1->field_20 = v8 * (gs_174148->field_1198 * 35.0f) * v7 * gs_174148->field_40 + a1->field_20;
+            v10 = (int32_t)v9;
+            if (!(v8 * (gs_174148->field_1198 * 35.0f) * v7 * gs_174148->field_40 + a1->field_20 >= 0.0f)) {
+                v10 = (int32_t)v9;
+                if ((float)v10 != v9) {
+                    v10 = (int32_t)v9 - 1;
+                }
+            }
+            if ((float)v10 != 0.0f) {
+                fun_00021820(a2, (float)v10 + a2->field_98);
+                a1->field_20 -= (float)v10;
+                v3 = 1;
+            }
+        }
+    } else {
+        v2 = a3->x;
+        if (!(v2 > gs_174148->field_100)) {
+            v3 = 1;
+        } else {
+            goto L_487cb;
+        }
+    }
+    if (v3) {
+        v1 = a3->w;
+        if (gs_174148->field_104 > v1) {
+            v4 = 1;
+        } else {
+            v1 = a3->y;
+            if (v1 > gs_174148->field_104) {
+                v4 = 1;
+            }
+        }
+    } else {
+        v1 = a3->w;
+        if (gs_174148->field_104 > v1) {
+            v4 = 1;
+        } else {
+            v1 = a3->y;
+            if (v1 > gs_174148->field_104) {
+                v4 = 1;
+            }
+        }
+    }
+    if (!v4) {
+        return;
+    }
+    if (gs_174148->field_104 - v1 == 0.0f || gs_174148->field_104 - v1 < 0.0f && a2->field_9c < 0.0f || gs_174148->field_104 - v1 > 0.0f && a2->field_9c >= a2->field_a4) {
+        return;
+    }
+    if (!((__fabsf(gs_174148->field_104 - v1) - gs_174148->field_1198) / (gs_174148->field_1198 * 5.0f - gs_174148->field_1198) < 0.0f)) {
+        v12 = (__fabsf(gs_174148->field_104 - v1) - gs_174148->field_1198) / (gs_174148->field_1198 * 5.0f - gs_174148->field_1198);
+        v11 = __min(1.0f, v12);
+    } else {
+        v11 = 0.0f;
+    }
+    v13 = -1.0f;
+    if (!(gs_174148->field_104 - v1 < 0.0f)) {
+        if (!(gs_174148->field_104 - v1 > 0.0f)) {
+            v13 = 0.0f;
+        } else {
+            v13 = 1.0f;
+        }
+    }
+    v14 = v11 * 3.0f + 1.0f;
+    v15 = v14 * (gs_174148->field_1198 * 35.0f) * v13 * gs_174148->field_40 + a1->field_24;
+    a1->field_24 = v14 * (gs_174148->field_1198 * 35.0f) * v13 * gs_174148->field_40 + a1->field_24;
+    v16 = (int32_t)v15;
+    if (!(v14 * (gs_174148->field_1198 * 35.0f) * v13 * gs_174148->field_40 + a1->field_24 >= 0.0f)) {
+        v16 = (int32_t)v15;
+        if ((float)v16 != v15) {
+            v16 = (int32_t)v15 - 1;
+        }
+    }
+    if ((float)v16 == 0.0f) {
+        return;
+    }
+    fun_00021840(a2, a2->field_9c + (float)v16);
+    a1->field_24 -= (float)v16;
+    return;
+}
+

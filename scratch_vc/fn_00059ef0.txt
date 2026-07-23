@@ -1,0 +1,14 @@
+=== fun_00059ef0 @ 0x59ef0 size=7 blocks=2 calls=0 ===
+--- DISASM ---
+  0x59ef0: xor       edx, edx
+  0x59ef2: jmp       0x59f00
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_00059ef0 @ 0x59ef0  size=7 */
+/* xrefs: called by fun_00001e10 (1 site) */
+/* confidence: HIGH */
+int32_t fun_00059f00();
+int32_t fun_00059ef0(void) {
+    return fun_00059f00();
+}
+

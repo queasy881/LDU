@@ -1,0 +1,114 @@
+=== fun_0000e130 @ 0xe130 size=216 blocks=15 calls=2 ===
+--- DISASM ---
+  0xe130: mov       qword ptr [rsp + 8], rbx
+  0xe135: push      rdi
+  0xe136: sub       rsp, 0x20
+  0xe13a: mov       rdi, qword ptr [0x174148]
+  0xe141: mov       r9d, dword ptr [rdi + 0x1f98]
+  0xe148: sub       r9d, 1
+  0xe14c: movsxd    rbx, r9d
+  0xe14f: js        0xe1fd
+  0xe155: cmp       ebx, dword ptr [rdi + 0x1f88]
+  0xe15b: jge       0xe1fd
+  0xe161: mov       r8, qword ptr [rdi + 0x1f90]
+  0xe168: mov       rcx, qword ptr [rdi + 0x1fa0]
+  0xe16f: imul      rdx, rbx, 0x38
+  0xe173: mov       eax, dword ptr [rdx + r8]
+  0xe177: cmp       dword ptr [rdx + rcx], eax
+  0xe17a: jne       0xe1fd
+  0xe180: test      r9d, r9d
+  0xe183: jle       0xe1c6
+  0xe185: nop       word ptr [rax + rax]
+  0xe190: mov       edx, ebx
+  0xe192: imul      rax, rdx, 0x38
+  0xe196: mov       rcx, qword ptr [rax + r8 + 8]
+  0xe19b: test      rcx, rcx
+  0xe19e: je        0xe1c6
+  0xe1a0: test      dword ptr [rcx + 0x14], 0x10000000
+  0xe1a7: je        0xe1c6
+  0xe1a9: imul      rax, rdx, 0x38
+  0xe1ad: mov       rcx, qword ptr [rax + r8 - 0x30]
+  0xe1b2: test      rcx, rcx
+  0xe1b5: je        0xe1c6
+  0xe1b7: test      dword ptr [rcx + 0x14], 0x400
+  0xe1be: jne       0xe1c6
+  0xe1c0: dec       ebx
+  0xe1c2: test      ebx, ebx
+  0xe1c4: jg        0xe190
+  0xe1c6: test      byte ptr [rdi + 0x2824], 8
+  0xe1cd: je        0xe1e1
+  0xe1cf: mov       r8d, ebx
+  0xe1d2: lea       rcx, [0x8a860]
+  0xe1d9: mov       edx, r9d
+  0xe1dc: call      0xf0a0
+  0xe1e1: mov       dl, 1
+  0xe1e3: mov       ecx, ebx
+  0xe1e5: call      0xe210
+  0xe1ea: mov       rax, qword ptr [rdi + 0x1fd0]
+  0xe1f1: test      rax, rax
+  0xe1f4: je        0xe1fd
+  0xe1f6: mov       byte ptr [rax + 0x179], 1
+  0xe1fd: mov       rbx, qword ptr [rsp + 0x30]
+  0xe202: add       rsp, 0x20
+  0xe206: pop       rdi
+  0xe207: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_0000e130 @ 0xe130  size=216 */
+/* xrefs: called by fun_000510e0 (1 site) */
+/* confidence: HIGH */
+#include <stdbool.h>
+struct s_fun_0000e130_qword_174148;
+#pragma pack(push, 1)
+struct s_fun_0000e130_qword_174148 {
+    char _pad_0[8072];
+    int32_t field_1f88;
+    char _pad_1f8c[4];
+    int64_t field_1f90;
+    int32_t field_1f98;
+    char _pad_1f9c[4];
+    int64_t field_1fa0;
+    char _pad_1fa8[40];
+    void* field_1fd0;
+    char _pad_1fd8[2124];
+    int8_t field_2824;
+};
+#pragma pack(pop)
+#define qword_174148 (*(int64_t*)0x174148)
+int32_t fun_0000e210();
+int32_t fun_0000f0a0();
+void fun_0000e130(void) {
+    struct s_fun_0000e130_qword_174148* gs_174148 = (struct s_fun_0000e130_qword_174148*)qword_174148;
+    int32_t v2;
+    int32_t v1;
+
+    if (gs_174148->field_1f98 - 1 >= 0 && (int32_t)(gs_174148->field_1f98 - 1) < gs_174148->field_1f88 && *(int32_t*)((int64_t)(gs_174148->field_1f98 - 1) * 0x38 + gs_174148->field_1fa0) == *(int32_t*)((int64_t)(gs_174148->field_1f98 - 1) * 0x38 + gs_174148->field_1f90)) {
+        v1 = (int64_t)(gs_174148->field_1f98 - 1);
+        if (gs_174148->field_1f98 - 1 > 0) {
+            v2 = (int64_t)(gs_174148->field_1f98 - 1);
+            while (true) {
+                v1 = v2;
+                if (!*(int64_t*)((int64_t)((uint32_t)v2) * 0x38 + gs_174148->field_1f90 + 8)) break;
+                v1 = v2;
+                if (!(*(int32_t*)(*(int64_t*)((int64_t)((uint32_t)v2) * 0x38 + gs_174148->field_1f90 + 8) + 0x14) & 0x10000000)) break;
+                v1 = v2;
+                if (!*(int64_t*)((int64_t)((uint32_t)v2) * 0x38 + gs_174148->field_1f90 - 0x30)) break;
+                v1 = v2;
+                if (*(int32_t*)(*(int64_t*)((int64_t)((uint32_t)v2) * 0x38 + gs_174148->field_1f90 - 0x30) + 0x14) & 0x400) break;
+                v1 = v2 - 1;
+                --v2;
+                if (v2 <= 0) break;
+            }
+        }
+        if (gs_174148->field_2824 & 8) {
+            fun_0000f0a0("[popup] CloseCurrentPopup %d -> %d\n", (uint32_t)(gs_174148->field_1f98 - 1), v1);
+        }
+        fun_0000e210(v1, 1);
+        if (gs_174148->field_1fd0) {
+            *(int8_t*)((char*)gs_174148->field_1fd0 + 0x179) = 1;
+            return;
+        }
+    }
+    return;
+}
+

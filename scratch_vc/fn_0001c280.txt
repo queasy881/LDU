@@ -1,0 +1,133 @@
+=== fun_0001c280 @ 0x1c280 size=215 blocks=5 calls=5 ===
+--- DISASM ---
+  0x1c280: mov       qword ptr [rsp + 0x20], rbx
+  0x1c285: push      rsi
+  0x1c286: sub       rsp, 0x70
+  0x1c28a: mov       rax, qword ptr [0x1733c0]
+  0x1c291: xor       rax, rsp
+  0x1c294: mov       qword ptr [rsp + 0x60], rax
+  0x1c299: mov       rbx, qword ptr [rdx + 0x38]
+  0x1c29d: mov       rsi, r8
+  0x1c2a0: test      rbx, rbx
+  0x1c2a3: je        0x1c33c
+  0x1c2a9: mov       rcx, rbx
+  0x1c2ac: mov       qword ptr [rsp + 0x80], rdi
+  0x1c2b4: call      0x5f4f3
+  0x1c2b9: mov       rdi, rax
+  0x1c2bc: test      rax, rax
+  0x1c2bf: je        0x1c334
+  0x1c2c1: cvttss2si ecx, dword ptr [rsi + 4]
+  0x1c2c6: mov       dword ptr [rsp + 0x40], 0x20
+  0x1c2ce: lea       rdx, [rsp + 0x40]
+  0x1c2d3: xorps     xmm0, xmm0
+  0x1c2d6: mov       dword ptr [rsp + 0x44], ecx
+  0x1c2da: cvttss2si ecx, dword ptr [rsi + 8]
+  0x1c2df: movdqu    xmmword ptr [rsp + 0x4c], xmm0
+  0x1c2e5: mov       dword ptr [rsp + 0x48], ecx
+  0x1c2e9: mov       rcx, rax
+  0x1c2ec: call      0x5f4ff
+  0x1c2f1: cvttss2si eax, dword ptr [rsi + 4]
+  0x1c2f6: mov       dword ptr [rsp + 0x20], 0
+  0x1c2fe: lea       rdx, [rsp + 0x20]
+  0x1c303: mov       dword ptr [rsp + 0x24], 0x40
+  0x1c30b: mov       rcx, rdi
+  0x1c30e: xorps     xmm0, xmm0
+  0x1c311: mov       dword ptr [rsp + 0x28], eax
+  0x1c315: cvttss2si eax, dword ptr [rsi + 8]
+  0x1c31a: movdqu    xmmword ptr [rsp + 0x30], xmm0
+  0x1c320: mov       dword ptr [rsp + 0x2c], eax
+  0x1c324: call      0x5f505
+  0x1c329: mov       rdx, rdi
+  0x1c32c: mov       rcx, rbx
+  0x1c32f: call      0x5f4f9
+  0x1c334: mov       rdi, qword ptr [rsp + 0x80]
+  0x1c33c: mov       rcx, qword ptr [rsp + 0x60]
+  0x1c341: xor       rcx, rsp
+  0x1c344: call      0x5dbe0
+  0x1c349: mov       rbx, qword ptr [rsp + 0x98]
+  0x1c351: add       rsp, 0x70
+  0x1c355: pop       rsi
+  0x1c356: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_0001c280 @ 0x1c280  size=215 */
+/* confidence: HIGH */
+struct s_fun_0001c280_a3;
+struct s_fun_0001c280_s1;
+struct s_fun_0001c280_s2;
+struct s_fun_0001c280_s3;
+struct s_fun_0001c280_s4;
+#pragma pack(push, 1)
+struct s_fun_0001c280_a3 {
+    char _pad_0[4];
+    float field_4;
+    float field_8;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_0001c280_s1 {
+    int64_t field_0;
+    int64_t field_8;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_0001c280_s2 {
+    int64_t field_0;
+    int64_t field_8;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_0001c280_s3 {
+    int32_t field_0;
+    int32_t field_4;
+    int32_t field_8;
+    int32_t field_c;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_0001c280_s4 {
+    int32_t field_0;
+    int32_t field_4;
+    int32_t field_8;
+    char _pad_c[20];
+    int64_t field_20;
+};
+#pragma pack(pop)
+#define qword_1733c0 (*(int64_t*)0x1733c0)
+int64_t j_ImmGetContext();
+int64_t j_ImmReleaseContext();
+void j_ImmSetCandidateWindow();
+void j_ImmSetCompositionWindow();
+int32_t fun_0001c280(int64_t a1, int64_t*a2, struct s_fun_0001c280_a3*a3) {
+    char s1[16];
+    char s2[16];
+    char s3[32];
+    char s4[48];
+    int64_t result;
+
+    ((struct s_fun_0001c280_s4*)s4)->field_20 = qword_1733c0;
+    result = qword_1733c0;
+    if (!a2[7]) {
+        return (int32_t)result;
+    }
+    result = j_ImmGetContext();
+    if (!result) {
+        return (int32_t)result;
+    }
+    ((struct s_fun_0001c280_s4*)s4)->field_0 = 0x20;
+    ((struct s_fun_0001c280_s4*)s4)->field_4 = (int32_t)a3->field_4;
+    ((struct s_fun_0001c280_s2*)s2)->field_0 = 0;
+    ((struct s_fun_0001c280_s2*)s2)->field_8 = 0;
+    ((struct s_fun_0001c280_s4*)s4)->field_8 = (int32_t)a3->field_8;
+    j_ImmSetCompositionWindow();
+    ((struct s_fun_0001c280_s3*)s3)->field_0 = 0;
+    ((struct s_fun_0001c280_s3*)s3)->field_4 = 0x40;
+    ((struct s_fun_0001c280_s3*)s3)->field_8 = (int32_t)a3->field_4;
+    ((struct s_fun_0001c280_s1*)s1)->field_0 = 0;
+    ((struct s_fun_0001c280_s1*)s1)->field_8 = 0;
+    ((struct s_fun_0001c280_s3*)s3)->field_c = (int32_t)a3->field_8;
+    j_ImmSetCandidateWindow();
+    result = j_ImmReleaseContext();
+    return (int32_t)result;
+}
+

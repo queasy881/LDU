@@ -1,0 +1,80 @@
+=== fun_0002caa0 @ 0x2caa0 size=146 blocks=9 calls=1 ===
+--- DISASM ---
+  0x2caa0: push      rbx
+  0x2caa2: push      rsi
+  0x2caa3: push      rdi
+  0x2caa4: push      r14
+  0x2caa6: sub       rsp, 0x28
+  0x2caaa: mov       rdi, qword ptr [rcx + 0x2b0]
+  0x2cab1: xor       ebx, ebx
+  0x2cab3: mov       r14d, edx
+  0x2cab6: mov       rsi, rcx
+  0x2cab9: cmp       dword ptr [rdi + 0xc0], ebx
+  0x2cabf: jle       0x2cb28
+  0x2cac1: mov       eax, ebx
+  0x2cac3: mov       ecx, ebx
+  0x2cac5: and       eax, 0x1f
+  0x2cac8: test      ebx, ebx
+  0x2caca: jns       0x2cad2
+  0x2cacc: lea       ecx, [rbx + 0x1f]
+  0x2cacf: sub       eax, 0x20
+  0x2cad2: mov       rdx, qword ptr [rdi + 0xd0]
+  0x2cad9: sar       ecx, 5
+  0x2cadc: movsxd    r8, ecx
+  0x2cadf: cdqe      
+  0x2cae1: imul      rcx, rax, 0x68
+  0x2cae5: mov       r8, qword ptr [rdx + r8*8]
+  0x2cae9: mov       rax, qword ptr [rsi + 0x2b0]
+  0x2caf0: add       r8, rcx
+  0x2caf3: mov       ecx, dword ptr [r8 + 0x50]
+  0x2caf7: add       ecx, r14d
+  0x2cafa: cmp       ecx, dword ptr [rax + 0xa4]
+  0x2cb00: jg        0x2cb1e
+  0x2cb02: test      dword ptr [r8 + 0x4c], 0x4000000
+  0x2cb0a: jne       0x2cb1e
+  0x2cb0c: mov       rdx, qword ptr [r8 + 0x58]
+  0x2cb10: test      byte ptr [rdx + 0x10], 8
+  0x2cb14: jne       0x2cb1e
+  0x2cb16: mov       rcx, rsi
+  0x2cb19: call      0x2c240
+  0x2cb1e: inc       ebx
+  0x2cb20: cmp       ebx, dword ptr [rdi + 0xc0]
+  0x2cb26: jl        0x2cac1
+  0x2cb28: add       rsp, 0x28
+  0x2cb2c: pop       r14
+  0x2cb2e: pop       rdi
+  0x2cb2f: pop       rsi
+  0x2cb30: pop       rbx
+  0x2cb31: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_0002caa0 @ 0x2caa0  size=146 */
+/* xrefs: called by fun_0002b790 (1 site), fun_0002eae0 (1 site) */
+/* confidence: HIGH */
+void fun_0002c240();
+void fun_0002caa0(int8_t*a1, int32_t a2) {
+    int32_t v3;
+    int32_t v2 = 0;
+    int64_t v1 = 0;
+    int64_t*v4;
+
+    v3 = 0;
+    if (*(int32_t*)(*(int64_t*)((char*)a1 + 0x2b0) + 0xc0) <= 0) {
+        return;
+    }
+    do {
+        v2 = v3 & 0x1f;
+        v1 = v3;
+        if (v1 < 0) {
+            v2 = (v3 & 0x1f) - 0x20;
+            v1 = v3 + 0x1f;
+        }
+        if (*(int32_t*)(*(int64_t*)(*(int64_t*)(*(int64_t*)((char*)a1 + 0x2b0) + 0xd0) + (int64_t)((int32_t)v1 >> 5) * 8) + (int64_t)v2 * 0x68 + 0x50) + a2 <= *(int32_t*)(*(int64_t*)((char*)a1 + 0x2b0) + 0xa4) && !(*(int32_t*)(*(int64_t*)(*(int64_t*)(*(int64_t*)((char*)a1 + 0x2b0) + 0xd0) + (int64_t)((int32_t)v1 >> 5) * 8) + (int64_t)v2 * 0x68 + 0x4c) & 0x4000000) && !(*(int8_t*)(*(int64_t*)(*(int64_t*)(*(int64_t*)(*(int64_t*)((char*)a1 + 0x2b0) + 0xd0) + (int64_t)((int32_t)v1 >> 5) * 8) + (int64_t)v2 * 0x68 + 0x58) + 0x10) & 8)) {
+            v4 = (int64_t*)(*(int64_t*)(*(int64_t*)(*(int64_t*)((char*)a1 + 0x2b0) + 0xd0) + (int64_t)((int32_t)v1 >> 5) * 8) + (int64_t)v2 * 0x68);
+            fun_0002c240(a1, v4[0xb], v4);
+        }
+        ++v3;
+    } while (v3 < *(int32_t*)(*(int64_t*)((char*)a1 + 0x2b0) + 0xc0));
+    return;
+}
+

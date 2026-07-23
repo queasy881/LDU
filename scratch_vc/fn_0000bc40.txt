@@ -1,0 +1,307 @@
+=== fun_0000bc40 @ 0xbc40 size=495 blocks=21 calls=6 ===
+--- DISASM ---
+  0xbc40: push      rbx
+  0xbc42: push      rbp
+  0xbc43: push      rsi
+  0xbc44: push      rdi
+  0xbc45: push      r12
+  0xbc47: push      r13
+  0xbc49: push      r14
+  0xbc4b: push      r15
+  0xbc4d: sub       rsp, 0x68
+  0xbc51: movaps    xmmword ptr [rsp + 0x50], xmm6
+  0xbc56: movaps    xmm6, xmm2
+  0xbc59: mov       edi, edx
+  0xbc5b: mov       rsi, rcx
+  0xbc5e: mov       rbx, qword ptr [0x174148]
+  0xbc65: mov       qword ptr [rcx + 0x28], rbx
+  0xbc69: mov       r15, qword ptr [rbx + 0x1480]
+  0xbc70: test      byte ptr [rbx + 0x2824], 0x20
+  0xbc77: je        0xbc95
+  0xbc79: xorps     xmm2, xmm2
+  0xbc7c: cvtss2sd  xmm2, xmm6
+  0xbc80: mov       r9, qword ptr [r15 + 8]
+  0xbc84: movq      r8, xmm2
+  0xbc89: lea       rcx, [0x89a28]
+  0xbc90: call      0xf0a0
+  0xbc95: mov       rcx, qword ptr [rbx + 0x22c8]
+  0xbc9c: test      rcx, rcx
+  0xbc9f: je        0xbcaf
+  0xbca1: cmp       byte ptr [rcx + 0x23a], 0
+  0xbca8: je        0xbcaf
+  0xbcaa: call      0x3dec0
+  0xbcaf: movss     xmm0, dword ptr [r15 + 0x11c]
+  0xbcb8: cvtps2pd  xmm0, xmm0
+  0xbcbb: movsd     qword ptr [rsi + 0x18], xmm0
+  0xbcc0: movss     dword ptr [rsi + 0x10], xmm6
+  0xbcc5: mov       dword ptr [rsi + 0xc], edi
+  0xbcc8: mov       dword ptr [rsi], 0xffffffff
+  0xbcce: xor       r12d, r12d
+  0xbcd1: mov       dword ptr [rsi + 4], r12d
+  0xbcd5: mov       edi, dword ptr [rbx + 0x22b0]
+  0xbcdb: inc       edi
+  0xbcdd: mov       dword ptr [rbx + 0x22b0], edi
+  0xbce3: cmp       edi, dword ptr [rbx + 0x22b8]
+  0xbce9: jle       0xbdb8
+  0xbcef: xorps     xmm6, xmm6
+  0xbcf2: xor       r13d, r13d
+  0xbcf5: movups    xmmword ptr [rsp + 0x20], xmm6
+  0xbcfa: movups    xmmword ptr [rsp + 0x30], xmm6
+  0xbcff: mov       qword ptr [rsp + 0x40], r13
+  0xbd04: mov       ecx, dword ptr [rbx + 0x22bc]
+  0xbd0a: cmp       edi, ecx
+  0xbd0c: jle       0xbd7c
+  0xbd0e: test      ecx, ecx
+  0xbd10: je        0xbd1d
+  0xbd12: mov       eax, ecx
+  0xbd14: cdq       
+  0xbd15: sub       eax, edx
+  0xbd17: sar       eax, 1
+  0xbd19: add       eax, ecx
+  0xbd1b: jmp       0xbd22
+  0xbd1d: mov       eax, 8
+  0xbd22: mov       ebp, edi
+  0xbd24: cmp       eax, edi
+  0xbd26: cmovg     ebp, eax
+  0xbd29: cmp       ebp, ecx
+  0xbd2b: jle       0xbd7c
+  0xbd2d: movsxd    rax, ebp
+  0xbd30: lea       rcx, [rax + rax*4]
+  0xbd34: shl       rcx, 3
+  0xbd38: call      0x16810
+  0xbd3d: mov       r14, rax
+  0xbd40: mov       rdx, qword ptr [rbx + 0x22c0]
+  0xbd47: test      rdx, rdx
+  0xbd4a: je        0xbd6f
+  0xbd4c: movsxd    rcx, dword ptr [rbx + 0x22b8]
+  0xbd53: lea       r8, [rcx + rcx*4]
+  0xbd57: shl       r8, 3
+  0xbd5b: mov       rcx, rax
+  0xbd5e: call      0x84b90
+  0xbd63: mov       rcx, qword ptr [rbx + 0x22c0]
+  0xbd6a: call      0x168c0
+  0xbd6f: mov       qword ptr [rbx + 0x22c0], r14
+  0xbd76: mov       dword ptr [rbx + 0x22bc], ebp
+  0xbd7c: mov       edx, dword ptr [rbx + 0x22b8]
+  0xbd82: cmp       edi, edx
+  0xbd84: jle       0xbdb2
+  0xbd86: nop       word ptr [rax + rax]
+  0xbd90: movsxd    rax, edx
+  0xbd93: lea       rcx, [rax + rax*4]
+  0xbd97: mov       rax, qword ptr [rbx + 0x22c0]
+  0xbd9e: movups    xmmword ptr [rax + rcx*8], xmm6
+  0xbda2: movups    xmmword ptr [rax + rcx*8 + 0x10], xmm6
+  0xbda7: mov       qword ptr [rax + rcx*8 + 0x20], r13
+  0xbdac: inc       edx
+  0xbdae: cmp       edx, edi
+  0xbdb0: jl        0xbd90
+  0xbdb2: mov       dword ptr [rbx + 0x22b8], edi
+  0xbdb8: movsxd    rax, dword ptr [rbx + 0x22b0]
+  0xbdbf: lea       rcx, [rax + rax*4]
+  0xbdc3: mov       rbx, qword ptr [rbx + 0x22c0]
+  0xbdca: add       rbx, -0x28
+  0xbdce: lea       rbx, [rbx + rcx*8]
+  0xbdd2: mov       qword ptr [rbx], rsi
+  0xbdd5: mov       qword ptr [rbx + 0xc], r12
+  0xbdd9: mov       ecx, dword ptr [rbx + 0x1c]
+  0xbddc: test      ecx, ecx
+  0xbdde: jns       0xbdfa
+  0xbde0: mov       eax, ecx
+  0xbde2: cdq       
+  0xbde3: sub       eax, edx
+  0xbde5: sar       eax, 1
+  0xbde7: add       ecx, eax
+  0xbde9: mov       edx, r12d
+  0xbdec: test      ecx, ecx
+  0xbdee: cmovg     edx, ecx
+  0xbdf1: lea       rcx, [rbx + 0x18]
+  0xbdf5: call      0x27df0
+  0xbdfa: mov       dword ptr [rbx + 0x18], r12d
+  0xbdfe: mov       eax, dword ptr [r15 + 0x16c]
+  0xbe05: mov       dword ptr [rbx + 8], eax
+  0xbe08: mov       qword ptr [rsi + 0x30], rbx
+  0xbe0c: movss     xmm0, dword ptr [rbx + 8]
+  0xbe11: cvtps2pd  xmm0, xmm0
+  0xbe14: movsd     qword ptr [rsi + 0x20], xmm0
+  0xbe19: movaps    xmm6, xmmword ptr [rsp + 0x50]
+  0xbe1e: add       rsp, 0x68
+  0xbe22: pop       r15
+  0xbe24: pop       r14
+  0xbe26: pop       r13
+  0xbe28: pop       r12
+  0xbe2a: pop       rdi
+  0xbe2b: pop       rsi
+  0xbe2c: pop       rbp
+  0xbe2d: pop       rbx
+  0xbe2e: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_0000bc40 @ 0xbc40  size=495 */
+/* xrefs: called by fun_0004a060 (1 site) */
+/* confidence: HIGH */
+#include <stdbool.h>
+struct s_fun_0000bc40_a1;
+struct s_fun_0000bc40_qword_174148;
+struct s_fun_0000bc40_qword_174148_1480;
+struct s_fun_0000bc40_s1;
+struct s_fun_0000bc40_v8;
+struct s_fun_0000bc40_v9;
+#pragma pack(push, 1)
+struct s_fun_0000bc40_a1 {
+    int32_t field_0;
+    int32_t field_4;
+    char _pad_8[4];
+    int32_t field_c;
+    float field_10;
+    char _pad_14[4];
+    double field_18;
+    double field_20;
+    int64_t field_28;
+    int64_t field_30;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_0000bc40_qword_174148 {
+    char _pad_0[5248];
+    struct s_fun_0000bc40_qword_174148_1480* field_1480;
+    char _pad_1488[3624];
+    int32_t field_22b0;
+    char _pad_22b4[4];
+    int32_t field_22b8;
+    int32_t field_22bc;
+    void* field_22c0;
+    void* field_22c8;
+    char _pad_22d0[1364];
+    int8_t field_2824;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_0000bc40_qword_174148_1480 {
+    char _pad_0[8];
+    int64_t field_8;
+    char _pad_10[268];
+    float field_11c;
+    char _pad_120[76];
+    int32_t field_16c;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_0000bc40_s1 {
+    int64_t field_0;
+    int64_t field_8;
+    int64_t field_10;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_0000bc40_v8 {
+    int64_t field_0;
+    int64_t field_8;
+    int64_t field_10;
+    char _pad_18[8];
+    int64_t field_20;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_0000bc40_v9 {
+    int64_t field_0;
+    char _pad_8[4];
+    int64_t field_c;
+    char _pad_14[8];
+    int32_t field_1c;
+};
+#pragma pack(pop)
+#define qword_174148 (*(int64_t*)0x174148)
+#ifndef __max
+#define __max(a,b) ((a)>(b)?(a):(b))
+#endif
+int32_t fun_0000f0a0();
+int64_t fun_00016810();
+void fun_000168c0();
+void fun_00027df0();
+int32_t fun_0003dec0();
+int64_t fun_00084b90();
+void fun_0000bc40(struct s_fun_0000bc40_a1*a1, int32_t a2, float a3) {
+    char s1[32];
+    struct s_fun_0000bc40_qword_174148* gs_174148 = (struct s_fun_0000bc40_qword_174148*)qword_174148;
+    int32_t v7;
+    int32_t v3;
+    int32_t v6;
+    double v1;
+    int32_t v2;
+    int64_t v5;
+    struct s_fun_0000bc40_v8*v8;
+    struct s_fun_0000bc40_v9*v9;
+    int32_t v4;
+
+    a1->field_28 = qword_174148;
+    if (gs_174148->field_2824 & 0x20) {
+        v1 = (double)a3;
+        fun_0000f0a0("Clipper: Begin(%d,%.2f) in '%s'\n", a2, *(uint64_t*)(&v1), gs_174148->field_1480->field_8);
+    }
+    if (gs_174148->field_22c8 && *(int8_t*)((char*)gs_174148->field_22c8 + 0x23a)) {
+        fun_0003dec0(gs_174148->field_22c8);
+    }
+    a1->field_18 = (double)gs_174148->field_1480->field_11c;
+    a1->field_10 = a3;
+    a1->field_c = a2;
+    a1->field_0 = -1;
+    a1->field_4 = 0;
+    v2 = gs_174148->field_22b0 + 1;
+    ++gs_174148->field_22b0;
+    if (v2 > gs_174148->field_22b8) {
+        ((struct s_fun_0000bc40_s1*)s1)->field_0 = 0;
+        ((struct s_fun_0000bc40_s1*)s1)->field_8 = 0;
+        ((struct s_fun_0000bc40_s1*)s1)->field_10 = 0;
+        *(int64_t*)(&((struct s_fun_0000bc40_s1*)s1)->field_10 + 8) = 0;
+        if (v2 > gs_174148->field_22bc) {
+            if (!gs_174148->field_22bc) {
+                v3 = 8;
+            } else {
+                v3 = gs_174148->field_22bc / 2 + gs_174148->field_22bc;
+            }
+            v4 = __max(v3, v2);
+            if (v4 > gs_174148->field_22bc) {
+                v5 = fun_00016810((int64_t)v4 * 0x28);
+                if (gs_174148->field_22c0) {
+                    fun_00084b90(v5, gs_174148->field_22c0, (int64_t)gs_174148->field_22b8 * 0x28);
+                    fun_000168c0(gs_174148->field_22c0);
+                }
+                gs_174148->field_22c0 = v5;
+                gs_174148->field_22bc = v4;
+            }
+        }
+        v6 = v2;
+        if (v2 > gs_174148->field_22b8) {
+            v7 = gs_174148->field_22b8;
+            v6 = v2;
+            while (true) {
+                v8 = (struct s_fun_0000bc40_v8*)((char*)gs_174148->field_22c0 + (int64_t)v7 * 0x28);
+                v8->field_0 = 0;
+                v8->field_8 = 0;
+                v8->field_10 = 0;
+                *(int64_t*)((char*)v8 + 0x18) = 0;
+                v8->field_20 = 0;
+                ++v7;
+                if (v7 >= v6) break;
+            }
+        }
+        gs_174148->field_22b8 = v6;
+    }
+    v9 = (struct s_fun_0000bc40_v9*)((char*)gs_174148->field_22c0 - 0x28 + (int64_t)gs_174148->field_22b0 * 0x28);
+    v9->field_0 = (int64_t)a1;
+    v9->field_c = 0;
+    if (v9->field_1c >= 0) {
+        *(int32_t*)((char*)((char*)gs_174148->field_22c0 - 0x28 + (int64_t)gs_174148->field_22b0 * 0x28) + 0x18) = 0;
+        *(int32_t*)((char*)((char*)gs_174148->field_22c0 - 0x28 + (int64_t)gs_174148->field_22b0 * 0x28) + 8) = gs_174148->field_1480->field_16c;
+        a1->field_30 = (int64_t)((char*)gs_174148->field_22c0 - 0x28 + (int64_t)gs_174148->field_22b0 * 0x28);
+        a1->field_20 = (double)*(float*)((char*)((char*)gs_174148->field_22c0 - 0x28 + (int64_t)gs_174148->field_22b0 * 0x28) + 8);
+        return;
+    }
+    fun_00027df0((char*)gs_174148->field_22c0 - 0x28 + (int64_t)gs_174148->field_22b0 * 0x28 + 0x18, (uint32_t)__max(*(int32_t*)((char*)((char*)gs_174148->field_22c0 - 0x28 + (int64_t)gs_174148->field_22b0 * 0x28) + 0x1c) + *(int32_t*)((char*)((char*)gs_174148->field_22c0 - 0x28 + (int64_t)gs_174148->field_22b0 * 0x28) + 0x1c) / 2, 0));
+    *(int32_t*)((char*)((char*)gs_174148->field_22c0 - 0x28 + (int64_t)gs_174148->field_22b0 * 0x28) + 0x18) = 0;
+    *(int32_t*)((char*)((char*)gs_174148->field_22c0 - 0x28 + (int64_t)gs_174148->field_22b0 * 0x28) + 8) = gs_174148->field_1480->field_16c;
+    a1->field_30 = (int64_t)((char*)gs_174148->field_22c0 - 0x28 + (int64_t)gs_174148->field_22b0 * 0x28);
+    a1->field_20 = (double)*(float*)((char*)((char*)gs_174148->field_22c0 - 0x28 + (int64_t)gs_174148->field_22b0 * 0x28) + 8);
+    return;
+}
+

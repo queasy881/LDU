@@ -1,0 +1,28 @@
+=== fun_00013f10 @ 0x13f10 size=48 blocks=1 calls=1 ===
+--- DISASM ---
+  0x13f10: mov       qword ptr [rsp + 8], rbx
+  0x13f15: push      rdi
+  0x13f16: sub       rsp, 0x20
+  0x13f1a: mov       rdi, rcx
+  0x13f1d: mov       rbx, rdx
+  0x13f20: mov       rcx, rdx
+  0x13f23: call      0x16810
+  0x13f28: mov       r8, rbx
+  0x13f2b: mov       rdx, rdi
+  0x13f2e: mov       rcx, rax
+  0x13f31: mov       rbx, qword ptr [rsp + 0x30]
+  0x13f36: add       rsp, 0x20
+  0x13f3a: pop       rdi
+  0x13f3b: jmp       0x84b90
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_00013f10 @ 0x13f10  size=48 */
+/* xrefs: called by fun_00029280 (1 site) */
+/* confidence: HIGH */
+int64_t fun_00016810();
+int64_t fun_00084b90();
+void fun_00013f10(int64_t a1, int64_t a2) {
+    fun_00084b90(fun_00016810(a2), a1, a2);
+    return;
+}
+

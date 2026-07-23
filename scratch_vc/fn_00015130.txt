@@ -1,0 +1,15 @@
+=== fun_00015130 @ 0x15130 size=11 blocks=2 calls=0 ===
+--- DISASM ---
+  0x15130: movzx     edx, dl
+  0x15133: xor       r8d, r8d
+  0x15136: jmp       0x14fc0
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_00015130 @ 0x15130  size=11 */
+/* xrefs: called by fun_0004b530 (13 sites) */
+/* confidence: HIGH */
+int32_t fun_00014fc0();
+int32_t fun_00015130(int64_t a1, int32_t a2) {
+    return fun_00014fc0(a1, (uint8_t)a2, 0);
+}
+

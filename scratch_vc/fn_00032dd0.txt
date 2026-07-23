@@ -1,0 +1,120 @@
+=== fun_00032dd0 @ 0x32dd0 size=241 blocks=10 calls=3 ===
+--- DISASM ---
+  0x32dd0: mov       qword ptr [rsp + 8], rbx
+  0x32dd5: push      rdi
+  0x32dd6: sub       rsp, 0x40
+  0x32dda: mov       rax, qword ptr [rcx + 0x38]
+  0x32dde: mov       edi, r8d
+  0x32de1: movss     xmm0, dword ptr [0x92038]
+  0x32de9: mov       rbx, rcx
+  0x32dec: mov       qword ptr [rsp + 0x30], rdx
+  0x32df1: movss     xmm2, dword ptr [rax + 0x20]
+  0x32df6: comiss    xmm0, xmm2
+  0x32df9: jbe       0x32e02
+  0x32dfb: mov       eax, 8
+  0x32e00: jmp       0x32e17
+  0x32e02: movss     xmm0, dword ptr [0x92040]
+  0x32e0a: xor       eax, eax
+  0x32e0c: comiss    xmm0, xmm2
+  0x32e0f: mov       ecx, 0xc
+  0x32e14: cmova     eax, ecx
+  0x32e17: test      edi, 0xff000000
+  0x32e1d: je        0x32eb6
+  0x32e23: mulss     xmm2, dword ptr [0x88624]
+  0x32e2b: movss     xmm0, dword ptr [0x88530]
+  0x32e33: comiss    xmm0, xmm2
+  0x32e36: ja        0x32eb6
+  0x32e38: lea       rdx, [rsp + 0x30]
+  0x32e3d: test      eax, eax
+  0x32e3f: jne       0x32e5d
+  0x32e41: mov       dword ptr [rsp + 0x28], eax
+  0x32e45: xor       r9d, r9d
+  0x32e48: mov       rcx, rbx
+  0x32e4b: mov       dword ptr [rsp + 0x20], 0x30
+  0x32e53: call      0x351d0
+  0x32e58: dec       dword ptr [rbx + 0x50]
+  0x32e5b: jmp       0x32e9c
+  0x32e5d: mov       ecx, 3
+  0x32e62: xorps     xmm3, xmm3
+  0x32e65: cmp       eax, ecx
+  0x32e67: cmovb     eax, ecx
+  0x32e6a: mov       rcx, rbx
+  0x32e6d: movd      xmm0, eax
+  0x32e71: dec       eax
+  0x32e73: cvtdq2ps  xmm0, xmm0
+  0x32e76: mov       dword ptr [rsp + 0x28], eax
+  0x32e7a: movaps    xmm1, xmm0
+  0x32e7d: subss     xmm1, dword ptr [0x88544]
+  0x32e85: mulss     xmm1, dword ptr [0x8ae54]
+  0x32e8d: divss     xmm1, xmm0
+  0x32e91: movss     dword ptr [rsp + 0x20], xmm1
+  0x32e97: call      0x31fd0
+  0x32e9c: mov       r8d, dword ptr [rbx + 0x50]
+  0x32ea0: mov       r9d, edi
+  0x32ea3: mov       rdx, qword ptr [rbx + 0x58]
+  0x32ea7: mov       rcx, rbx
+  0x32eaa: call      0x28b90
+  0x32eaf: mov       dword ptr [rbx + 0x50], 0
+  0x32eb6: mov       rbx, qword ptr [rsp + 0x50]
+  0x32ebb: add       rsp, 0x40
+  0x32ebf: pop       rdi
+  0x32ec0: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_00032dd0 @ 0x32dd0  size=241 */
+/* xrefs: called by fun_0001fdf0 (1 site), fun_00048a10 (1 site), fun_00055200 (1 site) */
+/* confidence: HIGH */
+struct s_fun_00032dd0_a1;
+#pragma pack(push, 1)
+struct s_fun_00032dd0_a1 {
+    char _pad_0[56];
+    void* field_38;
+    char _pad_40[16];
+    int32_t field_50;
+    char _pad_54[4];
+    int64_t field_58;
+};
+#pragma pack(pop)
+#ifndef __max
+#define __max(a,b) ((a)>(b)?(a):(b))
+#endif
+int32_t fun_00028b90();
+int32_t fun_00031fd0();
+void fun_000351d0();
+int32_t fun_00032dd0(struct s_fun_00032dd0_a1*a1, int64_t a2, int64_t a3) {
+    char s1[16];
+    int32_t v1;
+    float v2;
+    int32_t result;
+    int32_t v4;
+    int32_t v3;
+
+    *(int64_t*)s1 = a2;
+    if (!(((float*)a1->field_38)[8] < 22.0f)) {
+        result = ((float*)a1->field_38)[8] < 40.0f ? 0xc : 0;
+    } else {
+        result = 8;
+    }
+    if (*(int32_t*)&a3 & 0xff000000 && !(((float*)a1->field_38)[8] * 0.2f < 0.5f)) {
+        if (result) {
+            v3 = __max(result, 3);
+            v1 = v3 - 1;
+            v2 = (*(float*)&v3 - 1.0f) * 6.2831855f / (float)v3;
+            fun_00031fd0(a1, s1, a3, 0.0f, v2, v1);
+            v4 = fun_00028b90(a1, a1->field_58, (uint32_t)a1->field_50, a3, v2, v1);
+            a1->field_50 = 0;
+            result = v4;
+            return result;
+        }
+        v1 = result;
+        v2 = 6.72623e-44f;
+        fun_000351d0(a1, s1, a3, 0, v2, v1);
+        --a1->field_50;
+        v4 = fun_00028b90(a1, a1->field_58, (uint32_t)a1->field_50, a3, v2, v1);
+        a1->field_50 = 0;
+        result = v4;
+        return result;
+    }
+    return result;
+}
+

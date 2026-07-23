@@ -1,0 +1,16 @@
+=== fun_0000de00 @ 0xde00 size=9 blocks=2 calls=0 ===
+--- DISASM ---
+  0xde00: xor       edx, edx
+  0xde02: xor       ecx, ecx
+  0xde04: jmp       0x20b40
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_0000de00 @ 0xde00  size=9 */
+/* xrefs: called by fun_00048bf0 (4 sites), fun_0004b530 (2 sites), fun_000407c0 (1 site), fun_00044a20 (1 site), fun_00045150 (1 site), fun_00045890 (1 site), fun_00045ff0 (1 site), fun_00046760 (1 site), +3 more */
+/* confidence: HIGH */
+void fun_00020b40();
+void fun_0000de00(void) {
+    fun_00020b40(0, 0);
+    return;
+}
+

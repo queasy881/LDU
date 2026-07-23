@@ -1,0 +1,60 @@
+=== fun_00021c10 @ 0x21c10 size=99 blocks=6 calls=1 ===
+--- DISASM ---
+  0x21c10: mov       qword ptr [rsp + 8], rbx
+  0x21c15: push      rdi
+  0x21c16: sub       rsp, 0x20
+  0x21c1a: mov       byte ptr [rcx + 0xcc], 1
+  0x21c21: mov       rbx, qword ptr [rcx + 0x1b8]
+  0x21c28: movsxd    rax, dword ptr [rcx + 0x1b0]
+  0x21c2f: lea       rdi, [rbx + rax*8]
+  0x21c33: cmp       rbx, rdi
+  0x21c36: je        0x21c68
+  0x21c38: nop       dword ptr [rax + rax]
+  0x21c40: mov       rcx, qword ptr [rbx]
+  0x21c43: cmp       byte ptr [rcx + 0xd4], 0
+  0x21c4a: jne       0x21c5f
+  0x21c4c: mov       byte ptr [rcx + 0xd2], 1
+  0x21c53: mov       byte ptr [rcx + 0xcc], 1
+  0x21c5a: call      0x21c10
+  0x21c5f: add       rbx, 8
+  0x21c63: cmp       rbx, rdi
+  0x21c66: jne       0x21c40
+  0x21c68: mov       rbx, qword ptr [rsp + 0x30]
+  0x21c6d: add       rsp, 0x20
+  0x21c71: pop       rdi
+  0x21c72: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_00021c10 @ 0x21c10  size=99 */
+/* xrefs: called by fun_00009550 (1 site) */
+/* confidence: HIGH */
+struct s_fun_00021c10_a1;
+#pragma pack(push, 1)
+struct s_fun_00021c10_a1 {
+    char _pad_0[204];
+    int8_t field_cc;
+    char _pad_cd[227];
+    int32_t field_1b0;
+    char _pad_1b4[4];
+    int64_t field_1b8;
+};
+#pragma pack(pop)
+void fun_00021c10(struct s_fun_00021c10_a1*a1) {
+    int64_t*v1;
+
+    a1->field_cc = 1;
+    if (!((int64_t)a1->field_1b0 * 8)) {
+        return;
+    }
+    v1 = (int64_t*)a1->field_1b8;
+    do {
+        if (!*(int8_t*)(*v1 + 0xd4)) {
+            *(int8_t*)(*v1 + 0xd2) = 1;
+            *(int8_t*)(*v1 + 0xcc) = 1;
+            fun_00021c10((struct s_fun_00021c10_a1*)(*v1));
+        }
+        v1 = (int64_t*)((char*)v1 + 8);
+    } while ((int64_t)(v1) != (int64_t)(a1->field_1b8 + (int64_t)a1->field_1b0 * 8));
+    return;
+}
+

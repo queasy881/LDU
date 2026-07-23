@@ -1,0 +1,48 @@
+=== fun_00055ae0 @ 0x55ae0 size=106 blocks=3 calls=2 ===
+--- DISASM ---
+  0x55ae0: mov       r11, rsp
+  0x55ae3: mov       qword ptr [r11 + 8], rcx
+  0x55ae7: mov       qword ptr [r11 + 0x10], rdx
+  0x55aeb: mov       qword ptr [r11 + 0x18], r8
+  0x55aef: mov       qword ptr [r11 + 0x20], r9
+  0x55af3: sub       rsp, 0x38
+  0x55af7: mov       r8, rcx
+  0x55afa: lea       r9, [r11 + 0x10]
+  0x55afe: mov       rcx, qword ptr [0x174148]
+  0x55b05: mov       rax, qword ptr [rcx + 0x1480]
+  0x55b0c: mov       byte ptr [rax + 0xce], 1
+  0x55b13: mov       rax, qword ptr [rcx + 0x1480]
+  0x55b1a: cmp       byte ptr [rax + 0xd1], 0
+  0x55b21: jne       0x55b45
+  0x55b23: lea       rdx, [r11 - 0x18]
+  0x55b27: lea       rcx, [r11 - 0x10]
+  0x55b2b: call      0x13490
+  0x55b30: mov       rdx, qword ptr [rsp + 0x20]
+  0x55b35: mov       r8d, 1
+  0x55b3b: mov       rcx, qword ptr [rsp + 0x28]
+  0x55b40: call      0x55be0
+  0x55b45: add       rsp, 0x38
+  0x55b49: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_00055ae0 @ 0x55ae0  size=106 */
+/* xrefs: called by fun_0000fdb0 (6 sites), fun_00006720 (3 sites), fun_00010890 (3 sites), fun_00022ec0 (3 sites) */
+/* confidence: HIGH */
+#define qword_174148 (*(int64_t*)0x174148)
+void fun_00013490();
+int32_t fun_00055be0();
+int32_t fun_00055ae0(int64_t a1, int64_t a2) {
+    int64_t v2 = 0;
+    int64_t v1 = 0;
+    int8_t*result;
+
+    result = (int8_t*)*(int64_t*)(qword_174148 + 0x1480);
+    result[0xce] = 1;
+    if (result[0xd1]) {
+        return (int32_t)result;
+    }
+    fun_00013490(&v1, &v2, a1, &a2);
+    result = (int8_t*)fun_00055be0(v1, v2, 1, &a2, v2);
+    return (int32_t)result;
+}
+

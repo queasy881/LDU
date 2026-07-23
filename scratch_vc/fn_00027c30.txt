@@ -1,0 +1,65 @@
+=== fun_00027c30 @ 0x27c30 size=97 blocks=5 calls=3 ===
+--- DISASM ---
+  0x27c30: mov       qword ptr [rsp + 0x10], rbx
+  0x27c35: push      rdi
+  0x27c36: sub       rsp, 0x20
+  0x27c3a: movsxd    rdi, edx
+  0x27c3d: mov       rbx, rcx
+  0x27c40: cmp       edi, dword ptr [rcx + 4]
+  0x27c43: jle       0x27c86
+  0x27c45: mov       rcx, rdi
+  0x27c48: mov       qword ptr [rsp + 0x30], rsi
+  0x27c4d: shl       rcx, 2
+  0x27c51: call      0x16810
+  0x27c56: mov       rdx, qword ptr [rbx + 8]
+  0x27c5a: mov       rsi, rax
+  0x27c5d: test      rdx, rdx
+  0x27c60: je        0x27c7a
+  0x27c62: movsxd    r8, dword ptr [rbx]
+  0x27c65: mov       rcx, rax
+  0x27c68: shl       r8, 2
+  0x27c6c: call      0x84b90
+  0x27c71: mov       rcx, qword ptr [rbx + 8]
+  0x27c75: call      0x168c0
+  0x27c7a: mov       qword ptr [rbx + 8], rsi
+  0x27c7e: mov       rsi, qword ptr [rsp + 0x30]
+  0x27c83: mov       dword ptr [rbx + 4], edi
+  0x27c86: mov       rbx, qword ptr [rsp + 0x38]
+  0x27c8b: add       rsp, 0x20
+  0x27c8f: pop       rdi
+  0x27c90: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_00027c30 @ 0x27c30  size=97 */
+/* xrefs: called by fun_00009550 (5 sites), fun_0004e8e0 (5 sites), fun_0001ab40 (3 sites), fun_0000c230 (1 site), fun_0000f0d0 (1 site), fun_0001c930 (1 site), fun_0001c9b0 (1 site), fun_0001ca50 (1 site), +3 more */
+/* confidence: HIGH */
+struct s_fun_00027c30_a1;
+#pragma pack(push, 1)
+struct s_fun_00027c30_a1 {
+    int32_t field_0;
+    int32_t field_4;
+    int64_t field_8;
+};
+#pragma pack(pop)
+int64_t fun_00016810();
+void fun_000168c0();
+int64_t fun_00084b90();
+void fun_00027c30(struct s_fun_00027c30_a1*a1, int32_t a2) {
+    int64_t v1;
+
+    if (a2 <= a1->field_4) {
+        return;
+    }
+    v1 = fun_00016810((int64_t)a2 << 2);
+    if (!a1->field_8) {
+        a1->field_8 = v1;
+        a1->field_4 = a2;
+        return;
+    }
+    fun_00084b90(v1, a1->field_8, (int64_t)a1->field_0 << 2);
+    fun_000168c0(a1->field_8);
+    a1->field_8 = v1;
+    a1->field_4 = a2;
+    return;
+}
+

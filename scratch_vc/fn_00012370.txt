@@ -1,0 +1,73 @@
+=== fun_00012370 @ 0x12370 size=117 blocks=5 calls=1 ===
+--- DISASM ---
+  0x12370: mov       dword ptr [rsp + 0x10], edx
+  0x12374: push      rbx
+  0x12375: sub       rsp, 0x20
+  0x12379: movsxd    rax, dword ptr [rcx + 0x108]
+  0x12380: lea       r8, [rsp + 0x38]
+  0x12385: mov       rbx, qword ptr [rcx + 0x110]
+  0x1238c: lea       r10, [0x88e30]
+  0x12393: movsxd    r9, edx
+  0x12396: mov       ebx, dword ptr [rbx + rax*4 - 4]
+  0x1239a: not       ebx
+  0x1239c: nop       dword ptr [rax]
+  0x123a0: movzx     eax, byte ptr [r8]
+  0x123a4: inc       r8
+  0x123a7: movzx     edx, bl
+  0x123aa: xor       rdx, rax
+  0x123ad: shr       ebx, 8
+  0x123b0: lea       rax, [rsp + 0x3c]
+  0x123b5: xor       ebx, dword ptr [r10 + rdx*4]
+  0x123b9: cmp       r8, rax
+  0x123bc: jb        0x123a0
+  0x123be: mov       rax, qword ptr [rcx]
+  0x123c1: not       ebx
+  0x123c3: cmp       dword ptr [rax + 0x14d8], ebx
+  0x123c9: jne       0x123dd
+  0x123cb: mov       r8, r9
+  0x123ce: mov       edx, 4
+  0x123d3: xor       r9d, r9d
+  0x123d6: mov       ecx, ebx
+  0x123d8: call      0xebe0
+  0x123dd: mov       eax, ebx
+  0x123df: add       rsp, 0x20
+  0x123e3: pop       rbx
+  0x123e4: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_00012370 @ 0x12370  size=117 */
+/* xrefs: called by fun_00025ad0 (2 sites), fun_0001c930 (1 site) */
+/* confidence: HIGH */
+#include <stdbool.h>
+struct s_fun_00012370_a1;
+#pragma pack(push, 1)
+struct s_fun_00012370_a1 {
+    void* field_0;
+    char _pad_8[256];
+    int32_t field_108;
+    char _pad_10c[4];
+    void* field_110;
+};
+#pragma pack(pop)
+int32_t fun_0000ebe0();
+uint32_t fun_00012370(struct s_fun_00012370_a1*a1, int32_t a2) {
+    char s1[256];
+    uint32_t v1;
+    uint8_t*v2;
+    uint8_t*v3;
+
+    v1 = ~*(int32_t*)((char*)((char*)a1->field_110 + (int64_t)a1->field_108 * 4) - 4);
+    v2 = (uint8_t*)&a2;
+    while (true) {
+        v1 = ((uint32_t)(v1) >> 8) ^ ((int32_t*)0x88e30)[((uint8_t)v1 ^ (uint32_t)*v2)];
+        v3 = v2;
+        ++v2;
+        if ((uint64_t)(v3 + 1) >= (uint64_t)(s1 + 4)) break;
+    }
+    if (((int32_t*)a1->field_0)[0x536] != ~v1) {
+        return ~(((uint32_t)(v1) >> 8) ^ ((int32_t*)0x88e30)[((uint8_t)v1 ^ (uint32_t)*v2)]);
+    }
+    fun_0000ebe0((uint32_t)(~v1), 4, (int64_t)a2, 0);
+    return ~(((uint32_t)(v1) >> 8) ^ ((int32_t*)0x88e30)[((uint8_t)v1 ^ (uint32_t)*v2)]);
+}
+

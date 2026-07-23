@@ -1,0 +1,74 @@
+=== fun_0001cb60 @ 0x1cb60 size=91 blocks=3 calls=1 ===
+--- DISASM ---
+  0x1cb60: push      rbx
+  0x1cb62: push      rbp
+  0x1cb63: push      rsi
+  0x1cb64: push      rdi
+  0x1cb65: sub       rsp, 0x48
+  0x1cb69: mov       rdi, qword ptr [0x174148]
+  0x1cb70: mov       rbp, rdx
+  0x1cb73: movsxd    rbx, ecx
+  0x1cb76: lea       rdx, [rsp + 0x20]
+  0x1cb7b: mov       rsi, rbx
+  0x1cb7e: mov       dword ptr [rsp + 0x20], ebx
+  0x1cb82: add       rsi, rsi
+  0x1cb85: lea       rcx, [rdi + 0x1f28]
+  0x1cb8c: movups    xmm0, xmmword ptr [rdi + rsi*8 + 0xd98]
+  0x1cb94: movups    xmmword ptr [rsp + 0x24], xmm0
+  0x1cb99: call      0x277d0
+  0x1cb9e: cmp       dword ptr [rdi + 0x1f24], ebx
+  0x1cba4: je        0x1cbb2
+  0x1cba6: movups    xmm0, xmmword ptr [rbp]
+  0x1cbaa: movups    xmmword ptr [rdi + rsi*8 + 0xd98], xmm0
+  0x1cbb2: add       rsp, 0x48
+  0x1cbb6: pop       rdi
+  0x1cbb7: pop       rsi
+  0x1cbb8: pop       rbp
+  0x1cbb9: pop       rbx
+  0x1cbba: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_0001cb60 @ 0x1cb60  size=91 */
+/* xrefs: called by fun_00052d00 (2 sites), fun_00054040 (2 sites), fun_0004b530 (1 site), fun_0004ef60 (1 site), fun_00055b50 (1 site) */
+/* confidence: HIGH */
+struct s_fun_0001cb60_a2;
+struct s_fun_0001cb60_s1;
+struct s_fun_0001cb60_v1;
+#pragma pack(push, 1)
+struct s_fun_0001cb60_a2 {
+    int64_t field_0;
+    int64_t field_8;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_0001cb60_s1 {
+    int64_t field_0;
+    int64_t field_8;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_0001cb60_v1 {
+    int64_t field_0;
+    int64_t field_8;
+};
+#pragma pack(pop)
+#define qword_174148 (*(int64_t*)0x174148)
+void fun_000277d0();
+void fun_0001cb60(int32_t a1, struct s_fun_0001cb60_a2*a2) {
+    char s1[16];
+    char s2[40];
+    struct s_fun_0001cb60_v1*v1;
+
+    *(int32_t*)s2 = a1;
+    ((struct s_fun_0001cb60_s1*)s1)->field_0 = *(int64_t*)(qword_174148 + (int64_t)a1 * 0x10 + 0xd98);
+    ((struct s_fun_0001cb60_s1*)s1)->field_8 = *(int64_t*)(qword_174148 + (int64_t)a1 * 0x10 + 0xda0);
+    fun_000277d0(qword_174148 + 0x1f28, s2);
+    if (*(int32_t*)(qword_174148 + 0x1f24) == a1) {
+        return;
+    }
+    v1 = (struct s_fun_0001cb60_v1*)(qword_174148 + (int64_t)a1 * 0x10 + 0xd98);
+    v1->field_0 = a2->field_0;
+    v1->field_8 = a2->field_8;
+    return;
+}
+

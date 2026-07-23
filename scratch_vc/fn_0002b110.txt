@@ -1,0 +1,115 @@
+=== fun_0002b110 @ 0x2b110 size=252 blocks=12 calls=1 ===
+--- DISASM ---
+  0x2b110: push      rbx
+  0x2b112: sub       rsp, 0x60
+  0x2b116: mov       ebx, dword ptr [rsp + 0x90]
+  0x2b11d: mov       r10, rdx
+  0x2b120: mov       rdx, rcx
+  0x2b123: test      ebx, 0xff000000
+  0x2b129: je        0x2b206
+  0x2b12f: mov       r8, qword ptr [rsp + 0x98]
+  0x2b137: mov       r11, qword ptr [rsp + 0xa0]
+  0x2b13f: cmp       r8, r11
+  0x2b142: je        0x2b206
+  0x2b148: cmp       byte ptr [r8], 0
+  0x2b14c: je        0x2b206
+  0x2b152: test      r10, r10
+  0x2b155: jne       0x2b15f
+  0x2b157: mov       rax, qword ptr [rcx + 0x38]
+  0x2b15b: mov       r10, qword ptr [rax + 0x18]
+  0x2b15f: xorps     xmm0, xmm0
+  0x2b162: ucomiss   xmm2, xmm0
+  0x2b165: jp        0x2b172
+  0x2b167: jne       0x2b172
+  0x2b169: mov       rax, qword ptr [rcx + 0x38]
+  0x2b16d: movss     xmm2, dword ptr [rax + 0x20]
+  0x2b172: movups    xmm0, xmmword ptr [rcx + 0x60]
+  0x2b176: mov       rcx, qword ptr [rsp + 0xb0]
+  0x2b17e: movups    xmmword ptr [rsp + 0x50], xmm0
+  0x2b183: test      rcx, rcx
+  0x2b186: je        0x2b1cb
+  0x2b188: movss     xmm0, dword ptr [rsp + 0x50]
+  0x2b18e: movss     xmm1, dword ptr [rsp + 0x54]
+  0x2b194: maxss     xmm0, dword ptr [rcx]
+  0x2b198: maxss     xmm1, dword ptr [rcx + 4]
+  0x2b19d: movss     dword ptr [rsp + 0x50], xmm0
+  0x2b1a3: movss     xmm0, dword ptr [rsp + 0x58]
+  0x2b1a9: minss     xmm0, dword ptr [rcx + 8]
+  0x2b1ae: movss     dword ptr [rsp + 0x54], xmm1
+  0x2b1b4: movss     xmm1, dword ptr [rsp + 0x5c]
+  0x2b1ba: minss     xmm1, dword ptr [rcx + 0xc]
+  0x2b1bf: movss     dword ptr [rsp + 0x58], xmm0
+  0x2b1c5: movss     dword ptr [rsp + 0x5c], xmm1
+  0x2b1cb: movss     xmm0, dword ptr [rsp + 0xa8]
+  0x2b1d4: xor       eax, eax
+  0x2b1d6: test      rcx, rcx
+  0x2b1d9: mov       rcx, r10
+  0x2b1dc: setne     al
+  0x2b1df: mov       dword ptr [rsp + 0x48], eax
+  0x2b1e3: lea       rax, [rsp + 0x50]
+  0x2b1e8: movss     dword ptr [rsp + 0x40], xmm0
+  0x2b1ee: mov       qword ptr [rsp + 0x38], r11
+  0x2b1f3: mov       qword ptr [rsp + 0x30], r8
+  0x2b1f8: mov       qword ptr [rsp + 0x28], rax
+  0x2b1fd: mov       dword ptr [rsp + 0x20], ebx
+  0x2b201: call      0x339b0
+  0x2b206: add       rsp, 0x60
+  0x2b20a: pop       rbx
+  0x2b20b: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_0002b110 @ 0x2b110  size=252 */
+/* xrefs: called by fun_0001e320 (1 site), fun_0001e870 (1 site), fun_0001efa0 (1 site) */
+/* confidence: HIGH */
+#include <stddef.h>
+struct s_fun_0002b110_a1;
+struct s_fun_0002b110_s1;
+#pragma pack(push, 1)
+struct s_fun_0002b110_a1 {
+    char _pad_0[56];
+    void* field_38;
+    char _pad_40[32];
+    int64_t field_60;
+    int64_t field_68;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_0002b110_s1 {
+    char _pad_0[4];
+    float field_4;
+    char _pad_8[4];
+    float field_c;
+};
+#pragma pack(pop)
+#ifndef __min
+#define __min(a,b) ((a)<(b)?(a):(b))
+#endif
+#ifndef __max
+#define __max(a,b) ((a)>(b)?(a):(b))
+#endif
+void fun_000339b0();
+void fun_0002b110(struct s_fun_0002b110_a1*a1, int64_t a2, float a3, int64_t a4, int32_t a5, int8_t*a6, int64_t a7, float a8, float*a9) {
+    char s1[16];
+    int64_t v1;
+
+    if (!(a5 & 0xff000000) || (int64_t)(a6) == (int64_t)(a7) || !*a6) {
+        return;
+    }
+    v1 = a2;
+    if (!a2) {
+        v1 = ((int64_t*)a1->field_38)[3];
+    }
+    *(int64_t*)s1 = a1->field_60;
+    *(int64_t*)((char*)s1 + 8) = a1->field_68;
+    if (!a9) {
+        fun_000339b0(v1, a1, a6, a4, a5, s1, a6, a7, a8, a9 != NULL);
+        return;
+    }
+    *(float*)s1 = __max(*(float*)s1, *a9);
+    ((struct s_fun_0002b110_s1*)s1)->field_4 = __max(((struct s_fun_0002b110_s1*)s1)->field_4, a9[1]);
+    *(float*)((char*)s1 + 8) = __min(*(float*)((char*)s1 + 8), a9[2]);
+    ((struct s_fun_0002b110_s1*)s1)->field_c = __min(((struct s_fun_0002b110_s1*)s1)->field_c, a9[3]);
+    fun_000339b0(v1, a1, a6, a4, a5, s1, a6, a7, a8, a9 != NULL);
+    return;
+}
+

@@ -1,0 +1,52 @@
+=== fun_00002630 @ 0x2630 size=33 blocks=1 calls=0 ===
+--- DISASM ---
+  0x2630: lea       rax, [0x87ea0]
+  0x2637: mov       qword ptr [rcx + 0x10], 0
+  0x263f: mov       qword ptr [rcx + 8], rax
+  0x2643: lea       rax, [0x87e90]
+  0x264a: mov       qword ptr [rcx], rax
+  0x264d: mov       rax, rcx
+  0x2650: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_00002630 @ 0x2630  size=33 */
+/* xrefs: called by fun_00005e60 (1 site) */
+/* confidence: HIGH */
+#ifndef __DS_CLASSKW
+#define __DS_CLASSKW
+#ifndef __cplusplus
+#define class struct
+#endif
+#endif
+class std__bad_array_new_length;
+#ifndef __DS_CLS_std__bad_array_new_length
+#define __DS_CLS_std__bad_array_new_length
+#ifdef __cplusplus
+namespace std { 
+#pragma pack(push, 1)
+class bad_array_new_length {
+    void* __vftable;
+    int64_t field_8;
+    int64_t field_10;
+};
+#pragma pack(pop)
+} 
+typedef std::bad_array_new_length std__bad_array_new_length;
+#else
+#pragma pack(push, 1)
+class std__bad_array_new_length /* : std__bad_alloc */ {
+    void* __vftable;
+    int64_t field_8;
+    int64_t field_10;
+};
+#pragma pack(pop)
+#endif
+#endif
+extern void* std__bad_array_new_length__vftable;
+class std__bad_array_new_length* fun_00002630(class std__bad_array_new_length*a1) {
+    a1->field_10 = 0;
+    a1->field_8 = (int64_t)"bad array new length";
+    a1->__vftable = &std__bad_array_new_length__vftable;
+    return a1;
+}
+

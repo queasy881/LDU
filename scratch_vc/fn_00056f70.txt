@@ -1,0 +1,325 @@
+=== fun_00056f70 @ 0x56f70 size=648 blocks=25 calls=4 ===
+--- DISASM ---
+  0x56f70: push      rbp
+  0x56f72: push      r12
+  0x56f74: sub       rsp, 0x38
+  0x56f78: movsx     rax, word ptr [rdx + 0xa38]
+  0x56f80: mov       r12, rdx
+  0x56f83: mov       rbp, rcx
+  0x56f86: test      ax, ax
+  0x56f89: je        0x571f0
+  0x56f8f: movsx     rcx, word ptr [rdx + 0xa3a]
+  0x56f97: add       rax, rax
+  0x56f9a: mov       qword ptr [rsp + 0x58], rsi
+  0x56f9f: mov       qword ptr [rsp + 0x60], rdi
+  0x56fa4: mov       qword ptr [rsp + 0x30], r13
+  0x56fa9: movsxd    rdi, dword ptr [rdx + rax*8 + 0x18]
+  0x56fae: movsxd    r13, dword ptr [rdx + rax*8 + 0x1c]
+  0x56fb3: mov       qword ptr [rsp + 0x28], r14
+  0x56fb8: movsxd    r14, dword ptr [rdx + rax*8 + 0x10]
+  0x56fbd: shl       rcx, 4
+  0x56fc1: add       rcx, rdx
+  0x56fc4: mov       qword ptr [rsp + 0x20], r15
+  0x56fc9: mov       r15d, dword ptr [rdx + rax*8 + 0x14]
+  0x56fce: mov       qword ptr [rsp + 0x50], rbx
+  0x56fd3: mov       dword ptr [rcx + 0x1c], 0xffffffff
+  0x56fda: mov       dword ptr [rcx + 0x14], edi
+  0x56fdd: mov       dword ptr [rcx + 0x18], r15d
+  0x56fe1: mov       dword ptr [rcx + 0x10], r14d
+  0x56fe5: test      edi, edi
+  0x56fe7: je        0x5718f
+  0x56fed: mov       r8d, dword ptr [rdx + 0xa3c]
+  0x56ff4: add       r8d, edi
+  0x56ff7: cmp       r8d, 0x3e7
+  0x56ffe: jl        0x5700c
+  0x57000: xor       r10d, r10d
+  0x57003: mov       dword ptr [rcx + 0x14], r10d
+  0x57007: jmp       0x5716b
+  0x5700c: mov       edx, dword ptr [rdx + 0xa40]
+  0x57012: cmp       r8d, edx
+  0x57015: jle       0x57110
+  0x5701b: nop       dword ptr [rax + rax]
+  0x57020: movzx     eax, word ptr [r12 + 0xa3a]
+  0x57029: cmp       ax, 0x63
+  0x5702d: je        0x571d2
+  0x57033: cmp       ax, 0x62
+  0x57037: jg        0x570f6
+  0x5703d: cmp       dword ptr [r12 + 0x64c], 0
+  0x57046: jl        0x570bd
+  0x57048: movsxd    rbx, dword ptr [r12 + 0x644]
+  0x57050: mov       eax, 0x3e7
+  0x57055: lea       ecx, [rdx + rbx]
+  0x57058: movsxd    r9, ecx
+  0x5705b: sub       eax, ecx
+  0x5705d: mov       dword ptr [r12 + 0xa40], ecx
+  0x57065: mov       rdx, r9
+  0x57068: sub       rdx, rbx
+  0x5706b: movsxd    r8, eax
+  0x5706e: add       rdx, 0x650
+  0x57075: lea       rcx, [r12 + 0x650]
+  0x5707d: add       rdx, r12
+  0x57080: add       rcx, r9
+  0x57083: call      0x84b90
+  0x57088: movsx     eax, word ptr [r12 + 0xa3a]
+  0x57091: cmp       eax, 0x62
+  0x57094: jge       0x570bd
+  0x57096: nop       word ptr [rax + rax]
+  0x570a0: movsxd    rdx, eax
+  0x570a3: add       rdx, rdx
+  0x570a6: mov       ecx, dword ptr [r12 + rdx*8 + 0x2c]
+  0x570ab: test      ecx, ecx
+  0x570ad: js        0x570b6
+  0x570af: add       ecx, ebx
+  0x570b1: mov       dword ptr [r12 + rdx*8 + 0x2c], ecx
+  0x570b6: inc       eax
+  0x570b8: cmp       eax, 0x62
+  0x570bb: jl        0x570a0
+  0x570bd: movsx     rcx, word ptr [r12 + 0xa3a]
+  0x570c6: mov       rdx, rcx
+  0x570c9: mov       eax, ecx
+  0x570cb: shl       rdx, 4
+  0x570cf: mov       ecx, 0x62
+  0x570d4: sub       ecx, eax
+  0x570d6: add       rdx, 0x20
+  0x570da: movsxd    r8, ecx
+  0x570dd: add       rdx, r12
+  0x570e0: shl       r8, 4
+  0x570e4: lea       rcx, [rdx + 0x10]
+  0x570e8: call      0x84b90
+  0x570ed: inc       word ptr [r12 + 0xa3a]
+  0x570f6: mov       ecx, dword ptr [r12 + 0xa3c]
+  0x570fe: mov       edx, dword ptr [r12 + 0xa40]
+  0x57106: add       ecx, edi
+  0x57108: cmp       ecx, edx
+  0x5710a: jg        0x57020
+  0x57110: movsx     r11, word ptr [r12 + 0xa3a]
+  0x57119: sub       edx, edi
+  0x5711b: add       r11, r11
+  0x5711e: xor       r10d, r10d
+  0x57121: mov       dword ptr [r12 + r11*8 + 0x1c], edx
+  0x57126: sub       dword ptr [r12 + 0xa40], edi
+  0x5712e: test      edi, edi
+  0x57130: jle       0x5716b
+  0x57132: nop       dword ptr [rax]
+  0x57136: nop       word ptr [rax + rax]
+  0x57140: mov       ecx, dword ptr [r12 + r11*8 + 0x1c]
+  0x57145: lea       eax, [r14 + r10]
+  0x57149: mov       r8, qword ptr [rbp + 0x20]
+  0x5714d: add       ecx, r10d
+  0x57150: movsxd    r9, eax
+  0x57153: inc       r10d
+  0x57156: movsxd    rdx, ecx
+  0x57159: movzx     eax, byte ptr [r9 + r8]
+  0x5715e: mov       byte ptr [rdx + r12 + 0x650], al
+  0x57166: cmp       r10d, edi
+  0x57169: jl        0x57140
+  0x5716b: mov       eax, dword ptr [rbp + 0x18]
+  0x5716e: mov       rcx, r14
+  0x57171: add       rcx, qword ptr [rbp + 0x30]
+  0x57175: sub       eax, edi
+  0x57177: sub       eax, r14d
+  0x5717a: inc       eax
+  0x5717c: movsxd    r8, eax
+  0x5717f: lea       rdx, [rcx + rdi]
+  0x57183: call      0x84b90
+  0x57188: sub       dword ptr [rbp + 0x18], edi
+  0x5718b: mov       byte ptr [rbp + 0x73], 1
+  0x5718f: test      r15d, r15d
+  0x57192: je        0x571b8
+  0x57194: lea       r8, [r12 + 0x650]
+  0x5719c: mov       r9d, r15d
+  0x5719f: add       r8, r13
+  0x571a2: mov       edx, r14d
+  0x571a5: mov       rcx, rbp
+  0x571a8: call      0x500b0
+  0x571ad: sub       dword ptr [r12 + 0xa3c], eax
+  0x571b5: mov       r15d, eax
+  0x571b8: lea       eax, [r15 + r14]
+  0x571bc: mov       dword ptr [r12], eax
+  0x571c0: dec       word ptr [r12 + 0xa38]
+  0x571c9: dec       word ptr [r12 + 0xa3a]
+  0x571d2: mov       rbx, qword ptr [rsp + 0x50]
+  0x571d7: mov       r13, qword ptr [rsp + 0x30]
+  0x571dc: mov       rdi, qword ptr [rsp + 0x60]
+  0x571e1: mov       rsi, qword ptr [rsp + 0x58]
+  0x571e6: mov       r14, qword ptr [rsp + 0x28]
+  0x571eb: mov       r15, qword ptr [rsp + 0x20]
+  0x571f0: add       rsp, 0x38
+  0x571f4: pop       r12
+  0x571f6: pop       rbp
+  0x571f7: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_00056f70 @ 0x56f70  size=648 */
+/* xrefs: called by fun_00057760 (1 site) */
+/* confidence: HIGH */
+#include <stdbool.h>
+#include <stddef.h>
+struct s_fun_00056f70_a1;
+struct s_fun_00056f70_a2;
+struct s_fun_00056f70_t50;
+struct s_fun_00056f70_v2;
+#pragma pack(push, 1)
+struct s_fun_00056f70_a1 {
+    char _pad_0[24];
+    int32_t field_18;
+    char _pad_1c[4];
+    int64_t field_20;
+    char _pad_28[8];
+    int64_t field_30;
+    char _pad_38[59];
+    int8_t field_73;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_00056f70_a2 {
+    int32_t field_0;
+    char _pad_4[1600];
+    int32_t field_644;
+    char _pad_648[4];
+    int32_t field_64c;
+    char _pad_650[1000];
+    int16_t field_a38;
+    int16_t field_a3a;
+    int32_t field_a3c;
+    int32_t field_a40;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_00056f70_t50 {
+    char _pad_0[16];
+    int32_t field_10;
+    int32_t field_14;
+    char _pad_18[4];
+    int32_t field_1c;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_00056f70_v2 {
+    char _pad_0[16];
+    int32_t field_10;
+    int32_t field_14;
+    int32_t field_18;
+    int32_t field_1c;
+};
+#pragma pack(pop)
+int32_t fun_000500b0();
+int64_t fun_00084b90();
+void fun_00056f70(struct s_fun_00056f70_a1*a1, struct s_fun_00056f70_a2*a2) {
+    int32_t v3;
+    int32_t v5;
+    uint8_t*v6;
+    int32_t v8;
+    int32_t v9;
+    int64_t v4;
+    int64_t v7;
+    struct s_fun_00056f70_v2*v2;
+    bool v1;
+
+    v1 = 0;
+    if (!((uint16_t)a2->field_a38)) {
+        return;
+    }
+    v2 = (struct s_fun_00056f70_v2*)((char*)a2 + ((int64_t)a2->field_a3a << 4));
+    v2->field_1c = -1;
+    v2->field_14 = *(int32_t*)((char*)((char*)a2 + (int64_t)a2->field_a38 * 0x10) + 0x18);
+    v2->field_18 = *(int32_t*)((char*)((char*)a2 + (int64_t)a2->field_a38 * 0x10) + 0x14);
+    v2->field_10 = *(int32_t*)((char*)((char*)a2 + (int64_t)a2->field_a38 * 0x10) + 0x10);
+    if (!*(int32_t*)((char*)((char*)a2 + (int64_t)a2->field_a38 * 0x10) + 0x18)) {
+        v8 = *(int32_t*)((char*)((char*)a2 + (int64_t)a2->field_a38 * 0x10) + 0x14);
+        if (!v8) {
+            a2->field_0 = (int32_t)(v8 + (int64_t)*(int32_t*)((char*)((char*)a2 + (int64_t)a2->field_a38 * 0x10) + 0x10));
+            --a2->field_a38;
+            --a2->field_a3a;
+            return;
+        }
+        v9 = fun_000500b0(a1, (uint32_t)*(int32_t*)((char*)((char*)a2 + (int64_t)a2->field_a38 * 0x10) + 0x10), (char*)a2 + 0x650 + (int64_t)*(int32_t*)((char*)((char*)a2 + (int64_t)a2->field_a38 * 0x10) + 0x1c), (uint32_t)*(int32_t*)((char*)((char*)a2 + (int64_t)a2->field_a38 * 0x10) + 0x14));
+        a2->field_a3c -= v9;
+        v8 = v9;
+        a2->field_0 = (int32_t)(v8 + (int64_t)*(int32_t*)((char*)((char*)a2 + (int64_t)a2->field_a38 * 0x10) + 0x10));
+        --a2->field_a38;
+        --a2->field_a3a;
+        return;
+    } else {
+        if (a2->field_a3c + *(int32_t*)((char*)((char*)a2 + (int64_t)a2->field_a38 * 0x10) + 0x18) < 0x3e7) {
+            if (a2->field_a3c + *(int32_t*)((char*)((char*)a2 + (int64_t)a2->field_a38 * 0x10) + 0x18) <= a2->field_a40) {
+                v1 = 1;
+            } else {
+                v3 = a2->field_a40;
+                while (a2->field_a3a != 0x63) {
+                    if ((int16_t)a2->field_a3a <= 0x62 && a2->field_64c >= 0) {
+                        a2->field_a40 = (int32_t)(v3 + (int64_t)a2->field_644);
+                        v4 = v3 + (int64_t)a2->field_644;
+                        fun_00084b90((char*)a2 + 0x650 + (int64_t)((int32_t)v4), (char*)a2 + ((int64_t)((int32_t)v4) - (int64_t)a2->field_644 + 0x650), (int64_t)(0x3e7 - (int32_t)v4));
+                        if ((int32_t)a2->field_a3a < 0x62) {
+                            v5 = a2->field_a3a;
+                            do {
+                                if (*(int32_t*)((char*)((char*)a2 + (int64_t)v5 * 0x10) + 0x2c) >= 0) {
+                                    *(int32_t*)((char*)((char*)a2 + (int64_t)v5 * 0x10) + 0x2c) += a2->field_644;
+                                }
+                                ++v5;
+                            } while (v5 < 0x62);
+                        }
+                    }
+                    fun_00084b90((char*)a2 + (((int64_t)a2->field_a3a << 4) + 0x20) + 0x10, (char*)a2 + (((int64_t)a2->field_a3a << 4) + 0x20), (int64_t)(0x62 - (int32_t)a2->field_a3a) << 4);
+                    ++a2->field_a3a;
+                    v3 = a2->field_a40;
+                    if (a2->field_a3c + *(int32_t*)((char*)((char*)a2 + (int64_t)a2->field_a38 * 0x10) + 0x18) > v3) continue;
+                    v1 = 1;
+                    break;
+                }
+            }
+            if (!v1) {
+                return;
+            }
+            *(int32_t*)((char*)((char*)a2 + (int64_t)a2->field_a3a * 0x10) + 0x1c) = a2->field_a40 - *(int32_t*)((char*)((char*)a2 + (int64_t)a2->field_a38 * 0x10) + 0x18);
+            a2->field_a40 -= *(int32_t*)((char*)((char*)a2 + (int64_t)a2->field_a38 * 0x10) + 0x18);
+            if (*(int32_t*)((char*)((char*)a2 + (int64_t)a2->field_a38 * 0x10) + 0x18) > 0) {
+                v6 = NULL;
+                while (true) {
+                    *(int8_t*)((char*)((char*)a2 + (int64_t)((int64_t)(*(int32_t*)((char*)((char*)a2 + (int64_t)a2->field_a3a * 0x10) + 0x1c) + (int32_t)v6))) + 0x650) = (int8_t)*(uint8_t*)((char*)((int64_t)((int32_t)((int64_t)*(int32_t*)((char*)((char*)a2 + (int64_t)a2->field_a38 * 0x10) + 0x10) + v6))) + a1->field_20);
+                    v6 = (uint8_t*)((int32_t)v6 + 1);
+                    if ((int64_t)(v6) >= (int64_t)(*(int32_t*)((char*)((char*)a2 + (int64_t)a2->field_a38 * 0x10) + 0x18))) break;
+                }
+            }
+            v7 = (int64_t)*(int32_t*)((char*)((char*)a2 + (int64_t)a2->field_a38 * 0x10) + 0x10) + a1->field_30;
+            fun_00084b90(v7, v7 + (int64_t)*(int32_t*)((char*)((char*)a2 + (int64_t)a2->field_a38 * 0x10) + 0x18), (int64_t)(a1->field_18 - *(int32_t*)((char*)((char*)a2 + (int64_t)a2->field_a38 * 0x10) + 0x18) - *(int32_t*)((char*)((char*)a2 + (int64_t)a2->field_a38 * 0x10) + 0x10) + 1));
+            a1->field_18 -= *(int32_t*)((char*)((char*)a2 + (int64_t)a2->field_a38 * 0x10) + 0x18);
+            a1->field_73 = 1;
+            v8 = *(int32_t*)((char*)((char*)a2 + (int64_t)a2->field_a38 * 0x10) + 0x14);
+            if (!v8) {
+                a2->field_0 = (int32_t)(v8 + (int64_t)*(int32_t*)((char*)((char*)a2 + (int64_t)a2->field_a38 * 0x10) + 0x10));
+                --a2->field_a38;
+                --a2->field_a3a;
+            } else {
+                v9 = fun_000500b0(a1, (uint32_t)*(int32_t*)((char*)((char*)a2 + (int64_t)a2->field_a38 * 0x10) + 0x10), (char*)a2 + 0x650 + (int64_t)*(int32_t*)((char*)((char*)a2 + (int64_t)a2->field_a38 * 0x10) + 0x1c), (uint32_t)*(int32_t*)((char*)((char*)a2 + (int64_t)a2->field_a38 * 0x10) + 0x14));
+                a2->field_a3c -= v9;
+                v8 = v9;
+                a2->field_0 = (int32_t)(v8 + (int64_t)*(int32_t*)((char*)((char*)a2 + (int64_t)a2->field_a38 * 0x10) + 0x10));
+                --a2->field_a38;
+                --a2->field_a3a;
+            }
+        } else {
+            *(int32_t*)((char*)((char*)a2 + ((int64_t)a2->field_a3a << 4)) + 0x14) = 0;
+            v7 = (int64_t)*(int32_t*)((char*)((char*)a2 + (int64_t)a2->field_a38 * 0x10) + 0x10) + a1->field_30;
+            fun_00084b90(v7, v7 + (int64_t)*(int32_t*)((char*)((char*)a2 + (int64_t)a2->field_a38 * 0x10) + 0x18), (int64_t)(a1->field_18 - *(int32_t*)((char*)((char*)a2 + (int64_t)a2->field_a38 * 0x10) + 0x18) - *(int32_t*)((char*)((char*)a2 + (int64_t)a2->field_a38 * 0x10) + 0x10) + 1));
+            a1->field_18 -= *(int32_t*)((char*)((char*)a2 + (int64_t)a2->field_a38 * 0x10) + 0x18);
+            a1->field_73 = 1;
+            v8 = *(int32_t*)((char*)((char*)a2 + (int64_t)a2->field_a38 * 0x10) + 0x14);
+            if (!v8) {
+                a2->field_0 = (int32_t)(v8 + (int64_t)*(int32_t*)((char*)((char*)a2 + (int64_t)a2->field_a38 * 0x10) + 0x10));
+                --a2->field_a38;
+                --a2->field_a3a;
+            } else {
+                v9 = fun_000500b0(a1, (uint32_t)*(int32_t*)((char*)((char*)a2 + (int64_t)a2->field_a38 * 0x10) + 0x10), (char*)a2 + 0x650 + (int64_t)*(int32_t*)((char*)((char*)a2 + (int64_t)a2->field_a38 * 0x10) + 0x1c), (uint32_t)*(int32_t*)((char*)((char*)a2 + (int64_t)a2->field_a38 * 0x10) + 0x14));
+                a2->field_a3c -= v9;
+                v8 = v9;
+                a2->field_0 = (int32_t)(v8 + (int64_t)*(int32_t*)((char*)((char*)a2 + (int64_t)a2->field_a38 * 0x10) + 0x10));
+                --a2->field_a38;
+                --a2->field_a3a;
+            }
+        }
+        return;
+    }
+}
+

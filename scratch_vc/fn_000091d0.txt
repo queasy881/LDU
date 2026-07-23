@@ -1,0 +1,96 @@
+=== fun_000091d0 @ 0x91d0 size=123 blocks=7 calls=1 ===
+--- DISASM ---
+  0x91d0: sub       rsp, 0x48
+  0x91d4: cmp       byte ptr [rcx + 0xba5], 0
+  0x91db: je        0x9246
+  0x91dd: xorps     xmm0, xmm0
+  0x91e0: ucomiss   xmm1, xmm0
+  0x91e3: jp        0x91ee
+  0x91e5: jne       0x91ee
+  0x91e7: ucomiss   xmm2, xmm0
+  0x91ea: jp        0x91ee
+  0x91ec: je        0x9246
+  0x91ee: mov       rcx, qword ptr [rcx + 0xd0]
+  0x91f5: lea       rdx, [rsp + 0x20]
+  0x91fa: movss     dword ptr [rsp + 0x2c], xmm1
+  0x9200: movss     dword ptr [rsp + 0x30], xmm2
+  0x9206: mov       dword ptr [rsp + 0x38], 0
+  0x920e: mov       eax, dword ptr [rcx + 0x141c]
+  0x9214: mov       dword ptr [rsp + 0x28], eax
+  0x9218: inc       eax
+  0x921a: mov       dword ptr [rcx + 0x141c], eax
+  0x9220: mov       eax, dword ptr [rcx + 0x1418]
+  0x9226: add       rcx, 0x13f8
+  0x922d: mov       dword ptr [rsp + 0x20], 2
+  0x9235: mov       dword ptr [rsp + 0x24], 1
+  0x923d: mov       dword ptr [rsp + 0x34], eax
+  0x9241: call      0x27890
+  0x9246: add       rsp, 0x48
+  0x924a: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_000091d0 @ 0x91d0  size=123 */
+/* xrefs: called by fun_0005b1c0 (2 sites) */
+/* confidence: HIGH */
+struct s_fun_000091d0_a1;
+struct s_fun_000091d0_a1_d0;
+struct s_fun_000091d0_s1;
+#pragma pack(push, 1)
+struct s_fun_000091d0_a1 {
+    char _pad_0[208];
+    struct s_fun_000091d0_a1_d0* field_d0;
+    char _pad_d8[2765];
+    int8_t field_ba5;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_000091d0_a1_d0 {
+    char _pad_0[5144];
+    int32_t field_1418;
+    int32_t field_141c;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_000091d0_s1 {
+    int32_t field_0;
+    int32_t field_4;
+    int32_t field_8;
+    float field_c;
+    float field_10;
+    int32_t field_14;
+    int32_t field_18;
+};
+#pragma pack(pop)
+void fun_00027890();
+void fun_000091d0(struct s_fun_000091d0_a1*a1, float a2, float a3) {
+    char s1[40];
+
+    if (a1->field_ba5) {
+        if (a2 != 0.0f) {
+            ((struct s_fun_000091d0_s1*)s1)->field_c = a2;
+            ((struct s_fun_000091d0_s1*)s1)->field_10 = a3;
+            ((struct s_fun_000091d0_s1*)s1)->field_18 = 0;
+            ((struct s_fun_000091d0_s1*)s1)->field_8 = a1->field_d0->field_141c;
+            ++a1->field_d0->field_141c;
+            ((struct s_fun_000091d0_s1*)s1)->field_0 = 2;
+            ((struct s_fun_000091d0_s1*)s1)->field_4 = 1;
+            ((struct s_fun_000091d0_s1*)s1)->field_14 = a1->field_d0->field_1418;
+            fun_00027890((char*)a1->field_d0 + 0x13f8, s1);
+            return;
+        }
+        if (a3 != 0.0f) {
+            ((struct s_fun_000091d0_s1*)s1)->field_c = a2;
+            ((struct s_fun_000091d0_s1*)s1)->field_10 = a3;
+            ((struct s_fun_000091d0_s1*)s1)->field_18 = 0;
+            ((struct s_fun_000091d0_s1*)s1)->field_8 = a1->field_d0->field_141c;
+            ++a1->field_d0->field_141c;
+            ((struct s_fun_000091d0_s1*)s1)->field_0 = 2;
+            ((struct s_fun_000091d0_s1*)s1)->field_4 = 1;
+            ((struct s_fun_000091d0_s1*)s1)->field_14 = a1->field_d0->field_1418;
+            fun_00027890((char*)a1->field_d0 + 0x13f8, s1);
+            return;
+        }
+    }
+    return;
+}
+

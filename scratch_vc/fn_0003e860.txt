@@ -1,0 +1,23 @@
+=== fun_0003e860 @ 0x3e860 size=31 blocks=1 calls=1 ===
+--- DISASM ---
+  0x3e860: push      rbx
+  0x3e862: sub       rsp, 0x20
+  0x3e866: mov       rbx, rcx
+  0x3e869: add       rcx, 0x28
+  0x3e86d: call      0x2b510
+  0x3e872: mov       dword ptr [rbx + 8], 0xbf800000
+  0x3e879: add       rsp, 0x20
+  0x3e87d: pop       rbx
+  0x3e87e: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_0003e860 @ 0x3e860  size=31 */
+/* xrefs: called by fun_0001ab40 (1 site) */
+/* confidence: HIGH */
+void fun_0002b510();
+void fun_0003e860(int32_t*a1) {
+    fun_0002b510((char*)a1 + 0x28);
+    a1[2] = -1082130432;
+    return;
+}
+

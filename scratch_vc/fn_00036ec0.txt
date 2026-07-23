@@ -1,0 +1,110 @@
+=== fun_00036ec0 @ 0x36ec0 size=166 blocks=4 calls=3 ===
+--- DISASM ---
+  0x36ec0: mov       rax, rsp
+  0x36ec3: push      rbx
+  0x36ec4: push      rbp
+  0x36ec5: push      rsi
+  0x36ec6: push      rdi
+  0x36ec7: sub       rsp, 0x98
+  0x36ece: xor       ebp, ebp
+  0x36ed0: mov       qword ptr [rsp + 0x20], 1
+  0x36ed9: xorps     xmm0, xmm0
+  0x36edc: mov       qword ptr [rax - 0x60], rbp
+  0x36ee0: movups    xmmword ptr [rsp + 0x28], xmm0
+  0x36ee5: mov       qword ptr [rax - 0x70], rbp
+  0x36ee9: mov       rbx, r8
+  0x36eec: xorps     xmm1, xmm1
+  0x36eef: mov       dword ptr [rax - 0x68], ebp
+  0x36ef2: lea       r8, [rsp + 0x20]
+  0x36ef7: mov       dword ptr [rax - 0x30], ebp
+  0x36efa: movdqu    xmmword ptr [rax - 0x80], xmm1
+  0x36eff: mov       edi, edx
+  0x36f01: mov       rsi, rcx
+  0x36f04: movups    xmmword ptr [rax - 0x58], xmm0
+  0x36f08: movdqu    xmmword ptr [rax - 0x48], xmm1
+  0x36f0d: call      0x39aa0
+  0x36f12: test      eax, eax
+  0x36f14: je        0x36f55
+  0x36f16: movsxd    rax, dword ptr [rsp + 0x50]
+  0x36f1b: imul      rcx, rax, 0xe
+  0x36f1f: call      0x16810
+  0x36f24: lea       r8, [rsp + 0x58]
+  0x36f29: mov       qword ptr [rbx], rax
+  0x36f2c: mov       edx, edi
+  0x36f2e: mov       qword ptr [rsp + 0x80], rax
+  0x36f36: mov       rcx, rsi
+  0x36f39: call      0x39aa0
+  0x36f3e: test      eax, eax
+  0x36f40: je        0x36f55
+  0x36f42: mov       eax, dword ptr [rsp + 0x88]
+  0x36f49: add       rsp, 0x98
+  0x36f50: pop       rdi
+  0x36f51: pop       rsi
+  0x36f52: pop       rbp
+  0x36f53: pop       rbx
+  0x36f54: ret       
+  0x36f55: mov       qword ptr [rbx], rbp
+  0x36f58: xor       eax, eax
+  0x36f5a: add       rsp, 0x98
+  0x36f61: pop       rdi
+  0x36f62: pop       rsi
+  0x36f63: pop       rbp
+  0x36f64: pop       rbx
+  0x36f65: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_00036ec0 @ 0x36ec0  size=166 */
+/* xrefs: called by fun_00036f70 (1 site) */
+/* confidence: HIGH */
+struct s_fun_00036ec0_s2;
+struct s_fun_00036ec0_s3;
+#pragma pack(push, 1)
+struct s_fun_00036ec0_s2 {
+    int64_t field_0;
+    char _pad_8[16];
+    int64_t field_18;
+    int64_t field_20;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_00036ec0_s3 {
+    char _pad_0[16];
+    int32_t field_10;
+    char _pad_14[20];
+    int64_t field_28;
+    int32_t field_30;
+};
+#pragma pack(pop)
+int64_t fun_00016810();
+int32_t fun_00039aa0();
+int32_t fun_00036ec0(int64_t a1, int32_t a2, int64_t*a3) {
+    char s1[16];
+    char s2[56];
+    char s3[64];
+    int64_t v1;
+
+    ((struct s_fun_00036ec0_s2*)s2)->field_0 = 1;
+    ((struct s_fun_00036ec0_s2*)s2)->field_18 = 0;
+    *(int64_t*)s1 = 0;
+    *(int64_t*)((char*)s1 + 8) = 0;
+    *(int64_t*)s1 = 0;
+    *(int32_t*)((char*)s1 + 8) = 0;
+    ((struct s_fun_00036ec0_s3*)s3)->field_10 = 0;
+    ((struct s_fun_00036ec0_s2*)s2)->field_20 = 0;
+    *(int64_t*)(&((struct s_fun_00036ec0_s2*)s2)->field_20 + 8) = 0;
+    *(int64_t*)((char*)s2 + 0x30) = 0;
+    *(int64_t*)((char*)s2 + 0x30 + 8) = 0;
+    if (!fun_00039aa0(a1, a2, s2)) {
+        *a3 = 0;
+        return 0;
+    }
+    v1 = fun_00016810((int64_t)*(int32_t*)((char*)s2 + 0x30) * 0xe);
+    *a3 = v1;
+    ((struct s_fun_00036ec0_s3*)s3)->field_28 = v1;
+    if (!fun_00039aa0(a1, a2, s3)) {
+        *a3 = 0;
+        return 0;
+    }
+    return ((struct s_fun_00036ec0_s3*)s3)->field_30;
+}
+

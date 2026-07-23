@@ -1,0 +1,86 @@
+=== fun_000142f0 @ 0x142f0 size=106 blocks=9 calls=1 ===
+--- DISASM ---
+  0x142f0: push      rdi
+  0x142f2: sub       rsp, 0x20
+  0x142f6: mov       rdi, r8
+  0x142f9: cmp       rcx, r8
+  0x142fc: jne       0x14307
+  0x142fe: mov       rax, rcx
+  0x14301: add       rsp, 0x20
+  0x14305: pop       rdi
+  0x14306: ret       
+  0x14307: mov       qword ptr [rsp + 0x38], rbx
+  0x1430c: mov       rbx, rdi
+  0x1430f: jae       0x14323
+  0x14311: movzx     eax, byte ptr [rbx - 1]
+  0x14315: dec       rbx
+  0x14318: and       al, 0xc0
+  0x1431a: cmp       al, 0x80
+  0x1431c: jne       0x14326
+  0x1431e: cmp       rbx, rcx
+  0x14321: ja        0x14311
+  0x14323: mov       rbx, rcx
+  0x14326: mov       r8, rdx
+  0x14329: lea       rcx, [rsp + 0x30]
+  0x1432e: mov       rdx, rbx
+  0x14331: call      0x14040
+  0x14336: cmp       dword ptr [rsp + 0x30], 0xfffd
+  0x1433e: mov       ecx, eax
+  0x14340: je        0x1434c
+  0x14342: mov       eax, edi
+  0x14344: sub       eax, ebx
+  0x14346: cmp       ecx, eax
+  0x14348: cmovle    rbx, rdi
+  0x1434c: mov       rax, rbx
+  0x1434f: mov       rbx, qword ptr [rsp + 0x38]
+  0x14354: add       rsp, 0x20
+  0x14358: pop       rdi
+  0x14359: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_000142f0 @ 0x142f0  size=106 */
+/* xrefs: called by fun_000500b0 (1 site) */
+/* confidence: HIGH */
+#include <stdbool.h>
+int32_t fun_00014040();
+uint8_t* fun_000142f0(int64_t a1, int64_t a2, int64_t a3) {
+    char s1[256];
+    uint8_t*v2;
+    uint8_t*v3 = 0;
+    int32_t v4;
+    bool v1;
+
+    v1 = 0;
+    if (a1 == a3) {
+        return (uint8_t*)a1;
+    }
+    v2 = (uint8_t*)a3;
+    if ((uint64_t)(a1) >= (uint64_t)(a3)) {
+        v1 = 1;
+    } else {
+        while (true) {
+            v3 = v2 - 1;
+            if ((*(uint8_t*)((char*)v2 - 1) & 0xc0) != 0x80) break;
+            --v2;
+            if ((uint64_t)(v2) > (uint64_t)(a1)) continue;
+            v1 = 1;
+            break;
+        }
+    }
+    if (v1) {
+        v3 = (uint8_t*)a1;
+        v4 = fun_00014040(s1, v3, a2);
+        if (*(int32_t*)s1 != 0xfffd) {
+            v3 = (uint8_t*)(v4 <= (int32_t)a3 - (int64_t)((int32_t)v3) ? a3 : (int64_t)(v3));
+            return v3;
+        }
+    } else {
+        v4 = fun_00014040(s1, v3, a2);
+        if (*(int32_t*)s1 != 0xfffd) {
+            v3 = (uint8_t*)(v4 <= (int32_t)a3 - (int64_t)((int32_t)v3) ? a3 : (int64_t)(v3));
+            return v3;
+        }
+    }
+    return v3;
+}
+

@@ -1,0 +1,402 @@
+=== fun_00021860 @ 0x21860 size=676 blocks=59 calls=11 ===
+--- DISASM ---
+  0x21860: push      rbp
+  0x21862: push      rsi
+  0x21863: push      rdi
+  0x21864: push      r14
+  0x21866: sub       rsp, 0x38
+  0x2186a: mov       rdi, qword ptr [0x174148]
+  0x21871: mov       esi, edx
+  0x21873: or        esi, 0xd000
+  0x21879: mov       ebp, r8d
+  0x2187c: test      edx, 0x3c00
+  0x21882: cmovne    esi, edx
+  0x21885: call      0x11ca0
+  0x2188a: mov       r14d, eax
+  0x2188d: cmp       dword ptr [rdi + 0x1e10], eax
+  0x21893: jne       0x21896
+  0x21895: int3      
+  0x21896: mov       qword ptr [rsp + 0x60], rbx
+  0x2189b: bt        esi, 0x10
+  0x2189f: jae       0x218af
+  0x218a1: cmp       qword ptr [rdi + 0x1fd0], 0
+  0x218a9: je        0x21aa3
+  0x218af: bt        esi, 0xd
+  0x218b3: jae       0x218ef
+  0x218b5: test      dword ptr [rdi + 0x2824], 0x200
+  0x218bf: je        0x218de
+  0x218c1: mov       ecx, r14d
+  0x218c4: call      0x12610
+  0x218c9: mov       rdx, rax
+  0x218cc: lea       rcx, [0x89fc0]
+  0x218d3: mov       r9d, ebp
+  0x218d6: mov       r8d, esi
+  0x218d9: call      0xf0a0
+  0x218de: mov       al, 1
+  0x218e0: mov       rbx, qword ptr [rsp + 0x60]
+  0x218e5: add       rsp, 0x38
+  0x218e9: pop       r14
+  0x218eb: pop       rdi
+  0x218ec: pop       rsi
+  0x218ed: pop       rbp
+  0x218ee: ret       
+  0x218ef: mov       eax, dword ptr [rdi + 0x14f4]
+  0x218f5: test      eax, eax
+  0x218f7: je        0x21997
+  0x218fd: cmp       eax, ebp
+  0x218ff: je        0x21997
+  0x21905: bt        esi, 0xa
+  0x21909: jb        0x21aa3
+  0x2190f: cmp       byte ptr [rdi + 0xd2], 0
+  0x21916: je        0x21962
+  0x21918: mov       ecx, r14d
+  0x2191b: call      0x14e10
+  0x21920: test      al, al
+  0x21922: je        0x21962
+  0x21924: test      dword ptr [rdi + 0x2824], 0x200
+  0x2192e: je        0x21aa3
+  0x21934: mov       ecx, r14d
+  0x21937: call      0x12610
+  0x2193c: mov       rdx, rax
+  0x2193f: lea       rcx, [0x8a010]
+  0x21946: mov       r9d, ebp
+  0x21949: mov       r8d, esi
+  0x2194c: call      0xf0a0
+  0x21951: xor       al, al
+  0x21953: mov       rbx, qword ptr [rsp + 0x60]
+  0x21958: add       rsp, 0x38
+  0x2195c: pop       r14
+  0x2195e: pop       rdi
+  0x2195f: pop       rsi
+  0x21960: pop       rbp
+  0x21961: ret       
+  0x21962: bt        esi, 0xf
+  0x21966: jb        0x21997
+  0x21968: cmp       byte ptr [rdi + 0x1e0c], 0
+  0x2196f: je        0x21997
+  0x21971: mov       eax, r14d
+  0x21974: and       eax, 0xffff0fff
+  0x21979: jne       0x21989
+  0x2197b: mov       ecx, r14d
+  0x2197e: and       ecx, 0xf000
+  0x21984: call      0xe7d0
+  0x21989: add       eax, 0xfffffe00
+  0x2198e: cmp       eax, 0x77
+  0x21991: jbe       0x21aa3
+  0x21997: bt        esi, 0x11
+  0x2199b: jae       0x219b0
+  0x2199d: mov       rax, qword ptr [rdi + 0x1480]
+  0x219a4: mov       rcx, qword ptr [rax + 0x3c0]
+  0x219ab: mov       edx, dword ptr [rcx + 0x10]
+  0x219ae: jmp       0x219b6
+  0x219b0: mov       edx, dword ptr [rdi + 0x1e14]
+  0x219b6: bt        esi, 0xb
+  0x219ba: jae       0x21a1e
+  0x219bc: test      ebp, ebp
+  0x219be: je        0x219d2
+  0x219c0: cmp       dword ptr [rdi + 0x14f4], ebp
+  0x219c6: jne       0x219d2
+  0x219c8: mov       ebx, 0x12c
+  0x219cd: jmp       0x21a72
+  0x219d2: xor       ebx, ebx
+  0x219d4: test      edx, edx
+  0x219d6: je        0x21a72
+  0x219dc: mov       r8d, dword ptr [rdi + 0x1ff8]
+  0x219e3: test      r8d, r8d
+  0x219e6: jle       0x21a72
+  0x219ec: mov       r9, qword ptr [rdi + 0x2000]
+  0x219f3: mov       ecx, ebx
+  0x219f5: mov       eax, ecx
+  0x219f7: cmp       dword ptr [r9 + rax*8], edx
+  0x219fb: je        0x21a06
+  0x219fd: inc       ecx
+  0x219ff: cmp       ecx, r8d
+  0x21a02: jl        0x219f5
+  0x21a04: jmp       0x21a72
+  0x21a06: bt        esi, 0xf
+  0x21a0a: jae       0x21a15
+  0x21a0c: mov       ebx, 0x257
+  0x21a11: sub       ebx, ecx
+  0x21a13: jmp       0x21a72
+  0x21a15: mov       ebx, 0xc7
+  0x21a1a: sub       ebx, ecx
+  0x21a1c: jmp       0x21a72
+  0x21a1e: bt        esi, 0xa
+  0x21a22: jae       0x21a37
+  0x21a24: test      ebp, ebp
+  0x21a26: je        0x21a70
+  0x21a28: cmp       dword ptr [rdi + 0x14f4], ebp
+  0x21a2e: jne       0x21a70
+  0x21a30: mov       ebx, 0x12c
+  0x21a35: jmp       0x21a72
+  0x21a37: bt        esi, 0xc
+  0x21a3b: jae       0x21a70
+  0x21a3d: bt        esi, 0xf
+  0x21a41: jae       0x21a4a
+  0x21a43: mov       ebx, 0x190
+  0x21a48: jmp       0x21a72
+  0x21a4a: test      ebp, ebp
+  0x21a4c: je        0x21a5d
+  0x21a4e: cmp       dword ptr [rdi + 0x14f4], ebp
+  0x21a54: jne       0x21a5d
+  0x21a56: mov       ebx, 0x12c
+  0x21a5b: jmp       0x21a72
+  0x21a5d: bt        esi, 0xe
+  0x21a61: mov       ebx, 1
+  0x21a66: mov       eax, 0xc8
+  0x21a6b: cmovb     ebx, eax
+  0x21a6e: jmp       0x21a72
+  0x21a70: xor       ebx, ebx
+  0x21a72: test      dword ptr [rdi + 0x2824], 0x200
+  0x21a7c: je        0x21a9f
+  0x21a7e: mov       ecx, r14d
+  0x21a81: call      0x12610
+  0x21a86: mov       rdx, rax
+  0x21a89: mov       dword ptr [rsp + 0x20], ebx
+  0x21a8d: mov       r9d, ebp
+  0x21a90: lea       rcx, [0x8a070]
+  0x21a97: mov       r8d, esi
+  0x21a9a: call      0xf0a0
+  0x21a9f: test      ebx, ebx
+  0x21aa1: jne       0x21ab4
+  0x21aa3: xor       al, al
+  0x21aa5: mov       rbx, qword ptr [rsp + 0x60]
+  0x21aaa: add       rsp, 0x38
+  0x21aae: pop       r14
+  0x21ab0: pop       rdi
+  0x21ab1: pop       rsi
+  0x21ab2: pop       rbp
+  0x21ab3: ret       
+  0x21ab4: mov       ecx, r14d
+  0x21ab7: call      0x12d30
+  0x21abc: mov       rsi, rax
+  0x21abf: movzx     ecx, word ptr [rax + 6]
+  0x21ac3: cmp       ebx, ecx
+  0x21ac5: jle       0x21ace
+  0x21ac7: mov       dword ptr [rax + 0xc], ebp
+  0x21aca: mov       word ptr [rax + 6], bx
+  0x21ace: mov       ecx, dword ptr [rax + 8]
+  0x21ad1: cmp       ecx, ebp
+  0x21ad3: jne       0x21af2
+  0x21ad5: test      dword ptr [rdi + 0x2824], 0x200
+  0x21adf: je        0x21af0
+  0x21ae1: lea       rcx, [0x8a0b8]
+  0x21ae8: call      0xf0a0
+  0x21aed: mov       ecx, dword ptr [rsi + 8]
+  0x21af0: cmp       ecx, ebp
+  0x21af2: mov       rbx, qword ptr [rsp + 0x60]
+  0x21af7: sete      al
+  0x21afa: add       rsp, 0x38
+  0x21afe: pop       r14
+  0x21b00: pop       rdi
+  0x21b01: pop       rsi
+  0x21b02: pop       rbp
+  0x21b03: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_00021860 @ 0x21860  size=676 */
+/* xrefs: called by fun_00009550 (1 site), fun_0001ab40 (1 site), fun_00021ef0 (1 site) */
+/* confidence: MEDIUM - 1 residual goto */
+struct s_fun_00021860_qword_174148;
+struct s_fun_00021860_v15;
+#pragma pack(push, 1)
+struct s_fun_00021860_qword_174148 {
+    char _pad_0[210];
+    int8_t field_d2;
+    char _pad_d3[5037];
+    void* field_1480;
+    char _pad_1488[108];
+    int32_t field_14f4;
+    char _pad_14f8[2324];
+    int8_t field_1e0c;
+    char _pad_1e0d[3];
+    int32_t field_1e10;
+    int32_t field_1e14;
+    char _pad_1e18[440];
+    int64_t field_1fd0;
+    char _pad_1fd8[32];
+    int32_t field_1ff8;
+    char _pad_1ffc[4];
+    void* field_2000;
+    char _pad_2008[2076];
+    int32_t field_2824;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_00021860_v15 {
+    char _pad_0[6];
+    uint16_t field_6;
+    int32_t field_8;
+    int32_t field_c;
+};
+#pragma pack(pop)
+#define qword_174148 (*(int64_t*)0x174148)
+int32_t fun_0000e7d0();
+int32_t fun_0000f0a0();
+int32_t fun_00011ca0();
+int64_t fun_00012610();
+int64_t fun_00012d30();
+int32_t fun_00014e10();
+uint8_t fun_00021860(int64_t a1, int32_t a2, int32_t a3) {
+    struct s_fun_00021860_qword_174148* gs_174148 = (struct s_fun_00021860_qword_174148*)qword_174148;
+    int32_t v14 = 0;
+    int32_t v12;
+    uint32_t v6;
+    int64_t v7;
+    int32_t v8;
+    int32_t v9;
+    int64_t v13;
+    int32_t v10;
+    int32_t v11;
+    int32_t v2 = 0;
+    struct s_fun_00021860_v15*v15;
+    int32_t v4 = 0;
+    int32_t v5 = 0;
+    int32_t v3 = 0;
+    int32_t v1;
+
+    v1 = 0;
+    v3 = (a2 & 0x3c00) != 0 ? a2 : a2 | 0xd000;
+    v2 = fun_00011ca0(a1);
+    if (!((v3 >> 0x10) & 1) || gs_174148->field_1fd0) {
+        if (!((v3 >> 0xd) & 1)) {
+            v4 = (v3 >> 0xa) & 1;
+            v5 = (v3 >> 0xf) & 1;
+            if (gs_174148->field_14f4 && gs_174148->field_14f4 != a3) {
+                if (v4) {
+                    v1 = 1;
+                } else if (!gs_174148->field_d2 || !((uint8_t)fun_00014e10(v2))) {
+                    if (!v5 && gs_174148->field_1e0c) {
+                        v6 = v2 & 0xffff0fff;
+                        if (!v6) {
+                            v6 = fun_0000e7d0(v2 & 0xf000);
+                        }
+                        if ((uint32_t)(v6 + 0xfffffe00) <= 0x77) {
+                            v1 = 1;
+                        }
+                    }
+                } else {
+                    v1 = 2;
+                }
+            }
+L_21997:;
+            if (!v1) {
+                if (!((v3 >> 0x11) & 1)) {
+                    v7 = gs_174148->field_1e14;
+                } else {
+                    v7 = *(int32_t*)(((int64_t*)gs_174148->field_1480)[0x78] + 0x10);
+                }
+                if (!((v3 >> 0xb) & 1)) {
+                    if (!v4) {
+                        if (!((v3 >> 0xc) & 1)) {
+                            v8 = 0;
+                            v9 = a3;
+                            v10 = v3;
+                            v11 = v2;
+                        } else if (!v5) {
+                            if (!a3 || gs_174148->field_14f4 != a3) {
+                                v8 = ((v3 >> 0xe) & 1) != 0 ? 0xc8 : 1;
+                                v9 = a3;
+                                v10 = v3;
+                                v11 = v2;
+                            } else {
+                                v8 = 0x12c;
+                                v9 = a3;
+                                v10 = v3;
+                                v11 = v2;
+                            }
+                        } else {
+                            v8 = 0x190;
+                            v9 = a3;
+                            v10 = v3;
+                            v11 = v2;
+                        }
+                    } else if (!a3 || gs_174148->field_14f4 != a3) {
+                        v8 = 0;
+                        v9 = a3;
+                        v10 = v3;
+                        v11 = v2;
+                    } else {
+                        v8 = 0x12c;
+                        v9 = a3;
+                        v10 = v3;
+                        v11 = v2;
+                    }
+                } else if (!a3 || gs_174148->field_14f4 != a3) {
+                    v8 = 0;
+                    v9 = a3;
+                    v10 = v3;
+                    v11 = v2;
+                    if ((int32_t)v7) {
+                        v8 = 0;
+                        v9 = gs_174148->field_1ff8;
+                        v10 = v3;
+                        v11 = v2;
+                        if (gs_174148->field_1ff8 > 0) {
+                            v12 = 0;
+                            v10 = v3;
+                            v11 = v2;
+                            while (*(int32_t*)((char*)gs_174148->field_2000 + v12 * 8) != (int32_t)v7) {
+                                ++v12;
+                                if (v12 < gs_174148->field_1ff8) continue;
+                                v8 = 0;
+                                v9 = gs_174148->field_1ff8;
+                            }
+                            if (!((v10 >> 0xf) & 1)) {
+                                v8 = 0xc7 - v12;
+                                v9 = gs_174148->field_1ff8;
+                            } else {
+                                v8 = 0x257 - v12;
+                                v9 = gs_174148->field_1ff8;
+                            }
+                        }
+                    }
+                } else {
+                    v8 = 0x12c;
+                    v9 = a3;
+                    v10 = v3;
+                    v11 = v2;
+                }
+                v13 = (int64_t)gs_174148->field_2000;
+                if (gs_174148->field_2824 & 0x200) {
+                    v7 = fun_00012610(v11);
+                    v14 = v8;
+                    fun_0000f0a0("SetShortcutRouting(%s, flags=%04X, owner_id=0x%08X) -> score %d\n", v7, v10, a3, v14);
+                    v9 = v10;
+                    v13 = a3;
+                }
+                if (!v8) {
+                    return 0;
+                }
+                v15 = (struct s_fun_00021860_v15*)fun_00012d30(v11, v7, v9, v13, v14);
+                if (v8 > (int32_t)((uint32_t)v15->field_6)) {
+                    v15->field_c = a3;
+                    v15->field_6 = (int16_t)v8;
+                }
+                if (v15->field_8 != a3) {
+                    return v15->field_8 == a3;
+                }
+                if (!(gs_174148->field_2824 & 0x200)) {
+                    return v15->field_8 == a3;
+                }
+                fun_0000f0a0("--> granting current route\n");
+                return v15->field_8 == a3;
+            }
+            if (v1 == 1) {
+                return 0;
+            }
+            if (!(gs_174148->field_2824 & 0x200)) {
+                return 0;
+            }
+            return 0;
+        }
+        if (!(gs_174148->field_2824 & 0x200)) {
+            return 1;
+        }
+        fun_0000f0a0("SetShortcutRouting(%s, flags=%04X, owner_id=0x%08X) -> always, no register\n", fun_00012610(v2), v3, a3);
+        return 1;
+    }
+    v1 = 1;
+    goto L_21997;
+}
+

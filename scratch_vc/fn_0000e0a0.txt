@@ -1,0 +1,26 @@
+=== fun_0000e0a0 @ 0xe0a0 size=11 blocks=1 calls=0 ===
+--- DISASM ---
+  0xe0a0: xor       eax, eax
+  0xe0a2: mov       qword ptr [rcx + 0x3c], rax
+  0xe0a6: mov       qword ptr [rcx + 0x48], rax
+  0xe0aa: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_0000e0a0 @ 0xe0a0  size=11 */
+/* xrefs: called by fun_00059b90 (1 site) */
+/* confidence: HIGH */
+struct s_fun_0000e0a0_a1;
+#pragma pack(push, 1)
+struct s_fun_0000e0a0_a1 {
+    char _pad_0[60];
+    int64_t field_3c;
+    char _pad_44[4];
+    int64_t field_48;
+};
+#pragma pack(pop)
+void fun_0000e0a0(struct s_fun_0000e0a0_a1*a1) {
+    a1->field_3c = 0;
+    a1->field_48 = 0;
+    return;
+}
+

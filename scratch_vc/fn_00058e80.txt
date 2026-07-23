@@ -1,0 +1,40 @@
+=== fun_00058e80 @ 0x58e80 size=51 blocks=6 calls=2 ===
+--- DISASM ---
+  0x58e80: sub       rsp, 0x28
+  0x58e84: call      0x122b0
+  0x58e89: test      rax, rax
+  0x58e8c: je        0x58e9c
+  0x58e8e: call      0x124c0
+  0x58e93: mov       rcx, qword ptr [rax + 0x98]
+  0x58e9a: jmp       0x58e9e
+  0x58e9c: xor       ecx, ecx
+  0x58e9e: cmp       qword ptr [rcx + 0x28], 0
+  0x58ea3: jne       0x58eae
+  0x58ea5: add       rsp, 0x28
+  0x58ea9: jmp       0x58660
+  0x58eae: add       rsp, 0x28
+  0x58eb2: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_00058e80 @ 0x58e80  size=51 */
+/* xrefs: called by fun_00001e10 (1 site) */
+/* confidence: HIGH */
+#include <stddef.h>
+int64_t fun_000124c0();
+int32_t fun_00058660();
+int64_t get_174148();
+void fun_00058e80(void) {
+    int64_t*v1;
+
+    if (!get_174148()) {
+        v1 = NULL;
+    } else {
+        v1 = (int64_t*)*(int64_t*)(fun_000124c0() + 0x98);
+    }
+    if (v1[5]) {
+        return;
+    }
+    fun_00058660();
+    return;
+}
+

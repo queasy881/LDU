@@ -1,0 +1,190 @@
+=== fun_00014040 @ 0x14040 size=396 blocks=14 calls=0 ===
+--- DISASM ---
+  0x14040: push      rbx
+  0x14042: push      rbp
+  0x14043: push      rsi
+  0x14044: push      rdi
+  0x14045: push      r14
+  0x14047: push      r15
+  0x14049: movzx     r9d, byte ptr [rdx]
+  0x1404d: lea       r15, [rip - 0x14054]
+  0x14054: mov       eax, r9d
+  0x14057: mov       rdi, rcx
+  0x1405a: shr       rax, 3
+  0x1405e: movsx     r10, byte ptr [rax + r15 + 0x899a8]
+  0x14067: xor       eax, eax
+  0x14069: test      r10d, r10d
+  0x1406c: sete      al
+  0x1406f: lea       r11d, [rax + r10]
+  0x14073: test      r8, r8
+  0x14076: jne       0x1407e
+  0x14078: movsxd    r8, r11d
+  0x1407b: add       r8, rdx
+  0x1407e: xor       eax, eax
+  0x14080: mov       ecx, r9d
+  0x14083: cmp       rdx, r8
+  0x14086: cmovae    ecx, eax
+  0x14089: lea       rax, [rdx + 1]
+  0x1408d: cmp       rax, r8
+  0x14090: jae       0x14097
+  0x14092: movzx     ebx, byte ptr [rax]
+  0x14095: jmp       0x14099
+  0x14097: xor       bl, bl
+  0x14099: lea       rax, [rdx + 2]
+  0x1409d: cmp       rax, r8
+  0x140a0: jae       0x140a8
+  0x140a2: movzx     r9d, byte ptr [rax]
+  0x140a6: jmp       0x140ab
+  0x140a8: xor       r9b, r9b
+  0x140ab: add       rdx, 3
+  0x140af: cmp       rdx, r8
+  0x140b2: jae       0x140ba
+  0x140b4: movzx     r8d, byte ptr [rdx]
+  0x140b8: jmp       0x140bd
+  0x140ba: xor       r8b, r8b
+  0x140bd: movzx     ebp, r8b
+  0x140c1: lea       r10, [r10*4]
+  0x140c9: movzx     esi, r9b
+  0x140cd: mov       r9d, dword ptr [r10 + r15 + 0x899c8]
+  0x140d5: mov       r8d, esi
+  0x140d8: and       r8d, 0xc0
+  0x140df: movzx     r14d, cl
+  0x140e3: mov       ecx, dword ptr [r10 + r15 + 0x899f8]
+  0x140eb: and       r9d, r14d
+  0x140ee: shl       r9d, 6
+  0x140f2: movzx     ebx, bl
+  0x140f5: mov       eax, ebx
+  0x140f7: and       eax, 0x3f
+  0x140fa: or        r9d, eax
+  0x140fd: mov       eax, esi
+  0x140ff: and       eax, 0x3f
+  0x14102: shl       r9d, 6
+  0x14106: or        r9d, eax
+  0x14109: mov       eax, ebp
+  0x1410b: and       eax, 0x3f
+  0x1410e: shl       r9d, 6
+  0x14112: or        r9d, eax
+  0x14115: mov       eax, ebp
+  0x14117: shr       eax, 2
+  0x1411a: or        r8d, eax
+  0x1411d: shr       r9d, cl
+  0x14120: shr       r8d, 2
+  0x14124: mov       ecx, 0x80
+  0x14129: mov       eax, ebx
+  0x1412b: mov       dword ptr [rdi], r9d
+  0x1412e: and       eax, 0xc0
+  0x14133: or        r8d, eax
+  0x14136: shr       r8d, 2
+  0x1413a: cmp       r9d, dword ptr [r10 + r15 + 0x899e0]
+  0x14142: sbb       eax, eax
+  0x14144: xor       edx, edx
+  0x14146: and       eax, 0x40
+  0x14149: or        r8d, eax
+  0x1414c: mov       eax, r9d
+  0x1414f: and       eax, 0xfffff800
+  0x14154: cmp       eax, 0xd800
+  0x14159: cmove     edx, ecx
+  0x1415c: xor       eax, eax
+  0x1415e: or        r8d, edx
+  0x14161: mov       ecx, 0x100
+  0x14166: cmp       r9d, 0xffff
+  0x1416d: cmova     eax, ecx
+  0x14170: mov       ecx, dword ptr [r10 + r15 + 0x89a10]
+  0x14178: or        r8d, eax
+  0x1417b: xor       r8d, 0x2a
+  0x1417f: sar       r8d, cl
+  0x14182: test      r8d, r8d
+  0x14185: je        0x141c0
+  0x14187: xor       ecx, ecx
+  0x14189: mov       dword ptr [rdi], 0xfffd
+  0x1418f: test      ebp, ebp
+  0x14191: setne     cl
+  0x14194: xor       eax, eax
+  0x14196: test      esi, esi
+  0x14198: setne     al
+  0x1419b: add       ecx, eax
+  0x1419d: xor       eax, eax
+  0x1419f: test      ebx, ebx
+  0x141a1: setne     al
+  0x141a4: add       ecx, eax
+  0x141a6: xor       eax, eax
+  0x141a8: test      r14d, r14d
+  0x141ab: setne     al
+  0x141ae: add       eax, ecx
+  0x141b0: cmp       r11d, eax
+  0x141b3: cmovl     eax, r11d
+  0x141b7: pop       r15
+  0x141b9: pop       r14
+  0x141bb: pop       rdi
+  0x141bc: pop       rsi
+  0x141bd: pop       rbp
+  0x141be: pop       rbx
+  0x141bf: ret       
+  0x141c0: mov       eax, r11d
+  0x141c3: pop       r15
+  0x141c5: pop       r14
+  0x141c7: pop       rdi
+  0x141c8: pop       rsi
+  0x141c9: pop       rbp
+  0x141ca: pop       rbx
+  0x141cb: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_00014040 @ 0x14040  size=396 */
+/* xrefs: called by fun_00050620 (4 sites), fun_00031760 (2 sites), fun_00050570 (2 sites), fun_000567e0 (2 sites), fun_00057540 (2 sites), fun_00057760 (2 sites), fun_00014290 (1 site), fun_000142f0 (1 site), +8 more */
+/* confidence: HIGH */
+struct s_fun_00014040_a2;
+#pragma pack(push, 1)
+struct s_fun_00014040_a2 {
+    uint8_t field_0;
+    uint8_t field_1;
+    uint8_t field_2;
+    uint8_t field_3;
+};
+#pragma pack(pop)
+#ifndef __min
+#define __min(a,b) ((a)<(b)?(a):(b))
+#endif
+int32_t fun_00014040(int32_t*a1, struct s_fun_00014040_a2*a2, int64_t a3) {
+    uint8_t*v1;
+    uint32_t v3;
+    uint32_t v4;
+    uint32_t v5;
+    int32_t v6;
+    int32_t v7;
+    int64_t v8;
+    int32_t v9;
+    int32_t v2;
+
+    v1 = (uint8_t*)a3;
+    if (!a3) {
+        v1 = (uint8_t*)((char*)a2 + (int64_t)((int32_t)(((int32_t)((int8_t*)0x899a8)[((uint64_t)((uint32_t)a2->field_0) >> 3)] == 0) + (int64_t)((int8_t*)0x899a8)[((uint64_t)((uint32_t)a2->field_0) >> 3)])));
+    }
+    v2 = (uint64_t)(a2) >= (uint64_t)(v1) ? 0 : (uint32_t)a2->field_0;
+    if ((uint64_t)(&a2->field_1) >= (uint64_t)(v1)) {
+        v3 = 0;
+    } else {
+        v3 = a2->field_1;
+    }
+    if ((uint64_t)(&a2->field_2) >= (uint64_t)(v1)) {
+        v4 = 0;
+    } else {
+        v4 = a2->field_2;
+    }
+    if ((uint64_t)(&a2->field_3) >= (uint64_t)(v1)) {
+        v5 = 0;
+    } else {
+        v5 = a2->field_3;
+    }
+    *a1 = (uint32_t)(((((((((int32_t*)0x899c8)[((int8_t*)0x899a8)[((uint64_t)((uint32_t)a2->field_0) >> 3)]] & (uint8_t)v2) << 6) | (v3 & 0x3f)) << 6) | (v4 & 0x3f)) << 6) | (v5 & 0x3f)) >> ((int32_t*)0x899f8)[((int8_t*)0x899a8)[((uint64_t)((uint32_t)a2->field_0) >> 3)]];
+    v6 = ((int32_t*)0x899c8)[((int8_t*)0x899a8)[((uint64_t)((uint32_t)a2->field_0) >> 3)]] & (uint8_t)v2;
+    v7 = (uint32_t)((((((v6 << 6) | (v3 & 0x3f)) << 6) | (v4 & 0x3f)) << 6) | (v5 & 0x3f)) >> ((int32_t*)0x899f8)[((int8_t*)0x899a8)[((uint64_t)((uint32_t)a2->field_0) >> 3)]];
+    if (!(((((((uint32_t)(((uint32_t)((v4 & 0xc0) | ((uint32_t)((uint8_t)v5) >> 2)) >> 2) | (v3 & 0xc0)) >> 2) | (-((uint32_t)(v7) < (uint32_t)(((int32_t*)0x899e0)[((int8_t*)0x899a8)[((uint64_t)((uint32_t)a2->field_0) >> 3)]])) & 0x40)) | ((v7 & 0xfffff800) == 0xd800 ? 0x80 : 0)) | ((uint32_t)(v7) > 0xffff ? 0x100 : 0)) ^ 0x2a) >> ((int32_t*)0x89a10)[((int8_t*)0x899a8)[((uint64_t)((uint32_t)a2->field_0) >> 3)]])) {
+        return (int32_t)(((int32_t)((int8_t*)0x899a8)[((uint64_t)((uint32_t)a2->field_0) >> 3)] == 0) + (int64_t)((int8_t*)0x899a8)[((uint64_t)((uint32_t)a2->field_0) >> 3)]);
+    }
+    *a1 = 0xfffd;
+    v8 = ((int32_t)((int8_t*)0x899a8)[((uint64_t)((uint32_t)a2->field_0) >> 3)] == 0) + (int64_t)((int8_t*)0x899a8)[((uint64_t)((uint32_t)a2->field_0) >> 3)];
+    v9 = ((uint8_t)v2 != 0) + (((uint8_t)v5 != 0) + ((uint8_t)v4 != 0) + ((uint8_t)v3 != 0));
+    return __min((int32_t)v8, v9);
+}
+

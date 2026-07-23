@@ -1,0 +1,259 @@
+=== fun_0002d9b0 @ 0x2d9b0 size=470 blocks=37 calls=3 ===
+--- DISASM ---
+  0x2d9b0: push      rsi
+  0x2d9b2: push      rdi
+  0x2d9b3: sub       rsp, 0x38
+  0x2d9b7: mov       rsi, rdx
+  0x2d9ba: mov       rdi, rcx
+  0x2d9bd: cmp       qword ptr [rcx + 0x2b8], rdx
+  0x2d9c4: je        0x2db7f
+  0x2d9ca: movsxd    rax, dword ptr [rcx + 0x68]
+  0x2d9ce: mov       qword ptr [rsp + 0x50], rbx
+  0x2d9d3: mov       rbx, qword ptr [rcx + 0x70]
+  0x2d9d7: mov       qword ptr [rsp + 0x58], rbp
+  0x2d9dc: mov       qword ptr [rsp + 0x60], r12
+  0x2d9e1: mov       qword ptr [rsp + 0x30], r13
+  0x2d9e6: lea       rbp, [rbx + rax*8]
+  0x2d9ea: mov       qword ptr [rsp + 0x28], r14
+  0x2d9ef: cmp       rbx, rbp
+  0x2d9f2: je        0x2da08
+  0x2d9f4: mov       rdx, qword ptr [rbx]
+  0x2d9f7: mov       rcx, rdi
+  0x2d9fa: call      0x2e850
+  0x2d9ff: add       rbx, 8
+  0x2da03: cmp       rbx, rbp
+  0x2da06: jne       0x2d9f4
+  0x2da08: mov       rax, qword ptr [rdi + 0x2b0]
+  0x2da0f: xor       r13d, r13d
+  0x2da12: test      rax, rax
+  0x2da15: je        0x2da3a
+  0x2da17: mov       rcx, qword ptr [rdi + 0x2b8]
+  0x2da1e: test      rcx, rcx
+  0x2da21: je        0x2da3d
+  0x2da23: mov       rdx, qword ptr [rcx + 0x10]
+  0x2da27: test      rdx, rdx
+  0x2da2a: je        0x2da3d
+  0x2da2c: mov       rcx, rdi
+  0x2da2f: call      rdx
+  0x2da31: mov       rax, qword ptr [rdi + 0x2b0]
+  0x2da38: jmp       0x2da3d
+  0x2da3a: mov       rax, r13
+  0x2da3d: mov       qword ptr [rdi + 0x2b8], rsi
+  0x2da44: test      rsi, rsi
+  0x2da47: je        0x2da4e
+  0x2da49: mov       rcx, qword ptr [rsi]
+  0x2da4c: jmp       0x2da55
+  0x2da4e: lea       rcx, [0x8a0d4]
+  0x2da55: mov       qword ptr [rdi + 0x2c0], rcx
+  0x2da5c: test      rax, rax
+  0x2da5f: je        0x2da74
+  0x2da61: test      rsi, rsi
+  0x2da64: je        0x2da74
+  0x2da66: mov       rax, qword ptr [rsi + 8]
+  0x2da6a: test      rax, rax
+  0x2da6d: je        0x2da74
+  0x2da6f: mov       rcx, rdi
+  0x2da72: call      rax
+  0x2da74: mov       r14, qword ptr [rdi + 0x70]
+  0x2da78: movsxd    rax, dword ptr [rdi + 0x68]
+  0x2da7c: lea       rbp, [r14 + rax*8]
+  0x2da80: cmp       r14, rbp
+  0x2da83: je        0x2dae7
+  0x2da85: nop       word ptr [rax + rax]
+  0x2da90: mov       rax, qword ptr [r14]
+  0x2da93: mov       rbx, qword ptr [rax + 0x28]
+  0x2da97: movsxd    rax, dword ptr [rax + 0x20]
+  0x2da9b: lea       rsi, [rbx + rax*8]
+  0x2da9f: cmp       rbx, rsi
+  0x2daa2: je        0x2dade
+  0x2daa4: nop       dword ptr [rax]
+  0x2daa8: nop       dword ptr [rax + rax]
+  0x2dab0: mov       rdx, qword ptr [rbx]
+  0x2dab3: mov       rax, qword ptr [rdx + 0x88]
+  0x2daba: test      rax, rax
+  0x2dabd: jne       0x2dac6
+  0x2dabf: mov       rax, qword ptr [rdi + 0x2b8]
+  0x2dac6: mov       r8, qword ptr [rax + 0x18]
+  0x2daca: test      r8, r8
+  0x2dacd: je        0x2dad5
+  0x2dacf: mov       rcx, rdi
+  0x2dad2: call      r8
+  0x2dad5: add       rbx, 8
+  0x2dad9: cmp       rbx, rsi
+  0x2dadc: jne       0x2dab0
+  0x2dade: add       r14, 8
+  0x2dae2: cmp       r14, rbp
+  0x2dae5: jne       0x2da90
+  0x2dae7: mov       r14, qword ptr [rdi + 0x70]
+  0x2daeb: movsxd    rax, dword ptr [rdi + 0x68]
+  0x2daef: lea       r12, [r14 + rax*8]
+  0x2daf3: cmp       r14, r12
+  0x2daf6: je        0x2db66
+  0x2daf8: mov       qword ptr [rsp + 0x20], r15
+  0x2dafd: nop       dword ptr [rax]
+  0x2db00: mov       rbx, qword ptr [r14]
+  0x2db03: mov       rsi, qword ptr [rbx + 0x28]
+  0x2db07: movsxd    rax, dword ptr [rbx + 0x20]
+  0x2db0b: lea       r15, [rsi + rax*8]
+  0x2db0f: cmp       rsi, r15
+  0x2db12: je        0x2db58
+  0x2db14: mov       rbp, qword ptr [rsi]
+  0x2db17: cmp       byte ptr [rbp + 0x35], r13b
+  0x2db1b: jne       0x2db3d
+  0x2db1d: mov       rcx, qword ptr [rbx + 8]
+  0x2db21: test      rcx, rcx
+  0x2db24: je        0x2db31
+  0x2db26: xor       r8d, r8d
+  0x2db29: mov       rdx, rbx
+  0x2db2c: call      0x2e8e0
+  0x2db31: xor       eax, eax
+  0x2db33: mov       byte ptr [rbx + 0x34], al
+  0x2db36: mov       qword ptr [rbx], r13
+  0x2db39: mov       qword ptr [rbx + 8], rdi
+  0x2db3d: mov       r8, rbp
+  0x2db40: mov       byte ptr [rdi + 0x52], r13b
+  0x2db44: mov       rdx, rbx
+  0x2db47: mov       rcx, rdi
+  0x2db4a: call      0x2db90
+  0x2db4f: add       rsi, 8
+  0x2db53: cmp       rsi, r15
+  0x2db56: jne       0x2db14
+  0x2db58: add       r14, 8
+  0x2db5c: cmp       r14, r12
+  0x2db5f: jne       0x2db00
+  0x2db61: mov       r15, qword ptr [rsp + 0x20]
+  0x2db66: mov       r13, qword ptr [rsp + 0x30]
+  0x2db6b: mov       r12, qword ptr [rsp + 0x60]
+  0x2db70: mov       rbp, qword ptr [rsp + 0x58]
+  0x2db75: mov       rbx, qword ptr [rsp + 0x50]
+  0x2db7a: mov       r14, qword ptr [rsp + 0x28]
+  0x2db7f: add       rsp, 0x38
+  0x2db83: pop       rdi
+  0x2db84: pop       rsi
+  0x2db85: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_0002d9b0 @ 0x2d9b0  size=470 */
+/* xrefs: called by fun_0002cb40 (1 site) */
+/* confidence: HIGH */
+#include <stdbool.h>
+struct s_fun_0002d9b0_a1;
+struct s_fun_0002d9b0_a2;
+#pragma pack(push, 1)
+struct s_fun_0002d9b0_a1 {
+    char _pad_0[82];
+    int8_t field_52;
+    char _pad_53[21];
+    int32_t field_68;
+    char _pad_6c[4];
+    int64_t field_70;
+    char _pad_78[568];
+    int64_t field_2b0;
+    void* field_2b8;
+    int64_t field_2c0;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_0002d9b0_a2 {
+    int64_t field_0;
+    int64_t field_8;
+};
+#pragma pack(pop)
+void fun_0002db90();
+int32_t fun_0002e850();
+void fun_0002e8e0();
+void fun_0002d9b0(struct s_fun_0002d9b0_a1*a1, struct s_fun_0002d9b0_a2*a2) {
+    int64_t*v1;
+    int64_t*v5;
+    int64_t*v6;
+    int64_t*v9;
+    int64_t*v10;
+    int64_t*v2;
+    uint64_t v3;
+    int64_t v4;
+    int64_t*v7;
+    int64_t*v8;
+
+    if ((int64_t)(a1->field_2b8) == (int64_t)(a2)) {
+        return;
+    }
+    v1 = (int64_t*)a1->field_70;
+    v2 = (int64_t*)a2;
+    if ((int64_t)a1->field_68 * 8) {
+        while (true) {
+            fun_0002e850(a1, *v1);
+            v2 = (int64_t*)*v1;
+            v1 = (int64_t*)((char*)v1 + 8);
+            if ((int64_t)(v1) == (int64_t)(a1->field_70 + (int64_t)a1->field_68 * 8)) break;
+        }
+    }
+    if (!a1->field_2b0) {
+        v3 = 0;
+    } else {
+        v3 = a1->field_2b0;
+        if (a1->field_2b8) {
+            v3 = a1->field_2b0;
+            v2 = (int64_t*)((int64_t*)a1->field_2b8)[2];
+            if (v2) {
+                ((int64_t(*)())(((int64_t*)a1->field_2b8)[2]))(a1, ((int64_t*)a1->field_2b8)[2]);
+                v3 = a1->field_2b0;
+                v2 = (int64_t*)((int64_t*)a1->field_2b8)[2];
+            }
+        }
+    }
+    a1->field_2b8 = (int64_t)a2;
+    if (!a2) {
+        v4 = (int64_t)"NULL";
+    } else {
+        v4 = a2->field_0;
+    }
+    a1->field_2c0 = v4;
+    if (v3 && a2 && a2->field_8) {
+        ((int64_t(*)())(a2->field_8))(a1, v2);
+    }
+    if ((int64_t)a1->field_68 * 8) {
+        v5 = (int64_t*)a1->field_70;
+        do {
+            if ((int64_t)*(int32_t*)(*v5 + 0x20) * 8) {
+                v6 = (int64_t*)*(int64_t*)(*v5 + 0x28);
+                do {
+                    v7 = (int64_t*)*(int64_t*)(*v6 + 0x88);
+                    if (!v7) {
+                        v7 = (int64_t*)a1->field_2b8;
+                    }
+                    if (v7[3]) {
+                        v8 = (int64_t*)((char*)v7 + 0x18);
+                        ((int64_t(*)())(*v8))(a1, *v6, *v8);
+                    }
+                    v6 = (int64_t*)((char*)v6 + 8);
+                } while ((int64_t)(v6) != (int64_t)(*(int64_t*)(*v5 + 0x28) + (int64_t)*(int32_t*)(*v5 + 0x20) * 8));
+            }
+            v5 = (int64_t*)((char*)v5 + 8);
+        } while ((int64_t)(v5) != (int64_t)(a1->field_70 + (int64_t)a1->field_68 * 8));
+    }
+    if (!((int64_t)a1->field_68 * 8)) {
+        return;
+    }
+    v9 = (int64_t*)a1->field_70;
+    do {
+        v10 = (int64_t*)*(int64_t*)(*v9 + 0x28);
+        if ((int64_t)*(int32_t*)(*v9 + 0x20) * 8) {
+            do {
+                if (!*(int8_t*)(*v10 + 0x35)) {
+                    if (*(int64_t*)(*v9 + 8)) {
+                        fun_0002e8e0(*(int64_t*)(*v9 + 8), *v9, 0);
+                    }
+                    *(int8_t*)(*v9 + 0x34) = 0;
+                    *(int64_t*)(*v9) = 0;
+                    *(int64_t*)(*v9 + 8) = (int64_t)a1;
+                }
+                a1->field_52 = 0;
+                fun_0002db90(a1, *v9, *v10);
+                v10 = (int64_t*)((char*)v10 + 8);
+            } while ((int64_t)(v10) != (int64_t)(*(int64_t*)(*v9 + 0x28) + (int64_t)*(int32_t*)(*v9 + 0x20) * 8));
+        }
+        v9 = (int64_t*)((char*)v9 + 8);
+    } while ((int64_t)(v9) != (int64_t)(a1->field_70 + (int64_t)a1->field_68 * 8));
+    return;
+}
+

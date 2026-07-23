@@ -1,0 +1,69 @@
+=== fun_0003f960 @ 0x3f960 size=122 blocks=8 calls=1 ===
+--- DISASM ---
+  0x3f960: push      rbx
+  0x3f962: sub       rsp, 0x20
+  0x3f966: xor       eax, eax
+  0x3f968: mov       rbx, rcx
+  0x3f96b: cmp       dword ptr [rcx + 0x22f8], eax
+  0x3f971: je        0x3f9ad
+  0x3f973: mov       rcx, qword ptr [rbx + 0x2300]
+  0x3f97a: movsxd    rdx, eax
+  0x3f97d: add       rdx, rdx
+  0x3f980: movsxd    r8, dword ptr [rcx + rdx*8 + 8]
+  0x3f985: cmp       r8d, -1
+  0x3f989: je        0x3f9a3
+  0x3f98b: imul      r8, r8, 0x250
+  0x3f992: add       r8, qword ptr [rbx + 0x22f0]
+  0x3f999: je        0x3f9a3
+  0x3f99b: mov       dword ptr [r8 + 0x64], 0xffffffff
+  0x3f9a3: inc       eax
+  0x3f9a5: cmp       eax, dword ptr [rbx + 0x22f8]
+  0x3f9ab: jne       0x3f973
+  0x3f9ad: mov       rcx, qword ptr [rbx + 0x2720]
+  0x3f9b4: test      rcx, rcx
+  0x3f9b7: je        0x3f9d4
+  0x3f9b9: mov       qword ptr [rbx + 0x2718], 0
+  0x3f9c4: call      0x168c0
+  0x3f9c9: mov       qword ptr [rbx + 0x2720], 0
+  0x3f9d4: add       rsp, 0x20
+  0x3f9d8: pop       rbx
+  0x3f9d9: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_0003f960 @ 0x3f960  size=122 */
+/* confidence: HIGH */
+struct s_fun_0003f960_a1;
+#pragma pack(push, 1)
+struct s_fun_0003f960_a1 {
+    char _pad_0[8944];
+    int64_t field_22f0;
+    int32_t field_22f8;
+    char _pad_22fc[4];
+    void* field_2300;
+    char _pad_2308[1040];
+    int64_t field_2718;
+    int64_t field_2720;
+};
+#pragma pack(pop)
+void fun_000168c0();
+void fun_0003f960(struct s_fun_0003f960_a1*a1) {
+    int32_t v1 = 0;
+
+    v1 = 0;
+    if (a1->field_22f8) {
+        do {
+            if (*(int32_t*)((char*)((char*)a1->field_2300 + (int64_t)v1 * 0x10) + 8) != -1 && (int64_t)*(int32_t*)((char*)((char*)a1->field_2300 + (int64_t)v1 * 0x10) + 8) * 0x250 + a1->field_22f0) {
+                *(int32_t*)((int64_t)*(int32_t*)((char*)((char*)a1->field_2300 + (int64_t)v1 * 0x10) + 8) * 0x250 + a1->field_22f0 + 0x64) = -1;
+            }
+            ++v1;
+        } while (v1 != a1->field_22f8);
+    }
+    if (!a1->field_2720) {
+        return;
+    }
+    a1->field_2718 = 0;
+    fun_000168c0(a1->field_2720);
+    a1->field_2720 = 0;
+    return;
+}
+

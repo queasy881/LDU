@@ -1,0 +1,12 @@
+=== fun_00008920 @ 0x8920 size=3 blocks=1 calls=0 ===
+--- DISASM ---
+  0x8920: ret       0
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_00008920 @ 0x8920  size=3 */
+/* xrefs: called by fun_0005b1c0 (6 sites), fun_0005a730 (4 sites), fun_0005c680 (1 site), fun_00085fa0 (1 site), fun_000860c0 (1 site), fun_000860f0 (1 site), fun_00086130 (1 site) */
+/* confidence: HIGH */
+void fun_00008920(void) {
+    return;
+}
+

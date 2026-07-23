@@ -1,0 +1,133 @@
+=== fun_00034f80 @ 0x34f80 size=229 blocks=16 calls=7 ===
+--- DISASM ---
+  0x34f80: mov       qword ptr [rsp + 8], rbx
+  0x34f85: push      rdi
+  0x34f86: sub       rsp, 0x20
+  0x34f8a: mov       rbx, rcx
+  0x34f8d: xor       edi, edi
+  0x34f8f: mov       rcx, qword ptr [rcx + 8]
+  0x34f93: test      rcx, rcx
+  0x34f96: je        0x34fa4
+  0x34f98: mov       qword ptr [rbx], rdi
+  0x34f9b: call      0x168c0
+  0x34fa0: mov       qword ptr [rbx + 8], rdi
+  0x34fa4: mov       rcx, qword ptr [rbx + 0x18]
+  0x34fa8: test      rcx, rcx
+  0x34fab: je        0x34fba
+  0x34fad: mov       qword ptr [rbx + 0x10], rdi
+  0x34fb1: call      0x168c0
+  0x34fb6: mov       qword ptr [rbx + 0x18], rdi
+  0x34fba: mov       rcx, qword ptr [rbx + 0x28]
+  0x34fbe: test      rcx, rcx
+  0x34fc1: je        0x34fd0
+  0x34fc3: mov       qword ptr [rbx + 0x20], rdi
+  0x34fc7: call      0x168c0
+  0x34fcc: mov       qword ptr [rbx + 0x28], rdi
+  0x34fd0: mov       qword ptr [rbx + 0x30], rdi
+  0x34fd4: mov       qword ptr [rbx + 0x40], rdi
+  0x34fd8: mov       qword ptr [rbx + 0x48], rdi
+  0x34fdc: mov       rcx, qword ptr [rbx + 0xa8]
+  0x34fe3: test      rcx, rcx
+  0x34fe6: je        0x34ffb
+  0x34fe8: mov       qword ptr [rbx + 0xa0], rdi
+  0x34fef: call      0x168c0
+  0x34ff4: mov       qword ptr [rbx + 0xa8], rdi
+  0x34ffb: mov       rcx, qword ptr [rbx + 0xb8]
+  0x35002: test      rcx, rcx
+  0x35005: je        0x3501a
+  0x35007: mov       qword ptr [rbx + 0xb0], rdi
+  0x3500e: call      0x168c0
+  0x35013: mov       qword ptr [rbx + 0xb8], rdi
+  0x3501a: mov       rcx, qword ptr [rbx + 0xc8]
+  0x35021: test      rcx, rcx
+  0x35024: je        0x35039
+  0x35026: mov       qword ptr [rbx + 0xc0], rdi
+  0x3502d: call      0x168c0
+  0x35032: mov       qword ptr [rbx + 0xc8], rdi
+  0x35039: mov       rcx, qword ptr [rbx + 0x58]
+  0x3503d: test      rcx, rcx
+  0x35040: je        0x3504f
+  0x35042: mov       qword ptr [rbx + 0x50], rdi
+  0x35046: call      0x168c0
+  0x3504b: mov       qword ptr [rbx + 0x58], rdi
+  0x3504f: lea       rcx, [rbx + 0x88]
+  0x35056: mov       rbx, qword ptr [rsp + 0x30]
+  0x3505b: add       rsp, 0x20
+  0x3505f: pop       rdi
+  0x35060: jmp       0x2b510
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_00034f80 @ 0x34f80  size=229 */
+/* xrefs: called by fun_0001ab40 (1 site) */
+/* confidence: HIGH */
+struct s_fun_00034f80_a1;
+#pragma pack(push, 1)
+struct s_fun_00034f80_a1 {
+    int64_t field_0;
+    int64_t field_8;
+    int64_t field_10;
+    int64_t field_18;
+    int64_t field_20;
+    int64_t field_28;
+    int64_t field_30;
+    char _pad_38[8];
+    int64_t field_40;
+    int64_t field_48;
+    int64_t field_50;
+    int64_t field_58;
+    char _pad_60[64];
+    int64_t field_a0;
+    int64_t field_a8;
+    int64_t field_b0;
+    int64_t field_b8;
+    int64_t field_c0;
+    int64_t field_c8;
+};
+#pragma pack(pop)
+void fun_000168c0();
+void fun_0002b510();
+void fun_00034f80(struct s_fun_00034f80_a1*a1) {
+    if (a1->field_8) {
+        a1->field_0 = 0;
+        fun_000168c0(a1->field_8);
+        a1->field_8 = 0;
+    }
+    if (a1->field_18) {
+        a1->field_10 = 0;
+        fun_000168c0(a1->field_18);
+        a1->field_18 = 0;
+    }
+    if (a1->field_28) {
+        a1->field_20 = 0;
+        fun_000168c0(a1->field_28);
+        a1->field_28 = 0;
+    }
+    a1->field_30 = 0;
+    a1->field_40 = 0;
+    a1->field_48 = 0;
+    if (a1->field_a8) {
+        a1->field_a0 = 0;
+        fun_000168c0(a1->field_a8);
+        a1->field_a8 = 0;
+    }
+    if (a1->field_b8) {
+        a1->field_b0 = 0;
+        fun_000168c0(a1->field_b8);
+        a1->field_b8 = 0;
+    }
+    if (a1->field_c8) {
+        a1->field_c0 = 0;
+        fun_000168c0(a1->field_c8);
+        a1->field_c8 = 0;
+    }
+    if (!a1->field_58) {
+        fun_0002b510((char*)a1 + 0x88);
+    return;
+    }
+    a1->field_50 = 0;
+    fun_000168c0(a1->field_58);
+    a1->field_58 = 0;
+    fun_0002b510((char*)a1 + 0x88);
+    return;
+}
+

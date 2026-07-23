@@ -1,0 +1,109 @@
+=== fun_00006880 @ 0x6880 size=150 blocks=7 calls=2 ===
+--- DISASM ---
+  0x6880: test      rcx, rcx
+  0x6883: je        0x6915
+  0x6889: push      rbx
+  0x688a: sub       rsp, 0x20
+  0x688e: mov       rbx, rcx
+  0x6891: call      0x287d0
+  0x6896: mov       r8, qword ptr [0x174148]
+  0x689d: test      r8, r8
+  0x68a0: je        0x6900
+  0x68a2: movsx     rdx, word ptr [r8 + 0x28ec]
+  0x68aa: lea       rcx, [r8 + 0x28f0]
+  0x68b1: mov       r9d, dword ptr [r8 + 4]
+  0x68b5: lea       rcx, [rcx + rdx*8]
+  0x68b9: cmp       dword ptr [rcx], r9d
+  0x68bc: je        0x68f5
+  0x68be: lea       ecx, [rdx + 1]
+  0x68c1: mov       eax, 0x2aaaaaab
+  0x68c6: imul      ecx
+  0x68c8: mov       eax, edx
+  0x68ca: shr       eax, 0x1f
+  0x68cd: add       edx, eax
+  0x68cf: lea       eax, [rdx + rdx*2]
+  0x68d2: add       eax, eax
+  0x68d4: sub       ecx, eax
+  0x68d6: mov       word ptr [r8 + 0x28ec], cx
+  0x68de: movsx     rcx, cx
+  0x68e2: add       rcx, 0x51e
+  0x68e9: lea       rcx, [r8 + rcx*8]
+  0x68ed: xor       eax, eax
+  0x68ef: mov       dword ptr [rcx], r9d
+  0x68f2: mov       dword ptr [rcx + 4], eax
+  0x68f5: inc       word ptr [rcx + 6]
+  0x68f9: inc       dword ptr [r8 + 0x28e8]
+  0x6900: mov       rdx, qword ptr [0x174150]
+  0x6907: mov       rcx, rbx
+  0x690a: call      qword ptr [0x173040]
+  0x6910: add       rsp, 0x20
+  0x6914: pop       rbx
+  0x6915: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_00006880 @ 0x6880  size=150 */
+/* xrefs: called by fun_000270a0 (2 sites) */
+/* confidence: HIGH */
+struct s_fun_00006880_qword_174148;
+struct s_fun_00006880_v1;
+struct s_fun_00006880_v3;
+#pragma pack(push, 1)
+struct s_fun_00006880_qword_174148 {
+    char _pad_0[4];
+    int32_t field_4;
+    char _pad_8[10464];
+    int32_t field_28e8;
+    int16_t field_28ec;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_00006880_v1 {
+    int32_t field_0;
+    char _pad_4[2];
+    int16_t field_6;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_00006880_v3 {
+    int32_t field_0;
+    int32_t field_4;
+};
+#pragma pack(pop)
+#define qword_173040 (*(int64_t*)0x173040)
+#define qword_174148 (*(int64_t*)0x174148)
+#define qword_174150 (*(int64_t*)0x174150)
+void fun_000287d0();
+int64_t fun_00006880(int64_t a1) {
+    struct s_fun_00006880_qword_174148* gs_174148 = (struct s_fun_00006880_qword_174148*)qword_174148;
+    struct s_fun_00006880_v1*v1;
+    int64_t result = 0;
+    int64_t v2;
+    struct s_fun_00006880_v3*v3;
+
+    if (!a1) {
+        return result;
+    }
+    fun_000287d0(a1);
+    if (!qword_174148) {
+        result = ((int64_t(*)())(qword_173040))(a1, qword_174150);
+        return result;
+    }
+    v1 = (struct s_fun_00006880_v1*)(qword_174148 + 0x28f0 + (int64_t)gs_174148->field_28ec * 8);
+    if (v1->field_0 == gs_174148->field_4) {
+        ++v1->field_6;
+        ++gs_174148->field_28e8;
+        result = ((int64_t(*)())(qword_173040))(a1, qword_174150);
+        return result;
+    }
+    v2 = (int64_t)gs_174148->field_28ec + 1;
+    gs_174148->field_28ec = (int16_t)((int32_t)((int64_t)gs_174148->field_28ec + 1) - (int32_t)((int32_t)((int64_t)gs_174148->field_28ec + 1) / 6 * 3) * 2);
+    v3 = (struct s_fun_00006880_v3*)(qword_174148 + ((int64_t)((int16_t)((int32_t)v2 - (int32_t)((int32_t)v2 / 6 * 3) * 2)) + 0x51e) * 8);
+    v3->field_0 = gs_174148->field_4;
+    v3->field_4 = 0;
+    v1 = (struct s_fun_00006880_v1*)v3;
+    ++v1->field_6;
+    ++gs_174148->field_28e8;
+    result = ((int64_t(*)())(qword_173040))(a1, qword_174150);
+    return result;
+}
+

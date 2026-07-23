@@ -1,0 +1,108 @@
+=== fun_00035110 @ 0x35110 size=186 blocks=14 calls=2 ===
+--- DISASM ---
+  0x35110: mov       qword ptr [rsp + 0x10], rbx
+  0x35115: mov       qword ptr [rsp + 0x18], rsi
+  0x3511a: push      rdi
+  0x3511b: push      r14
+  0x3511d: push      r15
+  0x3511f: sub       rsp, 0x20
+  0x35123: movsxd    r15, dword ptr [rcx]
+  0x35126: mov       rsi, rcx
+  0x35129: mov       rax, qword ptr [rcx + 8]
+  0x3512d: lea       rdx, [r15 + r15*8]
+  0x35131: mov       ecx, dword ptr [rax + rdx*8 - 0x20]
+  0x35135: lea       r14, [rax + rdx*8]
+  0x35139: test      ecx, ecx
+  0x3513b: je        0x3515b
+  0x3513d: mov       rax, qword ptr [rsi + 0x78]
+  0x35141: cmp       qword ptr [r14 - 0x30], rax
+  0x35145: jne       0x35151
+  0x35147: mov       rax, qword ptr [rsi + 0x70]
+  0x3514b: cmp       qword ptr [r14 - 0x38], rax
+  0x3514f: je        0x3515b
+  0x35151: mov       rcx, rsi
+  0x35154: call      0x290d0
+  0x35159: jmp       0x351b6
+  0x3515b: cmp       qword ptr [r14 - 0x18], 0
+  0x35160: jne       0x351b6
+  0x35162: mov       qword ptr [rsp + 0x40], rbp
+  0x35167: test      ecx, ecx
+  0x35169: jne       0x351a8
+  0x3516b: cmp       r15d, 1
+  0x3516f: jle       0x351a8
+  0x35171: lea       rcx, [rsi + 0x60]
+  0x35175: mov       r8d, 0x24
+  0x3517b: lea       rdx, [r14 - 0x90]
+  0x35182: call      0x84a90
+  0x35187: test      eax, eax
+  0x35189: jne       0x351a8
+  0x3518b: mov       eax, dword ptr [r14 - 0x68]
+  0x3518f: add       eax, dword ptr [r14 - 0x6c]
+  0x35193: cmp       eax, dword ptr [r14 - 0x24]
+  0x35197: jne       0x351a8
+  0x35199: cmp       qword ptr [r14 - 0x60], 0
+  0x3519e: jne       0x351a8
+  0x351a0: lea       eax, [r15 - 1]
+  0x351a4: mov       dword ptr [rsi], eax
+  0x351a6: jmp       0x351b1
+  0x351a8: movups    xmm0, xmmword ptr [rsi + 0x70]
+  0x351ac: movups    xmmword ptr [r14 - 0x38], xmm0
+  0x351b1: mov       rbp, qword ptr [rsp + 0x40]
+  0x351b6: mov       rbx, qword ptr [rsp + 0x48]
+  0x351bb: mov       rsi, qword ptr [rsp + 0x50]
+  0x351c0: add       rsp, 0x20
+  0x351c4: pop       r15
+  0x351c6: pop       r14
+  0x351c8: pop       rdi
+  0x351c9: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_00035110 @ 0x35110  size=186 */
+/* xrefs: called by fun_00029cb0 (1 site), fun_0002d310 (1 site) */
+/* confidence: HIGH */
+struct s_fun_00035110_a1;
+struct s_fun_00035110_v1;
+#pragma pack(push, 1)
+struct s_fun_00035110_a1 {
+    int32_t field_0;
+    char _pad_4[4];
+    void* field_8;
+    char _pad_10[96];
+    int64_t field_70;
+    int64_t field_78;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_00035110_v1 {
+    int64_t field_0;
+    int64_t field_8;
+};
+#pragma pack(pop)
+void fun_000290d0();
+int64_t fun_00084a90();
+void fun_00035110(struct s_fun_00035110_a1*a1) {
+    struct s_fun_00035110_v1*v1;
+
+    if (!*(int32_t*)((char*)((char*)a1->field_8 + (int64_t)a1->field_0 * 0x48) - 0x20) || *(int64_t*)((char*)((char*)a1->field_8 + (int64_t)a1->field_0 * 0x48) - 0x30) == a1->field_78 && *(int64_t*)((char*)((char*)a1->field_8 + (int64_t)a1->field_0 * 0x48) - 0x38) == a1->field_70) {
+        if (!*(int64_t*)((char*)((char*)a1->field_8 + (int64_t)a1->field_0 * 0x48) - 0x18)) {
+            if (*(int32_t*)((char*)((char*)a1->field_8 + (int64_t)a1->field_0 * 0x48) - 0x20) || a1->field_0 <= 1 || (int32_t)fun_00084a90((char*)a1 + 0x60, (char*)a1->field_8 + (int64_t)a1->field_0 * 0x48 - 0x90, 0x24)) {
+                v1 = (struct s_fun_00035110_v1*)((char*)a1->field_8 + (int64_t)a1->field_0 * 0x48 - 0x38);
+                v1->field_0 = a1->field_70;
+                v1->field_8 = a1->field_78;
+                return;
+            }
+            if (*(int32_t*)((char*)((char*)a1->field_8 + (int64_t)a1->field_0 * 0x48) - 0x68) + *(int32_t*)((char*)((char*)a1->field_8 + (int64_t)a1->field_0 * 0x48) - 0x6c) != *(int32_t*)((char*)((char*)a1->field_8 + (int64_t)a1->field_0 * 0x48) - 0x24) || *(int64_t*)((char*)((char*)a1->field_8 + (int64_t)a1->field_0 * 0x48) - 0x60)) {
+                v1 = (struct s_fun_00035110_v1*)((char*)a1->field_8 + (int64_t)a1->field_0 * 0x48 - 0x38);
+                v1->field_0 = a1->field_70;
+                v1->field_8 = a1->field_78;
+                return;
+            }
+            a1->field_0 = (int32_t)((int64_t)a1->field_0 - 1);
+            return;
+        }
+    } else {
+        fun_000290d0(a1, (int64_t)a1->field_0 * 9);
+    }
+    return;
+}
+

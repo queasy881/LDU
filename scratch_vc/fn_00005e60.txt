@@ -1,0 +1,24 @@
+=== fun_00005e60 @ 0x5e60 size=32 blocks=1 calls=2 ===
+--- DISASM ---
+  0x5e60: sub       rsp, 0x48
+  0x5e64: lea       rcx, [rsp + 0x20]
+  0x5e69: call      0x2630
+  0x5e6e: lea       rdx, [0x171628]
+  0x5e75: lea       rcx, [rsp + 0x20]
+  0x5e7a: call      0x5f7cc
+  0x5e7f: int3      
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_00005e60 @ 0x5e60  size=32 */
+/* xrefs: called by fun_000023c0 (1 site), fun_000024b0 (1 site), fun_000052e0 (1 site), fun_0005dc00 (1 site) */
+/* confidence: HIGH */
+int64_t fun_00002630();
+int64_t fun_0005f7cc();
+void fun_00005e60(void) {
+    char s1[40];
+
+    fun_00002630(s1);
+    fun_0005f7cc(s1, 0x171628);
+    return;
+}
+

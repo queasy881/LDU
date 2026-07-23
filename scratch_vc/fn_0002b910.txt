@@ -1,0 +1,111 @@
+=== fun_0002b910 @ 0x2b910 size=182 blocks=5 calls=1 ===
+--- DISASM ---
+  0x2b910: mov       qword ptr [rsp + 8], rbx
+  0x2b915: push      rdi
+  0x2b916: sub       rsp, 0x20
+  0x2b91a: mov       rbx, r8
+  0x2b91d: mov       rdi, rcx
+  0x2b920: call      0x2eeb0
+  0x2b925: mov       rdx, rax
+  0x2b928: test      rax, rax
+  0x2b92b: jne       0x2b938
+  0x2b92d: mov       rbx, qword ptr [rsp + 0x30]
+  0x2b932: add       rsp, 0x20
+  0x2b936: pop       rdi
+  0x2b937: ret       
+  0x2b938: test      rbx, rbx
+  0x2b93b: je        0x2b9b9
+  0x2b93d: movzx     eax, word ptr [rax]
+  0x2b940: mov       word ptr [rbx], ax
+  0x2b943: movzx     eax, word ptr [rdx + 2]
+  0x2b947: mov       word ptr [rbx + 2], ax
+  0x2b94b: movzx     eax, word ptr [rdx + 4]
+  0x2b94f: mov       word ptr [rbx + 4], ax
+  0x2b953: movzx     eax, word ptr [rdx + 6]
+  0x2b957: mov       word ptr [rbx + 6], ax
+  0x2b95b: movzx     eax, word ptr [rdx + 2]
+  0x2b95f: movd      xmm1, eax
+  0x2b963: movzx     eax, word ptr [rdx]
+  0x2b966: cvtdq2ps  xmm1, xmm1
+  0x2b969: movd      xmm0, eax
+  0x2b96d: mulss     xmm1, dword ptr [rdi + 0x58]
+  0x2b972: cvtdq2ps  xmm0, xmm0
+  0x2b975: mulss     xmm0, dword ptr [rdi + 0x54]
+  0x2b97a: movss     dword ptr [rbx + 0xc], xmm1
+  0x2b97f: movss     dword ptr [rbx + 8], xmm0
+  0x2b984: movzx     eax, word ptr [rdx + 2]
+  0x2b988: movzx     ecx, word ptr [rdx + 6]
+  0x2b98c: add       ecx, eax
+  0x2b98e: movzx     eax, word ptr [rdx]
+  0x2b991: movd      xmm1, ecx
+  0x2b995: movzx     ecx, word ptr [rdx + 4]
+  0x2b999: add       ecx, eax
+  0x2b99b: cvtdq2ps  xmm1, xmm1
+  0x2b99e: movd      xmm0, ecx
+  0x2b9a2: mulss     xmm1, dword ptr [rdi + 0x58]
+  0x2b9a7: cvtdq2ps  xmm0, xmm0
+  0x2b9aa: mulss     xmm0, dword ptr [rdi + 0x54]
+  0x2b9af: movss     dword ptr [rbx + 0x14], xmm1
+  0x2b9b4: movss     dword ptr [rbx + 0x10], xmm0
+  0x2b9b9: mov       rbx, qword ptr [rsp + 0x30]
+  0x2b9be: mov       al, 1
+  0x2b9c0: add       rsp, 0x20
+  0x2b9c4: pop       rdi
+  0x2b9c5: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_0002b910 @ 0x2b910  size=182 */
+/* xrefs: called by fun_0002dd70 (1 site), fun_0002e1c0 (1 site) */
+/* confidence: HIGH */
+struct s_fun_0002b910_a1;
+struct s_fun_0002b910_a3;
+struct s_fun_0002b910_result;
+#pragma pack(push, 1)
+struct s_fun_0002b910_a1 {
+    char _pad_0[84];
+    float field_54;
+    float field_58;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_0002b910_a3 {
+    int16_t field_0;
+    int16_t field_2;
+    int16_t field_4;
+    int16_t field_6;
+    float field_8;
+    float field_c;
+    float field_10;
+    float field_14;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_0002b910_result {
+    uint16_t field_0;
+    uint16_t field_2;
+    uint16_t field_4;
+    uint16_t field_6;
+};
+#pragma pack(pop)
+int64_t fun_0002eeb0();
+int64_t fun_0002b910(struct s_fun_0002b910_a1*a1, int64_t a2, struct s_fun_0002b910_a3*a3) {
+    struct s_fun_0002b910_result*result;
+
+    result = (struct s_fun_0002b910_result*)fun_0002eeb0(a1, a2);
+    if (!result) {
+        return (int64_t)result;
+    }
+    if (!a3) {
+        return 1;
+    }
+    a3->field_0 = (int16_t)result->field_0;
+    a3->field_2 = (int16_t)result->field_2;
+    a3->field_4 = (int16_t)result->field_4;
+    a3->field_6 = (int16_t)result->field_6;
+    a3->field_c = (float)((uint32_t)result->field_2) * a1->field_58;
+    a3->field_8 = (float)((uint32_t)result->field_0) * a1->field_54;
+    a3->field_14 = (float)((uint32_t)result->field_6 + (uint32_t)result->field_2) * a1->field_58;
+    a3->field_10 = (float)((uint32_t)result->field_4 + (uint32_t)result->field_0) * a1->field_54;
+    return 1;
+}
+

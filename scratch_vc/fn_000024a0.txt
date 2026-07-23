@@ -1,0 +1,26 @@
+=== fun_000024a0 @ 0x24a0 size=16 blocks=5 calls=0 ===
+--- DISASM ---
+  0x24a0: test      rcx, rcx
+  0x24a3: jne       0x24a8
+  0x24a5: xor       eax, eax
+  0x24a7: ret       
+  0x24a8: movzx     eax, word ptr [rcx]
+  0x24ab: jmp       0x24af
+  0x24ad: xor       eax, eax
+  0x24af: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_000024a0 @ 0x24a0  size=16 */
+/* xrefs: called by fun_000058a0 (1 site) */
+/* confidence: MEDIUM - EH funclets */
+uint32_t fun_000024a0(uint16_t*a1) {
+    /* SEH: __try { 0x24a8..0x24ad } __except( EXCEPTION_EXECUTE_HANDLER ) { 0x24ad } */
+    uint32_t result;
+
+    if (a1) {
+        result = *a1;
+        return result;
+    }
+    return 0;
+}
+

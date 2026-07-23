@@ -1,0 +1,215 @@
+=== fun_00053f10 @ 0x53f10 size=292 blocks=19 calls=0 ===
+--- DISASM ---
+  0x53f10: push      r14
+  0x53f12: test      byte ptr [rcx + 0x18], 1
+  0x53f16: mov       r14, rdx
+  0x53f19: mov       r11, rcx
+  0x53f1c: movq      xmm2, r8
+  0x53f21: je        0x54031
+  0x53f27: mov       qword ptr [rsp + 0x10], rbx
+  0x53f2c: mov       ebx, dword ptr [rdx + 4]
+  0x53f2f: mov       qword ptr [rsp + 0x20], rdi
+  0x53f34: and       ebx, 0xc0
+  0x53f3a: jne       0x53f43
+  0x53f3c: movss     xmm0, dword ptr [rcx + 0x60]
+  0x53f41: jmp       0x53f46
+  0x53f43: xorps     xmm0, xmm0
+  0x53f46: movss     xmm4, dword ptr [rcx + 0x38]
+  0x53f4b: mov       eax, 0xffffffff
+  0x53f50: mov       r9, qword ptr [rcx + 0x10]
+  0x53f54: subss     xmm4, xmm0
+  0x53f58: mov       r8d, 1
+  0x53f5e: mov       rcx, r14
+  0x53f61: movaps    xmm0, xmm4
+  0x53f64: addss     xmm0, dword ptr [rdx + 0x10]
+  0x53f69: comiss    xmm0, xmm2
+  0x53f6c: cmova     r8d, eax
+  0x53f70: sub       rcx, r9
+  0x53f73: movabs    rax, 0x2e8ba2e8ba2e8ba3
+  0x53f7d: imul      rcx
+  0x53f80: mov       rdi, rdx
+  0x53f83: sar       rdi, 3
+  0x53f87: mov       rax, rdi
+  0x53f8a: shr       rax, 0x3f
+  0x53f8e: add       rdi, rax
+  0x53f91: test      edi, edi
+  0x53f93: js        0x54027
+  0x53f99: mov       rax, qword ptr [0x174148]
+  0x53fa0: mov       r10d, edi
+  0x53fa3: mov       qword ptr [rsp + 0x18], rsi
+  0x53fa8: mov       ecx, edi
+  0x53faa: mov       esi, dword ptr [r11 + 8]
+  0x53fae: movss     xmm3, dword ptr [rax + 0xcc4]
+  0x53fb6: cmp       ecx, esi
+  0x53fb8: jge       0x5400a
+  0x53fba: mov       eax, ecx
+  0x53fbc: imul      rdx, rax, 0x2c
+  0x53fc0: mov       eax, dword ptr [rdx + r9 + 4]
+  0x53fc5: test      al, 0x20
+  0x53fc7: jne       0x5400a
+  0x53fc9: and       eax, 0xc0
+  0x53fce: cmp       eax, ebx
+  0x53fd0: jne       0x5400a
+  0x53fd2: movaps    xmm1, xmm4
+  0x53fd5: mov       r10d, ecx
+  0x53fd8: addss     xmm1, dword ptr [rdx + r9 + 0x10]
+  0x53fdf: test      r8d, r8d
+  0x53fe2: jns       0x53ff3
+  0x53fe4: movaps    xmm0, xmm1
+  0x53fe7: subss     xmm0, xmm3
+  0x53feb: comiss    xmm2, xmm0
+  0x53fee: ja        0x5400a
+  0x53ff0: test      r8d, r8d
+  0x53ff3: jle       0x54005
+  0x53ff5: addss     xmm1, dword ptr [rdx + r9 + 0x14]
+  0x53ffc: addss     xmm1, xmm3
+  0x54000: comiss    xmm1, xmm2
+  0x54003: ja        0x5400a
+  0x54005: add       ecx, r8d
+  0x54008: jns       0x53fb6
+  0x5400a: mov       rsi, qword ptr [rsp + 0x18]
+  0x5400f: cmp       r10d, edi
+  0x54012: je        0x54027
+  0x54014: mov       eax, dword ptr [r14]
+  0x54017: sub       r10w, di
+  0x5401b: mov       word ptr [r11 + 0x80], r10w
+  0x54023: mov       dword ptr [r11 + 0x7c], eax
+  0x54027: mov       rbx, qword ptr [rsp + 0x10]
+  0x5402c: mov       rdi, qword ptr [rsp + 0x20]
+  0x54031: pop       r14
+  0x54033: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_00053f10 @ 0x53f10  size=292 */
+/* xrefs: called by fun_000546e0 (1 site) */
+/* confidence: HIGH */
+#include <stdbool.h>
+struct s_fun_00053f10_a1;
+struct s_fun_00053f10_a1_10_A2c;
+struct s_fun_00053f10_a2;
+struct s_fun_00053f10_v7;
+#pragma pack(push, 1)
+struct s_fun_00053f10_a1 {
+    char _pad_0[8];
+    int32_t field_8;
+    char _pad_c[4];
+    int64_t field_10;
+    int8_t field_18;
+    char _pad_19[31];
+    float field_38;
+    char _pad_3c[36];
+    float field_60;
+    char _pad_64[24];
+    int32_t field_7c;
+    int16_t field_80;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_00053f10_a1_10_A2c {
+    char _pad_0[4];
+    int32_t field_4;
+    char _pad_8[8];
+    float field_10;
+    char _pad_end[24];
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_00053f10_a2 {
+    int32_t field_0;
+    int32_t field_4;
+    char _pad_8[8];
+    float field_10;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_00053f10_v7 {
+    char _pad_0[16];
+    float field_10;
+    float field_14;
+};
+#pragma pack(pop)
+#define qword_174148 (*(int64_t*)0x174148)
+void fun_00053f10(struct s_fun_00053f10_a1*a1, struct s_fun_00053f10_a2*a2, int64_t a3) {
+    int32_t v3;
+    uint32_t v4;
+    float v1;
+    uint32_t v6;
+    int32_t v5;
+    struct s_fun_00053f10_v7*v7;
+    int32_t v2;
+
+    if (!(a1->field_18 & 1)) {
+        return;
+    }
+    if (*(int32_t*)((char*)a2 + 4) & 0xc0) {
+        v1 = 0.0f;
+    } else {
+        v1 = a1->field_60;
+    }
+    v2 = a1->field_38 - v1 + a2->field_10 > *(float*)(&a3) ? -1 : 1;
+    if ((int32_t)((int64_t)((char*)a2 - a1->field_10) / 44) >= 0) {
+        v3 = (int64_t)((char*)a2 - a1->field_10) / 44;
+        v4 = (int64_t)((char*)a2 - a1->field_10) / 44;
+        v5 = v2;
+        while (true) {
+            v6 = v4;
+            if (v3 >= a1->field_8) break;
+            v6 = v4;
+            if (!(((struct s_fun_00053f10_a1_10_A2c*)a1->field_10)[v3].field_4 & 0x20)) {
+                v6 = v4;
+                if ((((struct s_fun_00053f10_a1_10_A2c*)a1->field_10)[v3].field_4 & 0xc0) == (*(int32_t*)((char*)a2 + 4) & 0xc0)) {
+                    if (v5 >= 0) {
+                        if (v5 <= 0) {
+                            v4 = v3;
+                            v6 = v3;
+                            v3 += v5;
+                            if (v3 >= 0) continue;
+                        } else {
+                            v6 = v3;
+                            v7 = (struct s_fun_00053f10_v7*)((int64_t)((uint32_t)v3) * 0x2c + a1->field_10);
+                            if (!(a1->field_38 - v1 + v7->field_10 + v7->field_14 + *(float*)(qword_174148 + 0xcc4) > *(float*)(&a3))) {
+                                v4 = v3;
+                                v6 = v3;
+                                v3 += v5;
+                                if (v3 >= 0) {
+                                    continue;
+                                }
+                            }
+                        }
+                    } else {
+                        v6 = v3;
+                        if (!(*(float*)(&a3) > a1->field_38 - v1 + ((struct s_fun_00053f10_a1_10_A2c*)a1->field_10)[v3].field_10 - *(float*)(qword_174148 + 0xcc4))) {
+                            if (v5 <= 0) {
+                                v4 = v3;
+                                v6 = v3;
+                                v3 += v5;
+                                if (v3 >= 0) {
+                                    continue;
+                                }
+                            } else {
+                                v6 = v3;
+                                v7 = (struct s_fun_00053f10_v7*)((int64_t)((uint32_t)v3) * 0x2c + a1->field_10);
+                                if (!(a1->field_38 - v1 + v7->field_10 + v7->field_14 + *(float*)(qword_174148 + 0xcc4) > *(float*)(&a3))) {
+                                    v4 = v3;
+                                    v6 = v3;
+                                    v3 += v5;
+                                    if (v3 >= 0) {
+                                        continue;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            break;
+        }
+        if (v6 != (int32_t)((int64_t)((char*)a2 - a1->field_10) / 44)) {
+            a1->field_80 = ((int16_t)v6 - (int64_t)((char*)a2 - a1->field_10) / 44) & 0xffff;
+            a1->field_7c = a2->field_0;
+            return;
+        }
+    }
+    return;
+}
+

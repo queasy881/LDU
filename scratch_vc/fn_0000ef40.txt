@@ -1,0 +1,151 @@
+=== fun_0000ef40 @ 0xef40 size=351 blocks=7 calls=3 ===
+--- DISASM ---
+  0xef40: mov       rax, rsp
+  0xef43: mov       qword ptr [rax + 0x18], rbx
+  0xef47: push      rdi
+  0xef48: sub       rsp, 0xc0
+  0xef4f: mov       rbx, qword ptr [0x174148]
+  0xef56: movaps    xmmword ptr [rax - 0x18], xmm6
+  0xef5a: movaps    xmmword ptr [rax - 0x28], xmm7
+  0xef5e: cmp       byte ptr [rbx + 0x285a], 0
+  0xef65: je        0xef68
+  0xef67: int3      
+  0xef68: movups    xmm6, xmmword ptr [rbx + 0x1e58]
+  0xef6f: mov       dword ptr [rbx + 0x1e1c], 0
+  0xef79: lea       r8, [0x89cb0]
+  0xef80: mov       rax, qword ptr [0x174148]
+  0xef87: mov       edx, 1
+  0xef8c: movups    xmm7, xmmword ptr [rbx + 0x1e68]
+  0xef93: mov       rcx, qword ptr [rax + 0x1fc0]
+  0xef9a: mov       rcx, qword ptr [rcx]
+  0xef9d: call      0x12f10
+  0xefa2: movss     xmm0, dword ptr [0x88580]
+  0xefaa: movaps    xmm2, xmm7
+  0xefad: shufps    xmm2, xmm7, 0x55
+  0xefb1: movaps    xmm1, xmm7
+  0xefb4: subss     xmm1, xmm0
+  0xefb8: shufps    xmm7, xmm7, 0xaa
+  0xefbc: addss     xmm7, xmm0
+  0xefc0: shufps    xmm6, xmm6, 0xff
+  0xefc4: subss     xmm6, xmm0
+  0xefc8: mov       rdi, rax
+  0xefcb: addss     xmm2, xmm0
+  0xefcf: movss     dword ptr [rsp + 0x44], xmm1
+  0xefd5: movss     dword ptr [rsp + 0x4c], xmm7
+  0xefdb: movss     dword ptr [rsp + 0x40], xmm6
+  0xefe1: movss     dword ptr [rsp + 0x48], xmm2
+  0xefe7: movsd     xmm0, qword ptr [rbx + 0x100]
+  0xefef: movaps    xmm3, xmm0
+  0xeff2: movsd     qword ptr [rsp + 0xd8], xmm0
+  0xeffb: shufps    xmm3, xmm3, 0x55
+  0xefff: comiss    xmm1, xmm3
+  0xf002: ja        0xf00b
+  0xf004: movaps    xmm1, xmm7
+  0xf007: minss     xmm1, xmm3
+  0xf00b: comiss    xmm6, xmm0
+  0xf00e: ja        0xf017
+  0xf010: minss     xmm2, xmm0
+  0xf014: movaps    xmm6, xmm2
+  0xf017: movss     dword ptr [rsp + 0xd0], xmm6
+  0xf020: lea       r8, [rsp + 0x48]
+  0xf025: movss     xmm6, dword ptr [0x88544]
+  0xf02d: lea       rdx, [rsp + 0x40]
+  0xf032: movss     dword ptr [rsp + 0x30], xmm6
+  0xf038: xorps     xmm0, xmm0
+  0xf03b: mov       dword ptr [rsp + 0x28], 0
+  0xf043: mov       r9d, 0xff00ff00
+  0xf049: mov       rcx, rdi
+  0xf04c: movss     dword ptr [rsp + 0x20], xmm0
+  0xf052: movss     dword ptr [rsp + 0xd4], xmm1
+  0xf05b: call      0x2adf0
+  0xf060: mov       r9d, 0xff00ff00
+  0xf066: movss     dword ptr [rsp + 0x20], xmm6
+  0xf06c: lea       r8, [rsp + 0xd0]
+  0xf074: mov       rcx, rdi
+  0xf077: lea       rdx, [rsp + 0xd8]
+  0xf07f: call      0x29dd0
+  0xf084: lea       r11, [rsp + 0xc0]
+  0xf08c: mov       rbx, qword ptr [r11 + 0x20]
+  0xf090: movaps    xmm6, xmmword ptr [r11 - 0x10]
+  0xf095: movaps    xmm7, xmmword ptr [r11 - 0x20]
+  0xf09a: mov       rsp, r11
+  0xf09d: pop       rdi
+  0xf09e: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_0000ef40 @ 0xef40  size=351 */
+/* xrefs: called by fun_00009550 (1 site), fun_00015920 (1 site) */
+/* confidence: HIGH */
+#include <stdbool.h>
+struct s_fun_0000ef40_qword_174148;
+struct Vec2;
+#pragma pack(push, 1)
+struct s_fun_0000ef40_qword_174148 {
+    char _pad_0[7708];
+    int32_t field_1e1c;
+    char _pad_1e20[68];
+    float field_1e64;
+    float field_1e68;
+    float field_1e6c;
+    float field_1e70;
+    char _pad_1e74[332];
+    void* field_1fc0;
+    char _pad_1fc8[2194];
+    int8_t field_285a;
+};
+#pragma pack(pop)
+#ifndef __DS_TY_Vec2
+#define __DS_TY_Vec2
+#pragma pack(push, 1)
+struct Vec2 {
+    float x;
+    float y;
+};
+#pragma pack(pop)
+#endif
+#define qword_174148 (*(int64_t*)0x174148)
+#ifndef __min
+#define __min(a,b) ((a)<(b)?(a):(b))
+#endif
+int64_t fun_00012f10();
+int32_t fun_00029dd0();
+void fun_0002adf0();
+int32_t fun_0000ef40(int64_t a1, int64_t a2, int64_t a3, int64_t a4) {
+    char s1[8];
+    char s2[120];
+    char s3[8];
+    char s4[256];
+    struct s_fun_0000ef40_qword_174148* gs_174148 = (struct s_fun_0000ef40_qword_174148*)qword_174148;
+    int64_t v2 = 0;
+    bool v3 = 0;
+    float v4;
+    float v5;
+    int64_t v1;
+
+    gs_174148->field_1e1c = 0;
+    v1 = fun_00012f10(*(int64_t*)(gs_174148->field_1fc0), 1, "##Foreground", a4, v2, v3);
+    ((struct Vec2*)s1)->y = gs_174148->field_1e68 - 3.0f;
+    ((struct Vec2*)s2)->y = gs_174148->field_1e70 + 3.0f;
+    ((struct Vec2*)s1)->x = gs_174148->field_1e64 - 3.0f;
+    ((struct Vec2*)s2)->x = gs_174148->field_1e6c + 3.0f;
+    *(double*)s4 = *(double*)(qword_174148 + 0x100);
+    v4 = gs_174148->field_1e68 - 3.0f;
+    if (!(v4 > *(float*)(qword_174148 + 0x100))) {
+        v4 = __min(gs_174148->field_1e70 + 3.0f, *(float*)(qword_174148 + 0x100));
+    }
+    v5 = gs_174148->field_1e64 - 3.0f;
+    if (v5 > *(float*)(qword_174148 + 0x100)) {
+        ((struct Vec2*)s3)->x = v5;
+        v3 = 0;
+        ((struct Vec2*)s3)->y = v4;
+        fun_0002adf0(v1, s1, s2, 0xff00ff00LL, 0, v3, 0x3f800000);
+        return fun_00029dd0(v1, s4, s3, 0xff00ff00LL, 0x3f800000, v3);
+    }
+    v5 = __min(gs_174148->field_1e6c + 3.0f, *(float*)(qword_174148 + 0x100));
+    ((struct Vec2*)s3)->x = v5;
+    v3 = 0;
+    ((struct Vec2*)s3)->y = v4;
+    fun_0002adf0(v1, s1, s2, 0xff00ff00LL, 0, v3, 0x3f800000);
+    return fun_00029dd0(v1, s4, s3, 0xff00ff00LL, 0x3f800000, v3);
+}
+

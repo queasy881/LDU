@@ -1,0 +1,15 @@
+=== fun_00006170 @ 0x6170 size=19 blocks=1 calls=0 ===
+--- DISASM ---
+  0x6170: mov       rdx, qword ptr [rcx + 8]
+  0x6174: lea       rax, [0x87e58]
+  0x617b: test      rdx, rdx
+  0x617e: cmovne    rax, rdx
+  0x6182: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* std__exception__vftbl_1 @ 0x6170  size=19 */
+/* confidence: HIGH */
+int64_t std__exception__vftbl_1(int64_t*a1) {
+    return a1[1] != 0 ? a1[1] : "Unknown exception";
+}
+

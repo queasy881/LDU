@@ -1,0 +1,975 @@
+=== fun_000344e0 @ 0x344e0 size=2566 blocks=3 calls=1 ===
+--- DISASM ---
+  0x344e0: sub       rsp, 0x48
+  0x344e4: movaps    xmmword ptr [rsp + 0x30], xmm6
+  0x344e9: mov       rax, rcx
+  0x344ec: movaps    xmmword ptr [rsp + 0x20], xmm7
+  0x344f1: test      rcx, rcx
+  0x344f4: jne       0x344fb
+  0x344f6: call      0x12ea0
+  0x344fb: mov       dword ptr [rax + 0x138], 0x3f800000
+  0x34505: xor       ecx, ecx
+  0x34507: mov       dword ptr [rax + 0x13c], 0x3f800000
+  0x34511: mov       dword ptr [rax + 0x140], 0x3f800000
+  0x3451b: mov       dword ptr [rax + 0x144], 0x3f800000
+  0x34525: mov       dword ptr [rax + 0x148], 0x3f000000
+  0x3452f: mov       dword ptr [rax + 0x14c], 0x3f000000
+  0x34539: mov       dword ptr [rax + 0x150], 0x3f000000
+  0x34543: mov       dword ptr [rax + 0x154], 0x3f800000
+  0x3454d: mov       dword ptr [rax + 0x158], 0x3d75c28f
+  0x34557: mov       dword ptr [rax + 0x15c], 0x3d75c28f
+  0x34561: mov       dword ptr [rax + 0x160], 0x3d75c28f
+  0x3456b: mov       qword ptr [rax + 0x164], 0x3f70a3d7
+  0x34576: mov       qword ptr [rax + 0x16c], rcx
+  0x3457d: mov       dword ptr [rax + 0x174], ecx
+  0x34583: mov       dword ptr [rax + 0x178], 0x3da3d70a
+  0x3458d: mov       dword ptr [rax + 0x17c], 0x3da3d70a
+  0x34597: mov       dword ptr [rax + 0x180], 0x3da3d70a
+  0x345a1: mov       dword ptr [rax + 0x184], 0x3f70a3d7
+  0x345ab: mov       dword ptr [rax + 0x188], 0x3edc28f6
+  0x345b5: mov       dword ptr [rax + 0x18c], 0x3edc28f6
+  0x345bf: mov       dword ptr [rax + 0x190], 0x3f000000
+  0x345c9: mov       qword ptr [rax + 0x194], 0x3f000000
+  0x345d4: mov       qword ptr [rax + 0x19c], rcx
+  0x345db: mov       dword ptr [rax + 0x1a4], ecx
+  0x345e1: mov       dword ptr [rax + 0x1a8], 0x3e23d70a
+  0x345eb: mov       dword ptr [rax + 0x1ac], 0x3e947ae1
+  0x345f5: mov       dword ptr [rax + 0x1b0], 0x3ef5c28f
+  0x345ff: mov       dword ptr [rax + 0x1b4], 0x3f0a3d71
+  0x34609: mov       dword ptr [rax + 0x1b8], 0x3e851eb8
+  0x34613: mov       dword ptr [rax + 0x1bc], 0x3f170a3d
+  0x3461d: mov       dword ptr [rax + 0x1c0], 0x3f7ae148
+  0x34627: mov       dword ptr [rax + 0x1c4], 0x3ecccccd
+  0x34631: mov       dword ptr [rax + 0x1c8], 0x3e851eb8
+  0x3463b: mov       dword ptr [rax + 0x1cc], 0x3f170a3d
+  0x34645: mov       dword ptr [rax + 0x1d0], 0x3f7ae148
+  0x3464f: mov       dword ptr [rax + 0x1d4], 0x3f2b851f
+  0x34659: mov       dword ptr [rax + 0x1d8], 0x3d23d70a
+  0x34663: mov       dword ptr [rax + 0x1dc], 0x3d23d70a
+  0x3466d: mov       dword ptr [rax + 0x1e0], 0x3d23d70a
+  0x34677: mov       dword ptr [rax + 0x1e4], 0x3f800000
+  0x34681: mov       dword ptr [rax + 0x1e8], 0x3e23d70a
+  0x3468b: mov       dword ptr [rax + 0x1ec], 0x3e947ae1
+  0x34695: mov       dword ptr [rax + 0x1f0], 0x3ef5c28f
+  0x3469f: mov       qword ptr [rax + 0x1f4], 0x3f800000
+  0x346aa: mov       qword ptr [rax + 0x1fc], rcx
+  0x346b1: mov       dword ptr [rax + 0x204], 0x3f028f5c
+  0x346bb: mov       dword ptr [rax + 0x208], 0x3e0f5c29
+  0x346c5: mov       dword ptr [rax + 0x20c], 0x3e0f5c29
+  0x346cf: mov       dword ptr [rax + 0x210], 0x3e0f5c29
+  0x346d9: mov       dword ptr [rax + 0x214], 0x3f800000
+  0x346e3: mov       dword ptr [rax + 0x218], 0x3ca3d70a
+  0x346ed: mov       dword ptr [rax + 0x21c], 0x3ca3d70a
+  0x346f7: mov       dword ptr [rax + 0x220], 0x3ca3d70a
+  0x34701: mov       dword ptr [rax + 0x224], 0x3f07ae14
+  0x3470b: mov       dword ptr [rax + 0x228], 0x3e9eb852
+  0x34715: mov       dword ptr [rax + 0x22c], 0x3e9eb852
+  0x3471f: mov       dword ptr [rax + 0x230], 0x3e9eb852
+  0x34729: mov       dword ptr [rax + 0x234], 0x3f800000
+  0x34733: mov       dword ptr [rax + 0x238], 0x3ed1eb85
+  0x3473d: mov       dword ptr [rax + 0x23c], 0x3ed1eb85
+  0x34747: mov       dword ptr [rax + 0x240], 0x3ed1eb85
+  0x34751: mov       dword ptr [rax + 0x244], 0x3f800000
+  0x3475b: mov       dword ptr [rax + 0x248], 0x3f028f5c
+  0x34765: mov       dword ptr [rax + 0x24c], 0x3f028f5c
+  0x3476f: mov       dword ptr [rax + 0x250], 0x3f028f5c
+  0x34779: mov       dword ptr [rax + 0x254], 0x3f800000
+  0x34783: mov       dword ptr [rax + 0x258], 0x3e851eb8
+  0x3478d: mov       dword ptr [rax + 0x25c], 0x3f170a3d
+  0x34797: mov       dword ptr [rax + 0x260], 0x3f7ae148
+  0x347a1: mov       dword ptr [rax + 0x264], 0x3f800000
+  0x347ab: mov       dword ptr [rax + 0x268], 0x3e75c28f
+  0x347b5: mov       dword ptr [rax + 0x26c], 0x3f051eb8
+  0x347bf: mov       dword ptr [rax + 0x270], 0x3f6147ae
+  0x347c9: mov       dword ptr [rax + 0x274], 0x3f800000
+  0x347d3: mov       dword ptr [rax + 0x278], 0x3e851eb8
+  0x347dd: mov       dword ptr [rax + 0x27c], 0x3f170a3d
+  0x347e7: mov       dword ptr [rax + 0x280], 0x3f7ae148
+  0x347f1: mov       dword ptr [rax + 0x284], 0x3f800000
+  0x347fb: mov       dword ptr [rax + 0x288], 0x3e851eb8
+  0x34805: mov       dword ptr [rax + 0x28c], 0x3f170a3d
+  0x3480f: mov       dword ptr [rax + 0x290], 0x3f7ae148
+  0x34819: mov       dword ptr [rax + 0x294], 0x3ecccccd
+  0x34823: mov       dword ptr [rax + 0x298], 0x3e851eb8
+  0x3482d: mov       dword ptr [rax + 0x29c], 0x3f170a3d
+  0x34837: mov       dword ptr [rax + 0x2a0], 0x3f7ae148
+  0x34841: mov       dword ptr [rax + 0x2a4], 0x3f800000
+  0x3484b: mov       dword ptr [rax + 0x2a8], 0x3d75c28f
+  0x34855: mov       dword ptr [rax + 0x2ac], 0x3f07ae14
+  0x3485f: mov       dword ptr [rax + 0x2b0], 0x3f7ae148
+  0x34869: mov       dword ptr [rax + 0x2b4], 0x3f800000
+  0x34873: mov       dword ptr [rax + 0x2b8], 0x3e851eb8
+  0x3487d: mov       dword ptr [rax + 0x2bc], 0x3f170a3d
+  0x34887: mov       dword ptr [rax + 0x2c0], 0x3f7ae148
+  0x34891: mov       dword ptr [rax + 0x2c4], 0x3e9eb852
+  0x3489b: mov       dword ptr [rax + 0x2c8], 0x3e851eb8
+  0x348a5: mov       dword ptr [rax + 0x2cc], 0x3f170a3d
+  0x348af: mov       dword ptr [rax + 0x2d0], 0x3f7ae148
+  0x348b9: mov       dword ptr [rax + 0x2d4], 0x3f4ccccd
+  0x348c3: mov       dword ptr [rax + 0x2d8], 0x3e851eb8
+  0x348cd: mov       dword ptr [rax + 0x2dc], 0x3f170a3d
+  0x348d7: mov       dword ptr [rax + 0x2e0], 0x3f7ae148
+  0x348e1: mov       dword ptr [rax + 0x2e4], 0x3f800000
+  0x348eb: movups    xmm0, xmmword ptr [rax + 0x188]
+  0x348f2: movups    xmmword ptr [rax + 0x2e8], xmm0
+  0x348f9: mov       dword ptr [rax + 0x2f8], 0x3dcccccd
+  0x34903: mov       dword ptr [rax + 0x2fc], 0x3ecccccd
+  0x3490d: mov       dword ptr [rax + 0x300], 0x3f400000
+  0x34917: mov       dword ptr [rax + 0x304], 0x3f47ae14
+  0x34921: mov       dword ptr [rax + 0x308], 0x3dcccccd
+  0x3492b: mov       dword ptr [rax + 0x30c], 0x3ecccccd
+  0x34935: mov       dword ptr [rax + 0x310], 0x3f400000
+  0x3493f: mov       dword ptr [rax + 0x314], 0x3f800000
+  0x34949: mov       dword ptr [rax + 0x318], 0x3e851eb8
+  0x34953: mov       dword ptr [rax + 0x31c], 0x3f170a3d
+  0x3495d: mov       dword ptr [rax + 0x320], 0x3f7ae148
+  0x34967: mov       dword ptr [rax + 0x324], 0x3e4ccccd
+  0x34971: mov       dword ptr [rax + 0x328], 0x3e851eb8
+  0x3497b: mov       dword ptr [rax + 0x32c], 0x3f170a3d
+  0x34985: mov       dword ptr [rax + 0x330], 0x3f7ae148
+  0x3498f: mov       dword ptr [rax + 0x334], 0x3f2b851f
+  0x34999: mov       dword ptr [rax + 0x338], 0x3e851eb8
+  0x349a3: mov       dword ptr [rax + 0x33c], 0x3f170a3d
+  0x349ad: mov       dword ptr [rax + 0x340], 0x3f7ae148
+  0x349b7: mov       dword ptr [rax + 0x344], 0x3f733333
+  0x349c1: movss     xmm7, dword ptr [0x8853c]
+  0x349c9: movups    xmm0, xmmword ptr [rax + 0x138]
+  0x349d0: movups    xmmword ptr [rax + 0x348], xmm0
+  0x349d7: movups    xmm0, xmmword ptr [rax + 0x2c8]
+  0x349de: movups    xmmword ptr [rax + 0x358], xmm0
+  0x349e5: movss     xmm0, dword ptr [rax + 0x2c0]
+  0x349ed: movss     xmm1, dword ptr [rax + 0x2bc]
+  0x349f5: movss     xmm3, dword ptr [rax + 0x1f0]
+  0x349fd: movss     xmm5, dword ptr [rax + 0x1ec]
+  0x34a05: subss     xmm3, xmm0
+  0x34a09: movss     xmm4, dword ptr [rax + 0x2b8]
+  0x34a11: subss     xmm5, xmm1
+  0x34a15: movss     xmm2, dword ptr [rax + 0x1f4]
+  0x34a1d: mulss     xmm3, xmm7
+  0x34a21: mulss     xmm5, xmm7
+  0x34a25: addss     xmm3, xmm0
+  0x34a29: movss     xmm0, dword ptr [rax + 0x1e8]
+  0x34a31: subss     xmm0, xmm4
+  0x34a35: addss     xmm5, xmm1
+  0x34a39: movss     xmm1, dword ptr [rax + 0x2c4]
+  0x34a41: subss     xmm2, xmm1
+  0x34a45: mulss     xmm0, xmm7
+  0x34a49: mulss     xmm2, xmm7
+  0x34a4d: addss     xmm0, xmm4
+  0x34a51: addss     xmm2, xmm1
+  0x34a55: movss     dword ptr [rax + 0x368], xmm0
+  0x34a5d: movss     dword ptr [rax + 0x36c], xmm5
+  0x34a65: movss     dword ptr [rax + 0x370], xmm3
+  0x34a6d: movss     dword ptr [rax + 0x374], xmm2
+  0x34a75: movss     xmm0, dword ptr [rax + 0x2dc]
+  0x34a7d: movss     xmm6, dword ptr [rax + 0x1ec]
+  0x34a85: movss     xmm3, dword ptr [0x8ae18]
+  0x34a8d: subss     xmm6, xmm0
+  0x34a91: movss     xmm5, dword ptr [rax + 0x2d8]
+  0x34a99: mulss     xmm6, xmm3
+  0x34a9d: addss     xmm6, xmm0
+  0x34aa1: movss     xmm0, dword ptr [rax + 0x2e0]
+  0x34aa9: movss     xmm1, dword ptr [rax + 0x2e4]
+  0x34ab1: movss     xmm4, dword ptr [rax + 0x1f0]
+  0x34ab9: movss     xmm2, dword ptr [rax + 0x1f4]
+  0x34ac1: subss     xmm4, xmm0
+  0x34ac5: subss     xmm2, xmm1
+  0x34ac9: mulss     xmm4, xmm3
+  0x34acd: mulss     xmm2, xmm3
+  0x34ad1: addss     xmm4, xmm0
+  0x34ad5: movss     xmm0, dword ptr [rax + 0x1e8]
+  0x34add: subss     xmm0, xmm5
+  0x34ae1: addss     xmm2, xmm1
+  0x34ae5: mulss     xmm0, xmm3
+  0x34ae9: addss     xmm0, xmm5
+  0x34aed: movss     dword ptr [rax + 0x378], xmm0
+  0x34af5: movss     dword ptr [rax + 0x37c], xmm6
+  0x34afd: movss     dword ptr [rax + 0x380], xmm4
+  0x34b05: movss     dword ptr [rax + 0x384], xmm2
+  0x34b0d: movups    xmm0, xmmword ptr [rax + 0x2d8]
+  0x34b14: movups    xmmword ptr [rax + 0x388], xmm0
+  0x34b1b: movss     xmm0, dword ptr [rax + 0x370]
+  0x34b23: movss     xmm1, dword ptr [rax + 0x36c]
+  0x34b2b: movss     xmm4, dword ptr [rax + 0x368]
+  0x34b33: movss     xmm3, dword ptr [rax + 0x1e0]
+  0x34b3b: movss     xmm5, dword ptr [rax + 0x1dc]
+  0x34b43: subss     xmm3, xmm0
+  0x34b47: movss     xmm2, dword ptr [rax + 0x1e4]
+  0x34b4f: subss     xmm5, xmm1
+  0x34b53: mulss     xmm3, xmm7
+  0x34b57: mulss     xmm5, xmm7
+  0x34b5b: addss     xmm3, xmm0
+  0x34b5f: movss     xmm0, dword ptr [rax + 0x1d8]
+  0x34b67: subss     xmm0, xmm4
+  0x34b6b: addss     xmm5, xmm1
+  0x34b6f: movss     xmm1, dword ptr [rax + 0x374]
+  0x34b77: subss     xmm2, xmm1
+  0x34b7b: mulss     xmm0, xmm7
+  0x34b7f: mulss     xmm2, xmm7
+  0x34b83: addss     xmm0, xmm4
+  0x34b87: addss     xmm2, xmm1
+  0x34b8b: movss     dword ptr [rax + 0x398], xmm0
+  0x34b93: movss     dword ptr [rax + 0x39c], xmm5
+  0x34b9b: movss     dword ptr [rax + 0x3a0], xmm3
+  0x34ba3: movss     dword ptr [rax + 0x3a4], xmm2
+  0x34bab: movss     xmm4, dword ptr [0x8ae0c]
+  0x34bb3: movss     xmm0, dword ptr [rax + 0x37c]
+  0x34bbb: movss     xmm5, dword ptr [rax + 0x378]
+  0x34bc3: movss     xmm1, dword ptr [rax + 0x384]
+  0x34bcb: movss     xmm6, dword ptr [rax + 0x1dc]
+  0x34bd3: movss     xmm3, dword ptr [rax + 0x1e0]
+  0x34bdb: subss     xmm6, xmm0
+  0x34bdf: movss     xmm2, dword ptr [rax + 0x1e4]
+  0x34be7: subss     xmm2, xmm1
+  0x34beb: mulss     xmm6, xmm4
+  0x34bef: mulss     xmm2, xmm4
+  0x34bf3: addss     xmm6, xmm0
+  0x34bf7: movss     xmm0, dword ptr [rax + 0x380]
+  0x34bff: subss     xmm3, xmm0
+  0x34c03: addss     xmm2, xmm1
+  0x34c07: mulss     xmm3, xmm4
+  0x34c0b: addss     xmm3, xmm0
+  0x34c0f: movss     xmm0, dword ptr [rax + 0x1d8]
+  0x34c17: subss     xmm0, xmm5
+  0x34c1b: mulss     xmm0, xmm4
+  0x34c1f: addss     xmm0, xmm5
+  0x34c23: movss     dword ptr [rax + 0x3a8], xmm0
+  0x34c2b: movss     dword ptr [rax + 0x3ac], xmm6
+  0x34c33: movss     dword ptr [rax + 0x3b0], xmm3
+  0x34c3b: movss     dword ptr [rax + 0x3b4], xmm2
+  0x34c43: mov       dword ptr [rax + 0x3b8], 0x3f000000
+  0x34c4d: mov       dword ptr [rax + 0x3bc], 0x3f000000
+  0x34c57: mov       qword ptr [rax + 0x3c0], 0x3f000000
+  0x34c62: mov       dword ptr [rax + 0x3c8], 0x3f1c28f6
+  0x34c6c: mov       dword ptr [rax + 0x3cc], 0x3f1c28f6
+  0x34c76: mov       dword ptr [rax + 0x3d0], 0x3f1c28f6
+  0x34c80: mov       dword ptr [rax + 0x3d4], 0x3f800000
+  0x34c8a: mov       dword ptr [rax + 0x3d8], 0x3f800000
+  0x34c94: mov       dword ptr [rax + 0x3dc], 0x3edc28f6
+  0x34c9e: mov       dword ptr [rax + 0x3e0], 0x3eb33333
+  0x34ca8: mov       dword ptr [rax + 0x3e4], 0x3f800000
+  0x34cb2: mov       dword ptr [rax + 0x3e8], 0x3f666666
+  0x34cbc: mov       qword ptr [rax + 0x3ec], 0x3f333333
+  0x34cc7: mov       dword ptr [rax + 0x3f4], 0x3f800000
+  0x34cd1: mov       dword ptr [rax + 0x3f8], 0x3f800000
+  0x34cdb: mov       qword ptr [rax + 0x3fc], 0x3f19999a
+  0x34ce6: mov       dword ptr [rax + 0x404], 0x3f800000
+  0x34cf0: mov       dword ptr [rax + 0x408], 0x3e428f5c
+  0x34cfa: mov       dword ptr [rax + 0x40c], 0x3e428f5c
+  0x34d04: mov       dword ptr [rax + 0x410], 0x3e4ccccd
+  0x34d0e: mov       dword ptr [rax + 0x414], 0x3f800000
+  0x34d18: mov       dword ptr [rax + 0x418], 0x3e9eb852
+  0x34d22: mov       dword ptr [rax + 0x41c], 0x3e9eb852
+  0x34d2c: mov       dword ptr [rax + 0x420], 0x3eb33333
+  0x34d36: mov       dword ptr [rax + 0x424], 0x3f800000
+  0x34d40: mov       dword ptr [rax + 0x428], 0x3e6b851f
+  0x34d4a: mov       dword ptr [rax + 0x42c], 0x3e6b851f
+  0x34d54: mov       dword ptr [rax + 0x430], 0x3e800000
+  0x34d5e: mov       qword ptr [rax + 0x434], 0x3f800000
+  0x34d69: mov       qword ptr [rax + 0x43c], rcx
+  0x34d70: mov       dword ptr [rax + 0x444], ecx
+  0x34d76: mov       dword ptr [rax + 0x448], 0x3f800000
+  0x34d80: mov       dword ptr [rax + 0x44c], 0x3f800000
+  0x34d8a: mov       dword ptr [rax + 0x450], 0x3f800000
+  0x34d94: mov       dword ptr [rax + 0x454], 0x3d75c28f
+  0x34d9e: movups    xmm0, xmmword ptr [rax + 0x2d8]
+  0x34da5: movups    xmmword ptr [rax + 0x458], xmm0
+  0x34dac: mov       dword ptr [rax + 0x468], 0x3e851eb8
+  0x34db6: mov       dword ptr [rax + 0x46c], 0x3f170a3d
+  0x34dc0: mov       dword ptr [rax + 0x470], 0x3f7ae148
+  0x34dca: mov       dword ptr [rax + 0x474], 0x3eb33333
+  0x34dd4: movups    xmm0, xmmword ptr [rax + 0x188]
+  0x34ddb: movups    xmmword ptr [rax + 0x478], xmm0
+  0x34de2: mov       dword ptr [rax + 0x488], 0x3f800000
+  0x34dec: mov       qword ptr [rax + 0x48c], 0x3f800000
+  0x34df7: mov       qword ptr [rax + 0x494], 0x3f666666
+  0x34e02: mov       qword ptr [rax + 0x49c], rcx
+  0x34e09: mov       dword ptr [rax + 0x4a4], ecx
+  0x34e0f: mov       dword ptr [rax + 0x4a8], 0x3f800000
+  0x34e19: mov       dword ptr [rax + 0x4ac], 0x3f800000
+  0x34e23: mov       dword ptr [rax + 0x4b0], 0x3f800000
+  0x34e2d: mov       dword ptr [rax + 0x4b4], 0x3f800000
+  0x34e37: mov       dword ptr [rax + 0x4b8], 0x3e851eb8
+  0x34e41: mov       dword ptr [rax + 0x4bc], 0x3f170a3d
+  0x34e4b: mov       dword ptr [rax + 0x4c0], 0x3f7ae148
+  0x34e55: mov       dword ptr [rax + 0x4c4], 0x3f800000
+  0x34e5f: mov       dword ptr [rax + 0x4c8], 0x3f800000
+  0x34e69: mov       dword ptr [rax + 0x4cc], 0x3f800000
+  0x34e73: mov       dword ptr [rax + 0x4d0], 0x3f800000
+  0x34e7d: mov       dword ptr [rax + 0x4d4], 0x3f333333
+  0x34e87: mov       dword ptr [rax + 0x4d8], 0x3f4ccccd
+  0x34e91: mov       dword ptr [rax + 0x4dc], 0x3f4ccccd
+  0x34e9b: mov       dword ptr [rax + 0x4e0], 0x3f4ccccd
+  0x34ea5: mov       dword ptr [rax + 0x4e4], 0x3e4ccccd
+  0x34eaf: mov       dword ptr [rax + 0x4e8], 0x3f4ccccd
+  0x34eb9: mov       dword ptr [rax + 0x4ec], 0x3f4ccccd
+  0x34ec3: mov       dword ptr [rax + 0x4f0], 0x3f4ccccd
+  0x34ecd: mov       dword ptr [rax + 0x4f4], 0x3eb33333
+  0x34ed7: movaps    xmm6, xmmword ptr [rsp + 0x30]
+  0x34edc: movaps    xmm7, xmmword ptr [rsp + 0x20]
+  0x34ee1: add       rsp, 0x48
+  0x34ee5: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_000344e0 @ 0x344e0  size=2566 */
+/* xrefs: called by fun_00007a00 (1 site) */
+/* confidence: HIGH */
+struct s_fun_000344e0_result;
+#pragma pack(push, 1)
+struct s_fun_000344e0_result {
+    char _pad_0[316];
+    int32_t field_13c;
+    char _pad_140[4];
+    int32_t field_144;
+    int32_t field_148;
+    int32_t field_14c;
+    int32_t field_150;
+    int32_t field_154;
+    int32_t field_158;
+    int32_t field_15c;
+    int32_t field_160;
+    int64_t field_164;
+    int64_t field_16c;
+    int32_t field_174;
+    int32_t field_178;
+    int32_t field_17c;
+    int32_t field_180;
+    int32_t field_184;
+    char _pad_188[4];
+    int32_t field_18c;
+    char _pad_190[4];
+    int64_t field_194;
+    int64_t field_19c;
+    int32_t field_1a4;
+    int32_t field_1a8;
+    int32_t field_1ac;
+    int32_t field_1b0;
+    int32_t field_1b4;
+    int32_t field_1b8;
+    int32_t field_1bc;
+    int32_t field_1c0;
+    int32_t field_1c4;
+    int32_t field_1c8;
+    int32_t field_1cc;
+    int32_t field_1d0;
+    int32_t field_1d4;
+    float field_1d8;
+    float field_1dc;
+    float field_1e0;
+    float field_1e4;
+    float field_1e8;
+    float field_1ec;
+    float field_1f0;
+    char _pad_1f4[8];
+    int64_t field_1fc;
+    int32_t field_204;
+    int32_t field_208;
+    int32_t field_20c;
+    int32_t field_210;
+    int32_t field_214;
+    int32_t field_218;
+    int32_t field_21c;
+    int32_t field_220;
+    int32_t field_224;
+    int32_t field_228;
+    int32_t field_22c;
+    int32_t field_230;
+    int32_t field_234;
+    int32_t field_238;
+    int32_t field_23c;
+    int32_t field_240;
+    int32_t field_244;
+    int32_t field_248;
+    int32_t field_24c;
+    int32_t field_250;
+    int32_t field_254;
+    int32_t field_258;
+    int32_t field_25c;
+    int32_t field_260;
+    int32_t field_264;
+    int32_t field_268;
+    int32_t field_26c;
+    int32_t field_270;
+    int32_t field_274;
+    int32_t field_278;
+    int32_t field_27c;
+    int32_t field_280;
+    int32_t field_284;
+    int32_t field_288;
+    int32_t field_28c;
+    int32_t field_290;
+    int32_t field_294;
+    int32_t field_298;
+    int32_t field_29c;
+    int32_t field_2a0;
+    int32_t field_2a4;
+    int32_t field_2a8;
+    int32_t field_2ac;
+    int32_t field_2b0;
+    int32_t field_2b4;
+    int32_t field_2b8;
+    int32_t field_2bc;
+    int32_t field_2c0;
+    int32_t field_2c4;
+    char _pad_2c8[4];
+    int32_t field_2cc;
+    char _pad_2d0[4];
+    int32_t field_2d4;
+    char _pad_2d8[4];
+    int32_t field_2dc;
+    char _pad_2e0[4];
+    int32_t field_2e4;
+    int64_t field_2e8;
+    char _pad_2f0[8];
+    int32_t field_2f8;
+    int32_t field_2fc;
+    int32_t field_300;
+    int32_t field_304;
+    int32_t field_308;
+    int32_t field_30c;
+    int32_t field_310;
+    int32_t field_314;
+    int32_t field_318;
+    int32_t field_31c;
+    int32_t field_320;
+    int32_t field_324;
+    int32_t field_328;
+    int32_t field_32c;
+    int32_t field_330;
+    int32_t field_334;
+    int32_t field_338;
+    int32_t field_33c;
+    int32_t field_340;
+    int32_t field_344;
+    int64_t field_348;
+    char _pad_350[8];
+    int64_t field_358;
+    char _pad_360[8];
+    float field_368;
+    float field_36c;
+    float field_370;
+    float field_374;
+    float field_378;
+    float field_37c;
+    float field_380;
+    float field_384;
+    int64_t field_388;
+    char _pad_390[8];
+    float field_398;
+    float field_39c;
+    float field_3a0;
+    float field_3a4;
+    float field_3a8;
+    float field_3ac;
+    float field_3b0;
+    float field_3b4;
+    int32_t field_3b8;
+    int32_t field_3bc;
+    int64_t field_3c0;
+    int32_t field_3c8;
+    int32_t field_3cc;
+    int32_t field_3d0;
+    int32_t field_3d4;
+    int32_t field_3d8;
+    int32_t field_3dc;
+    int32_t field_3e0;
+    int32_t field_3e4;
+    int32_t field_3e8;
+    int64_t field_3ec;
+    int32_t field_3f4;
+    int32_t field_3f8;
+    int64_t field_3fc;
+    int32_t field_404;
+    int32_t field_408;
+    int32_t field_40c;
+    int32_t field_410;
+    int32_t field_414;
+    int32_t field_418;
+    int32_t field_41c;
+    int32_t field_420;
+    int32_t field_424;
+    int32_t field_428;
+    int32_t field_42c;
+    int32_t field_430;
+    int64_t field_434;
+    int64_t field_43c;
+    int32_t field_444;
+    int32_t field_448;
+    int32_t field_44c;
+    int32_t field_450;
+    int32_t field_454;
+    int64_t field_458;
+    char _pad_460[8];
+    int32_t field_468;
+    int32_t field_46c;
+    int32_t field_470;
+    int32_t field_474;
+    int64_t field_478;
+    char _pad_480[8];
+    int32_t field_488;
+    int64_t field_48c;
+    int64_t field_494;
+    int64_t field_49c;
+    int32_t field_4a4;
+    int32_t field_4a8;
+    int32_t field_4ac;
+    int32_t field_4b0;
+    int32_t field_4b4;
+    int32_t field_4b8;
+    int32_t field_4bc;
+    int32_t field_4c0;
+    int32_t field_4c4;
+    int32_t field_4c8;
+    int32_t field_4cc;
+    int32_t field_4d0;
+    int32_t field_4d4;
+    int32_t field_4d8;
+    int32_t field_4dc;
+    int32_t field_4e0;
+    int32_t field_4e4;
+    int32_t field_4e8;
+    int32_t field_4ec;
+    int32_t field_4f0;
+    int32_t field_4f4;
+};
+#pragma pack(pop)
+int64_t fun_00012ea0();
+int64_t fun_000344e0(int64_t a1) {
+    struct s_fun_000344e0_result*result;
+
+    result = (struct s_fun_000344e0_result*)a1;
+    if (a1) {
+        *(int32_t*)((char*)result + 0x138) = 0x3f800000;
+        result->field_13c = 0x3f800000;
+        *(int32_t*)((char*)result + 0x140) = 0x3f800000;
+        result->field_144 = 0x3f800000;
+        result->field_148 = 0x3f000000;
+        result->field_14c = 0x3f000000;
+        result->field_150 = 0x3f000000;
+        result->field_154 = 0x3f800000;
+        result->field_158 = 0x3d75c28f;
+        result->field_15c = 0x3d75c28f;
+        result->field_160 = 0x3d75c28f;
+        result->field_164 = 0x3f70a3d7;
+        result->field_16c = 0;
+        result->field_174 = 0;
+        result->field_178 = 0x3da3d70a;
+        result->field_17c = 0x3da3d70a;
+        result->field_180 = 0x3da3d70a;
+        result->field_184 = 0x3f70a3d7;
+        *(int32_t*)((char*)result + 0x188) = 0x3edc28f6;
+        result->field_18c = 0x3edc28f6;
+        *(int32_t*)((char*)result + 0x190) = 0x3f000000;
+        result->field_194 = 0x3f000000;
+        result->field_19c = 0;
+        result->field_1a4 = 0;
+        result->field_1a8 = 0x3e23d70a;
+        result->field_1ac = 0x3e947ae1;
+        result->field_1b0 = 0x3ef5c28f;
+        result->field_1b4 = 0x3f0a3d71;
+        result->field_1b8 = 0x3e851eb8;
+        result->field_1bc = 0x3f170a3d;
+        result->field_1c0 = 0x3f7ae148;
+        result->field_1c4 = 0x3ecccccd;
+        result->field_1c8 = 0x3e851eb8;
+        result->field_1cc = 0x3f170a3d;
+        result->field_1d0 = 0x3f7ae148;
+        result->field_1d4 = 0x3f2b851f;
+        result->field_1d8 = 0.04f;
+        result->field_1dc = 0.04f;
+        result->field_1e0 = 0.04f;
+        result->field_1e4 = 1.0f;
+        result->field_1e8 = 0.16f;
+        result->field_1ec = 0.29f;
+        result->field_1f0 = 0.48f;
+        *(int64_t*)((char*)result + 0x1f4) = 0x3f800000;
+        result->field_1fc = 0;
+        result->field_204 = 0x3f028f5c;
+        result->field_208 = 0x3e0f5c29;
+        result->field_20c = 0x3e0f5c29;
+        result->field_210 = 0x3e0f5c29;
+        result->field_214 = 0x3f800000;
+        result->field_218 = 0x3ca3d70a;
+        result->field_21c = 0x3ca3d70a;
+        result->field_220 = 0x3ca3d70a;
+        result->field_224 = 0x3f07ae14;
+        result->field_228 = 0x3e9eb852;
+        result->field_22c = 0x3e9eb852;
+        result->field_230 = 0x3e9eb852;
+        result->field_234 = 0x3f800000;
+        result->field_238 = 0x3ed1eb85;
+        result->field_23c = 0x3ed1eb85;
+        result->field_240 = 0x3ed1eb85;
+        result->field_244 = 0x3f800000;
+        result->field_248 = 0x3f028f5c;
+        result->field_24c = 0x3f028f5c;
+        result->field_250 = 0x3f028f5c;
+        result->field_254 = 0x3f800000;
+        result->field_258 = 0x3e851eb8;
+        result->field_25c = 0x3f170a3d;
+        result->field_260 = 0x3f7ae148;
+        result->field_264 = 0x3f800000;
+        result->field_268 = 0x3e75c28f;
+        result->field_26c = 0x3f051eb8;
+        result->field_270 = 0x3f6147ae;
+        result->field_274 = 0x3f800000;
+        result->field_278 = 0x3e851eb8;
+        result->field_27c = 0x3f170a3d;
+        result->field_280 = 0x3f7ae148;
+        result->field_284 = 0x3f800000;
+        result->field_288 = 0x3e851eb8;
+        result->field_28c = 0x3f170a3d;
+        result->field_290 = 0x3f7ae148;
+        result->field_294 = 0x3ecccccd;
+        result->field_298 = 0x3e851eb8;
+        result->field_29c = 0x3f170a3d;
+        result->field_2a0 = 0x3f7ae148;
+        result->field_2a4 = 0x3f800000;
+        result->field_2a8 = 0x3d75c28f;
+        result->field_2ac = 0x3f07ae14;
+        result->field_2b0 = 0x3f7ae148;
+        result->field_2b4 = 0x3f800000;
+        result->field_2b8 = 0x3e851eb8;
+        result->field_2bc = 0x3f170a3d;
+        result->field_2c0 = 0x3f7ae148;
+        result->field_2c4 = 0x3e9eb852;
+        *(int32_t*)((char*)result + 0x2c8) = 0x3e851eb8;
+        result->field_2cc = 0x3f170a3d;
+        *(int32_t*)((char*)result + 0x2d0) = 0x3f7ae148;
+        result->field_2d4 = 0x3f4ccccd;
+        *(int32_t*)((char*)result + 0x2d8) = 0x3e851eb8;
+        result->field_2dc = 0x3f170a3d;
+        *(int32_t*)((char*)result + 0x2e0) = 0x3f7ae148;
+        result->field_2e4 = 0x3f800000;
+        result->field_2e8 = *(int64_t*)((char*)result + 0x188);
+        *(int64_t*)((char*)result + 0x2f0) = *(int64_t*)((char*)result + 0x190);
+        result->field_2f8 = 0x3dcccccd;
+        result->field_2fc = 0x3ecccccd;
+        result->field_300 = 0x3f400000;
+        result->field_304 = 0x3f47ae14;
+        result->field_308 = 0x3dcccccd;
+        result->field_30c = 0x3ecccccd;
+        result->field_310 = 0x3f400000;
+        result->field_314 = 0x3f800000;
+        result->field_318 = 0x3e851eb8;
+        result->field_31c = 0x3f170a3d;
+        result->field_320 = 0x3f7ae148;
+        result->field_324 = 0x3e4ccccd;
+        result->field_328 = 0x3e851eb8;
+        result->field_32c = 0x3f170a3d;
+        result->field_330 = 0x3f7ae148;
+        result->field_334 = 0x3f2b851f;
+        result->field_338 = 0x3e851eb8;
+        result->field_33c = 0x3f170a3d;
+        result->field_340 = 0x3f7ae148;
+        result->field_344 = 0x3f733333;
+        result->field_348 = *(int64_t*)((char*)result + 0x138);
+        *(int64_t*)((char*)result + 0x350) = *(int64_t*)((char*)result + 0x140);
+        result->field_358 = *(int64_t*)((char*)result + 0x2c8);
+        *(int64_t*)((char*)result + 0x360) = *(int64_t*)((char*)result + 0x2d0);
+        result->field_368 = (result->field_1e8 - result->field_2b8) * 0.8f + result->field_2b8;
+        result->field_36c = (result->field_1ec - result->field_2bc) * 0.8f + result->field_2bc;
+        result->field_370 = (result->field_1f0 - result->field_2c0) * 0.8f + result->field_2c0;
+        result->field_374 = (*(float*)((char*)result + 0x1f4) - result->field_2c4) * 0.8f + result->field_2c4;
+        result->field_378 = (result->field_1e8 - *(float*)((char*)result + 0x2d8)) * 0.6f + *(float*)((char*)result + 0x2d8);
+        result->field_37c = (result->field_1ec - result->field_2dc) * 0.6f + result->field_2dc;
+        result->field_380 = (result->field_1f0 - *(float*)((char*)result + 0x2e0)) * 0.6f + *(float*)((char*)result + 0x2e0);
+        result->field_384 = (*(float*)((char*)result + 0x1f4) - result->field_2e4) * 0.6f + result->field_2e4;
+        result->field_388 = *(int64_t*)((char*)result + 0x2d8);
+        *(int64_t*)((char*)result + 0x390) = *(int64_t*)((char*)result + 0x2e0);
+        result->field_398 = (result->field_1d8 - result->field_368) * 0.8f + result->field_368;
+        result->field_39c = (result->field_1dc - result->field_36c) * 0.8f + result->field_36c;
+        result->field_3a0 = (result->field_1e0 - result->field_370) * 0.8f + result->field_370;
+        result->field_3a4 = (result->field_1e4 - result->field_374) * 0.8f + result->field_374;
+        result->field_3a8 = (result->field_1d8 - result->field_378) * 0.4f + result->field_378;
+        result->field_3ac = (result->field_1dc - result->field_37c) * 0.4f + result->field_37c;
+        result->field_3b0 = (result->field_1e0 - result->field_380) * 0.4f + result->field_380;
+        result->field_3b4 = (result->field_1e4 - result->field_384) * 0.4f + result->field_384;
+        result->field_3b8 = 0x3f000000;
+        result->field_3bc = 0x3f000000;
+        result->field_3c0 = 0x3f000000;
+        result->field_3c8 = 0x3f1c28f6;
+        result->field_3cc = 0x3f1c28f6;
+        result->field_3d0 = 0x3f1c28f6;
+        result->field_3d4 = 0x3f800000;
+        result->field_3d8 = 0x3f800000;
+        result->field_3dc = 0x3edc28f6;
+        result->field_3e0 = 0x3eb33333;
+        result->field_3e4 = 0x3f800000;
+        result->field_3e8 = 0x3f666666;
+        result->field_3ec = 0x3f333333;
+        result->field_3f4 = 0x3f800000;
+        result->field_3f8 = 0x3f800000;
+        result->field_3fc = 0x3f19999a;
+        result->field_404 = 0x3f800000;
+        result->field_408 = 0x3e428f5c;
+        result->field_40c = 0x3e428f5c;
+        result->field_410 = 0x3e4ccccd;
+        result->field_414 = 0x3f800000;
+        result->field_418 = 0x3e9eb852;
+        result->field_41c = 0x3e9eb852;
+        result->field_420 = 0x3eb33333;
+        result->field_424 = 0x3f800000;
+        result->field_428 = 0x3e6b851f;
+        result->field_42c = 0x3e6b851f;
+        result->field_430 = 0x3e800000;
+        result->field_434 = 0x3f800000;
+        result->field_43c = 0;
+        result->field_444 = 0;
+        result->field_448 = 0x3f800000;
+        result->field_44c = 0x3f800000;
+        result->field_450 = 0x3f800000;
+        result->field_454 = 0x3d75c28f;
+        result->field_458 = *(int64_t*)((char*)result + 0x2d8);
+        *(int64_t*)((char*)result + 0x460) = *(int64_t*)((char*)result + 0x2e0);
+        result->field_468 = 0x3e851eb8;
+        result->field_46c = 0x3f170a3d;
+        result->field_470 = 0x3f7ae148;
+        result->field_474 = 0x3eb33333;
+        result->field_478 = *(int64_t*)((char*)result + 0x188);
+        *(int64_t*)((char*)result + 0x480) = *(int64_t*)((char*)result + 0x190);
+        result->field_488 = 0x3f800000;
+        result->field_48c = 0x3f800000;
+        result->field_494 = 0x3f666666;
+        result->field_49c = 0;
+        result->field_4a4 = 0;
+        result->field_4a8 = 0x3f800000;
+        result->field_4ac = 0x3f800000;
+        result->field_4b0 = 0x3f800000;
+        result->field_4b4 = 0x3f800000;
+        result->field_4b8 = 0x3e851eb8;
+        result->field_4bc = 0x3f170a3d;
+        result->field_4c0 = 0x3f7ae148;
+        result->field_4c4 = 0x3f800000;
+        result->field_4c8 = 0x3f800000;
+        result->field_4cc = 0x3f800000;
+        result->field_4d0 = 0x3f800000;
+        result->field_4d4 = 0x3f333333;
+        result->field_4d8 = 0x3f4ccccd;
+        result->field_4dc = 0x3f4ccccd;
+        result->field_4e0 = 0x3f4ccccd;
+        result->field_4e4 = 0x3e4ccccd;
+        result->field_4e8 = 0x3f4ccccd;
+        result->field_4ec = 0x3f4ccccd;
+        result->field_4f0 = 0x3f4ccccd;
+        result->field_4f4 = 0x3eb33333;
+        return (int64_t)result;
+    }
+    result = (struct s_fun_000344e0_result*)fun_00012ea0();
+    *(int32_t*)((char*)result + 0x138) = 0x3f800000;
+    result->field_13c = 0x3f800000;
+    *(int32_t*)((char*)result + 0x140) = 0x3f800000;
+    result->field_144 = 0x3f800000;
+    result->field_148 = 0x3f000000;
+    result->field_14c = 0x3f000000;
+    result->field_150 = 0x3f000000;
+    result->field_154 = 0x3f800000;
+    result->field_158 = 0x3d75c28f;
+    result->field_15c = 0x3d75c28f;
+    result->field_160 = 0x3d75c28f;
+    result->field_164 = 0x3f70a3d7;
+    result->field_16c = 0;
+    result->field_174 = 0;
+    result->field_178 = 0x3da3d70a;
+    result->field_17c = 0x3da3d70a;
+    result->field_180 = 0x3da3d70a;
+    result->field_184 = 0x3f70a3d7;
+    *(int32_t*)((char*)result + 0x188) = 0x3edc28f6;
+    result->field_18c = 0x3edc28f6;
+    *(int32_t*)((char*)result + 0x190) = 0x3f000000;
+    result->field_194 = 0x3f000000;
+    result->field_19c = 0;
+    result->field_1a4 = 0;
+    result->field_1a8 = 0x3e23d70a;
+    result->field_1ac = 0x3e947ae1;
+    result->field_1b0 = 0x3ef5c28f;
+    result->field_1b4 = 0x3f0a3d71;
+    result->field_1b8 = 0x3e851eb8;
+    result->field_1bc = 0x3f170a3d;
+    result->field_1c0 = 0x3f7ae148;
+    result->field_1c4 = 0x3ecccccd;
+    result->field_1c8 = 0x3e851eb8;
+    result->field_1cc = 0x3f170a3d;
+    result->field_1d0 = 0x3f7ae148;
+    result->field_1d4 = 0x3f2b851f;
+    result->field_1d8 = 0.04f;
+    result->field_1dc = 0.04f;
+    result->field_1e0 = 0.04f;
+    result->field_1e4 = 1.0f;
+    result->field_1e8 = 0.16f;
+    result->field_1ec = 0.29f;
+    result->field_1f0 = 0.48f;
+    *(int64_t*)((char*)result + 0x1f4) = 0x3f800000;
+    result->field_1fc = 0;
+    result->field_204 = 0x3f028f5c;
+    result->field_208 = 0x3e0f5c29;
+    result->field_20c = 0x3e0f5c29;
+    result->field_210 = 0x3e0f5c29;
+    result->field_214 = 0x3f800000;
+    result->field_218 = 0x3ca3d70a;
+    result->field_21c = 0x3ca3d70a;
+    result->field_220 = 0x3ca3d70a;
+    result->field_224 = 0x3f07ae14;
+    result->field_228 = 0x3e9eb852;
+    result->field_22c = 0x3e9eb852;
+    result->field_230 = 0x3e9eb852;
+    result->field_234 = 0x3f800000;
+    result->field_238 = 0x3ed1eb85;
+    result->field_23c = 0x3ed1eb85;
+    result->field_240 = 0x3ed1eb85;
+    result->field_244 = 0x3f800000;
+    result->field_248 = 0x3f028f5c;
+    result->field_24c = 0x3f028f5c;
+    result->field_250 = 0x3f028f5c;
+    result->field_254 = 0x3f800000;
+    result->field_258 = 0x3e851eb8;
+    result->field_25c = 0x3f170a3d;
+    result->field_260 = 0x3f7ae148;
+    result->field_264 = 0x3f800000;
+    result->field_268 = 0x3e75c28f;
+    result->field_26c = 0x3f051eb8;
+    result->field_270 = 0x3f6147ae;
+    result->field_274 = 0x3f800000;
+    result->field_278 = 0x3e851eb8;
+    result->field_27c = 0x3f170a3d;
+    result->field_280 = 0x3f7ae148;
+    result->field_284 = 0x3f800000;
+    result->field_288 = 0x3e851eb8;
+    result->field_28c = 0x3f170a3d;
+    result->field_290 = 0x3f7ae148;
+    result->field_294 = 0x3ecccccd;
+    result->field_298 = 0x3e851eb8;
+    result->field_29c = 0x3f170a3d;
+    result->field_2a0 = 0x3f7ae148;
+    result->field_2a4 = 0x3f800000;
+    result->field_2a8 = 0x3d75c28f;
+    result->field_2ac = 0x3f07ae14;
+    result->field_2b0 = 0x3f7ae148;
+    result->field_2b4 = 0x3f800000;
+    result->field_2b8 = 0x3e851eb8;
+    result->field_2bc = 0x3f170a3d;
+    result->field_2c0 = 0x3f7ae148;
+    result->field_2c4 = 0x3e9eb852;
+    *(int32_t*)((char*)result + 0x2c8) = 0x3e851eb8;
+    result->field_2cc = 0x3f170a3d;
+    *(int32_t*)((char*)result + 0x2d0) = 0x3f7ae148;
+    result->field_2d4 = 0x3f4ccccd;
+    *(int32_t*)((char*)result + 0x2d8) = 0x3e851eb8;
+    result->field_2dc = 0x3f170a3d;
+    *(int32_t*)((char*)result + 0x2e0) = 0x3f7ae148;
+    result->field_2e4 = 0x3f800000;
+    result->field_2e8 = *(int64_t*)((char*)result + 0x188);
+    *(int64_t*)((char*)result + 0x2f0) = *(int64_t*)((char*)result + 0x190);
+    result->field_2f8 = 0x3dcccccd;
+    result->field_2fc = 0x3ecccccd;
+    result->field_300 = 0x3f400000;
+    result->field_304 = 0x3f47ae14;
+    result->field_308 = 0x3dcccccd;
+    result->field_30c = 0x3ecccccd;
+    result->field_310 = 0x3f400000;
+    result->field_314 = 0x3f800000;
+    result->field_318 = 0x3e851eb8;
+    result->field_31c = 0x3f170a3d;
+    result->field_320 = 0x3f7ae148;
+    result->field_324 = 0x3e4ccccd;
+    result->field_328 = 0x3e851eb8;
+    result->field_32c = 0x3f170a3d;
+    result->field_330 = 0x3f7ae148;
+    result->field_334 = 0x3f2b851f;
+    result->field_338 = 0x3e851eb8;
+    result->field_33c = 0x3f170a3d;
+    result->field_340 = 0x3f7ae148;
+    result->field_344 = 0x3f733333;
+    result->field_348 = *(int64_t*)((char*)result + 0x138);
+    *(int64_t*)((char*)result + 0x350) = *(int64_t*)((char*)result + 0x140);
+    result->field_358 = *(int64_t*)((char*)result + 0x2c8);
+    *(int64_t*)((char*)result + 0x360) = *(int64_t*)((char*)result + 0x2d0);
+    result->field_368 = (result->field_1e8 - result->field_2b8) * 0.8f + result->field_2b8;
+    result->field_36c = (result->field_1ec - result->field_2bc) * 0.8f + result->field_2bc;
+    result->field_370 = (result->field_1f0 - result->field_2c0) * 0.8f + result->field_2c0;
+    result->field_374 = (*(float*)((char*)result + 0x1f4) - result->field_2c4) * 0.8f + result->field_2c4;
+    result->field_378 = (result->field_1e8 - *(float*)((char*)result + 0x2d8)) * 0.6f + *(float*)((char*)result + 0x2d8);
+    result->field_37c = (result->field_1ec - result->field_2dc) * 0.6f + result->field_2dc;
+    result->field_380 = (result->field_1f0 - *(float*)((char*)result + 0x2e0)) * 0.6f + *(float*)((char*)result + 0x2e0);
+    result->field_384 = (*(float*)((char*)result + 0x1f4) - result->field_2e4) * 0.6f + result->field_2e4;
+    result->field_388 = *(int64_t*)((char*)result + 0x2d8);
+    *(int64_t*)((char*)result + 0x390) = *(int64_t*)((char*)result + 0x2e0);
+    result->field_398 = (result->field_1d8 - result->field_368) * 0.8f + result->field_368;
+    result->field_39c = (result->field_1dc - result->field_36c) * 0.8f + result->field_36c;
+    result->field_3a0 = (result->field_1e0 - result->field_370) * 0.8f + result->field_370;
+    result->field_3a4 = (result->field_1e4 - result->field_374) * 0.8f + result->field_374;
+    result->field_3a8 = (result->field_1d8 - result->field_378) * 0.4f + result->field_378;
+    result->field_3ac = (result->field_1dc - result->field_37c) * 0.4f + result->field_37c;
+    result->field_3b0 = (result->field_1e0 - result->field_380) * 0.4f + result->field_380;
+    result->field_3b4 = (result->field_1e4 - result->field_384) * 0.4f + result->field_384;
+    result->field_3b8 = 0x3f000000;
+    result->field_3bc = 0x3f000000;
+    result->field_3c0 = 0x3f000000;
+    result->field_3c8 = 0x3f1c28f6;
+    result->field_3cc = 0x3f1c28f6;
+    result->field_3d0 = 0x3f1c28f6;
+    result->field_3d4 = 0x3f800000;
+    result->field_3d8 = 0x3f800000;
+    result->field_3dc = 0x3edc28f6;
+    result->field_3e0 = 0x3eb33333;
+    result->field_3e4 = 0x3f800000;
+    result->field_3e8 = 0x3f666666;
+    result->field_3ec = 0x3f333333;
+    result->field_3f4 = 0x3f800000;
+    result->field_3f8 = 0x3f800000;
+    result->field_3fc = 0x3f19999a;
+    result->field_404 = 0x3f800000;
+    result->field_408 = 0x3e428f5c;
+    result->field_40c = 0x3e428f5c;
+    result->field_410 = 0x3e4ccccd;
+    result->field_414 = 0x3f800000;
+    result->field_418 = 0x3e9eb852;
+    result->field_41c = 0x3e9eb852;
+    result->field_420 = 0x3eb33333;
+    result->field_424 = 0x3f800000;
+    result->field_428 = 0x3e6b851f;
+    result->field_42c = 0x3e6b851f;
+    result->field_430 = 0x3e800000;
+    result->field_434 = 0x3f800000;
+    result->field_43c = 0;
+    result->field_444 = 0;
+    result->field_448 = 0x3f800000;
+    result->field_44c = 0x3f800000;
+    result->field_450 = 0x3f800000;
+    result->field_454 = 0x3d75c28f;
+    result->field_458 = *(int64_t*)((char*)result + 0x2d8);
+    *(int64_t*)((char*)result + 0x460) = *(int64_t*)((char*)result + 0x2e0);
+    result->field_468 = 0x3e851eb8;
+    result->field_46c = 0x3f170a3d;
+    result->field_470 = 0x3f7ae148;
+    result->field_474 = 0x3eb33333;
+    result->field_478 = *(int64_t*)((char*)result + 0x188);
+    *(int64_t*)((char*)result + 0x480) = *(int64_t*)((char*)result + 0x190);
+    result->field_488 = 0x3f800000;
+    result->field_48c = 0x3f800000;
+    result->field_494 = 0x3f666666;
+    result->field_49c = 0;
+    result->field_4a4 = 0;
+    result->field_4a8 = 0x3f800000;
+    result->field_4ac = 0x3f800000;
+    result->field_4b0 = 0x3f800000;
+    result->field_4b4 = 0x3f800000;
+    result->field_4b8 = 0x3e851eb8;
+    result->field_4bc = 0x3f170a3d;
+    result->field_4c0 = 0x3f7ae148;
+    result->field_4c4 = 0x3f800000;
+    result->field_4c8 = 0x3f800000;
+    result->field_4cc = 0x3f800000;
+    result->field_4d0 = 0x3f800000;
+    result->field_4d4 = 0x3f333333;
+    result->field_4d8 = 0x3f4ccccd;
+    result->field_4dc = 0x3f4ccccd;
+    result->field_4e0 = 0x3f4ccccd;
+    result->field_4e4 = 0x3e4ccccd;
+    result->field_4e8 = 0x3f4ccccd;
+    result->field_4ec = 0x3f4ccccd;
+    result->field_4f0 = 0x3f4ccccd;
+    result->field_4f4 = 0x3eb33333;
+    return (int64_t)result;
+}
+

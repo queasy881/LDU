@@ -1,0 +1,86 @@
+=== fun_00056380 @ 0x56380 size=195 blocks=8 calls=6 ===
+--- DISASM ---
+  0x56380: mov       qword ptr [rsp + 8], rbx
+  0x56385: mov       qword ptr [rsp + 0x10], rsi
+  0x5638a: push      rdi
+  0x5638b: sub       rsp, 0x30
+  0x5638f: mov       rsi, qword ptr [0x174148]
+  0x56396: test      rdx, rdx
+  0x56399: mov       rbx, rcx
+  0x5639c: cmovne    rbx, rdx
+  0x563a0: call      0x56020
+  0x563a5: movzx     edi, al
+  0x563a8: test      al, al
+  0x563aa: je        0x563c0
+  0x563ac: mov       rax, qword ptr [rsi + 0xc18]
+  0x563b3: test      rax, rax
+  0x563b6: je        0x563c0
+  0x563b8: mov       rdx, rbx
+  0x563bb: mov       rcx, rsi
+  0x563be: call      rax
+  0x563c0: mov       rcx, qword ptr [0x174148]
+  0x563c7: lea       rsi, [0x89940]
+  0x563ce: mov       rdx, qword ptr [rcx + 0x2788]
+  0x563d5: mov       rcx, rsi
+  0x563d8: test      rdx, rdx
+  0x563db: cmovne    rcx, rdx
+  0x563df: mov       rdx, rbx
+  0x563e2: call      0x21140
+  0x563e7: xor       edx, edx
+  0x563e9: xor       ecx, ecx
+  0x563eb: call      0xc680
+  0x563f0: test      al, al
+  0x563f2: je        0x5642f
+  0x563f4: mov       rax, qword ptr [0x174148]
+  0x563fb: mov       byte ptr [rsp + 0x20], 1
+  0x56400: mov       rdx, qword ptr [rax + 0x2790]
+  0x56407: test      rdx, rdx
+  0x5640a: cmovne    rsi, rdx
+  0x5640e: xor       r9d, r9d
+  0x56411: mov       rcx, rsi
+  0x56414: xor       r8d, r8d
+  0x56417: xor       edx, edx
+  0x56419: call      0x4ef60
+  0x5641e: test      al, al
+  0x56420: je        0x5642a
+  0x56422: mov       rcx, rbx
+  0x56425: call      0x20cd0
+  0x5642a: call      0x107a0
+  0x5642f: mov       rbx, qword ptr [rsp + 0x40]
+  0x56434: movzx     eax, dil
+  0x56438: mov       rsi, qword ptr [rsp + 0x48]
+  0x5643d: add       rsp, 0x30
+  0x56441: pop       rdi
+  0x56442: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_00056380 @ 0x56380  size=195 */
+/* xrefs: called by fun_0000fdb0 (1 site) */
+/* confidence: HIGH */
+#define qword_174148 (*(int64_t*)0x174148)
+int32_t fun_0000c680();
+void fun_000107a0();
+void fun_00020cd0();
+void fun_00021140();
+int32_t fun_0004ef60();
+int32_t fun_00056020();
+uint8_t fun_00056380(int64_t a1, int64_t a2) {
+    int32_t result;
+
+    result = fun_00056020(a1);
+    if ((uint8_t)result && *(int64_t*)(qword_174148 + 0xc18)) {
+        ((int64_t(*)())(*(int64_t*)(qword_174148 + 0xc18)))(qword_174148, a2 != 0 ? a2 : a1);
+    }
+    fun_00021140(*(int64_t*)(qword_174148 + 0x2788) != 0 ? *(int64_t*)(qword_174148 + 0x2788) : "*Missing Text*", a2 != 0 ? a2 : a1);
+    if (!((uint8_t)fun_0000c680(0, 0))) {
+        return (uint8_t)result;
+    }
+    if (!((uint8_t)fun_0004ef60(*(int64_t*)(qword_174148 + 0x2790) != 0 ? *(int64_t*)(qword_174148 + 0x2790) : "*Missing Text*", 0, 0, 0, 1))) {
+        fun_000107a0();
+        return (uint8_t)result;
+    }
+    fun_00020cd0(a2 != 0 ? a2 : a1);
+    fun_000107a0();
+    return (uint8_t)result;
+}
+

@@ -1,0 +1,26 @@
+=== fun_00001360 @ 0x1360 size=15 blocks=5 calls=0 ===
+--- DISASM ---
+  0x1360: test      rcx, rcx
+  0x1363: jne       0x1368
+  0x1365: xor       eax, eax
+  0x1367: ret       
+  0x1368: mov       eax, dword ptr [rcx]
+  0x136a: jmp       0x136e
+  0x136c: xor       eax, eax
+  0x136e: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_00001360 @ 0x1360  size=15 */
+/* xrefs: called by fun_000026d0 (3 sites), fun_000017d0 (2 sites), fun_00004ac0 (2 sites), fun_000052e0 (1 site) */
+/* confidence: MEDIUM - EH funclets */
+int32_t fun_00001360(int32_t*a1) {
+    /* SEH: __try { 0x1368..0x136c } __except( EXCEPTION_EXECUTE_HANDLER ) { 0x136c } */
+    int32_t result;
+
+    if (a1) {
+        result = *a1;
+        return result;
+    }
+    return 0;
+}
+

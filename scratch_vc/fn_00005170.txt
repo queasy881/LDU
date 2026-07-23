@@ -1,0 +1,90 @@
+=== fun_00005170 @ 0x5170 size=356 blocks=1 calls=18 ===
+--- DISASM ---
+  0x5170: sub       rsp, 0x38
+  0x5174: lea       rdx, [0x17300c]
+  0x517b: lea       rcx, [0x88210]
+  0x5182: call      0x49690
+  0x5187: call      0x517f0
+  0x518c: lea       rdx, [0x17300d]
+  0x5193: lea       rcx, [0x8821c]
+  0x519a: call      0x49690
+  0x519f: movss     xmm1, dword ptr [0x885e4]
+  0x51a7: xorps     xmm0, xmm0
+  0x51aa: call      0x202f0
+  0x51af: lea       rdx, [0x174049]
+  0x51b6: lea       rcx, [0x88220]
+  0x51bd: call      0x49690
+  0x51c2: lea       rdx, [0x17300e]
+  0x51c9: lea       rcx, [0x88230]
+  0x51d0: call      0x49690
+  0x51d5: lea       rdx, [0x17300f]
+  0x51dc: lea       rcx, [0x88240]
+  0x51e3: call      0x49690
+  0x51e8: lea       rdx, [0x173010]
+  0x51ef: lea       rcx, [0x88250]
+  0x51f6: call      0x49690
+  0x51fb: lea       rdx, [0x173011]
+  0x5202: lea       rcx, [0x88260]
+  0x5209: call      0x49690
+  0x520e: lea       rdx, [0x17404a]
+  0x5215: lea       rcx, [0x8826c]
+  0x521c: call      0x49690
+  0x5221: lea       rdx, [0x17404b]
+  0x5228: lea       rcx, [0x88270]
+  0x522f: call      0x49690
+  0x5234: call      0x517f0
+  0x5239: lea       rdx, [0x17404c]
+  0x5240: lea       rcx, [0x88280]
+  0x5247: call      0x49690
+  0x524c: lea       rdx, [0x173012]
+  0x5253: lea       rcx, [0x88290]
+  0x525a: call      0x49690
+  0x525f: lea       rdx, [0x173013]
+  0x5266: lea       rcx, [0x882a0]
+  0x526d: call      0x49690
+  0x5272: lea       rdx, [0x17404d]
+  0x5279: lea       rcx, [0x882b0]
+  0x5280: call      0x49690
+  0x5285: lea       rdx, [0x173018]
+  0x528c: lea       rcx, [0x882c0]
+  0x5293: call      0x49690
+  0x5298: movss     xmm3, dword ptr [0x885b8]
+  0x52a0: lea       rax, [0x882cc]
+  0x52a7: movss     xmm2, dword ptr [0x88530]
+  0x52af: lea       rdx, [0x173014]
+  0x52b6: mov       dword ptr [rsp + 0x28], 0
+  0x52be: lea       rcx, [0x882d8]
+  0x52c5: mov       qword ptr [rsp + 0x20], rax
+  0x52ca: call      0x52700
+  0x52cf: add       rsp, 0x38
+  0x52d3: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_00005170 @ 0x5170  size=356 */
+/* xrefs: called by fun_00006720 (1 site) */
+/* confidence: HIGH */
+void fun_000202f0();
+int32_t fun_00049690();
+int32_t fun_000517f0();
+int32_t fun_00052700(int64_t, int64_t, float, float, int64_t, int64_t);
+int32_t fun_00005170(void) {
+    fun_00049690("Enable ESP", 0x17300c);
+    fun_000517f0("Enable ESP");
+    fun_00049690(0x8821c, 0x17300d);
+    fun_000202f0(0.0f, -1.0f);
+    fun_00049690("Corner Style", 0x174049);
+    fun_00049690("Skeleton", 0x17300e);
+    fun_00049690("Health Bar", 0x17300f);
+    fun_00049690("Distance", 0x173010);
+    fun_00049690("Head Circle", 0x173011);
+    fun_00049690(0x8826c, 0x17404a);
+    fun_00049690("Snaplines", 0x17404b);
+    fun_000517f0("Snaplines");
+    fun_00049690("Rainbow Mode", 0x17404c);
+    fun_00049690("ESP Team Check", 0x173012);
+    fun_00049690("Agent ESP", 0x173013);
+    fun_00049690("Weapon ESP", 0x17404d);
+    fun_00049690("Watermark", 0x173018);
+    return fun_00052700("Thickness", 0x173014, 0.5f, 5.0f, "%.1f", 0);
+}
+

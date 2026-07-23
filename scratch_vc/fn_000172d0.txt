@@ -1,0 +1,47 @@
+=== fun_000172d0 @ 0x172d0 size=72 blocks=4 calls=1 ===
+--- DISASM ---
+  0x172d0: sub       rsp, 0x28
+  0x172d4: mov       rax, qword ptr [0x174148]
+  0x172db: mov       byte ptr [rax + 0x2071], 0
+  0x172e2: call      0x16950
+  0x172e7: mov       rcx, qword ptr [0x174148]
+  0x172ee: cmp       byte ptr [rcx + 0x2071], 0
+  0x172f5: jne       0x1730c
+  0x172f7: cmp       byte ptr [rcx + 0x2032], 0
+  0x172fe: jne       0x1730c
+  0x17300: mov       byte ptr [rcx + 0x2031], 0
+  0x17307: add       rsp, 0x28
+  0x1730b: ret       
+  0x1730c: mov       byte ptr [rcx + 0x2031], 1
+  0x17313: add       rsp, 0x28
+  0x17317: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_000172d0 @ 0x172d0  size=72 */
+/* xrefs: called by fun_000175a0 (2 sites) */
+/* confidence: HIGH */
+struct s_fun_000172d0_qword_174148;
+#pragma pack(push, 1)
+struct s_fun_000172d0_qword_174148 {
+    char _pad_0[8241];
+    int8_t field_2031;
+    int8_t field_2032;
+};
+#pragma pack(pop)
+#define qword_174148 (*(int64_t*)0x174148)
+void fun_00016950();
+void fun_000172d0(int64_t a1) {
+    struct s_fun_000172d0_qword_174148* gs_174148 = (struct s_fun_000172d0_qword_174148*)qword_174148;
+    int8_t*v1;
+
+    v1 = (int8_t*)(qword_174148 + 0x2071);
+    *v1 = 0;
+    fun_00016950(a1);
+    if (*v1 || gs_174148->field_2032) {
+        gs_174148->field_2031 = 1;
+        return;
+    }
+    gs_174148->field_2031 = 0;
+    return;
+}
+

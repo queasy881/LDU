@@ -1,0 +1,133 @@
+=== fun_000391a0 @ 0x391a0 size=320 blocks=18 calls=0 ===
+--- DISASM ---
+  0x391a0: sub       rsp, 0x38
+  0x391a4: movss     xmm5, dword ptr [rsp + 0x60]
+  0x391aa: movss     xmm4, dword ptr [rsp + 0x70]
+  0x391b0: ucomiss   xmm5, xmm4
+  0x391b3: jp        0x391bb
+  0x391b5: je        0x392db
+  0x391bb: movaps    xmmword ptr [rsp + 0x10], xmm7
+  0x391c0: movss     xmm7, dword ptr [r8 + 0x1c]
+  0x391c6: comiss    xmm5, xmm7
+  0x391c9: ja        0x392d6
+  0x391cf: movaps    xmmword ptr [rsp], xmm8
+  0x391d4: movss     xmm8, dword ptr [r8 + 0x18]
+  0x391da: comiss    xmm8, xmm4
+  0x391de: ja        0x392d1
+  0x391e4: comiss    xmm8, xmm5
+  0x391e8: movaps    xmmword ptr [rsp + 0x20], xmm6
+  0x391ed: movss     xmm6, dword ptr [rsp + 0x68]
+  0x391f3: jbe       0x3921b
+  0x391f5: movaps    xmm2, xmm8
+  0x391f9: movaps    xmm0, xmm6
+  0x391fc: subss     xmm2, xmm5
+  0x39200: movaps    xmm1, xmm4
+  0x39203: subss     xmm0, xmm3
+  0x39207: subss     xmm1, xmm5
+  0x3920b: movaps    xmm5, xmm8
+  0x3920f: mulss     xmm2, xmm0
+  0x39213: divss     xmm2, xmm1
+  0x39217: addss     xmm3, xmm2
+  0x3921b: comiss    xmm4, xmm7
+  0x3921e: jbe       0x39241
+  0x39220: movaps    xmm0, xmm6
+  0x39223: movaps    xmm1, xmm7
+  0x39226: subss     xmm1, xmm4
+  0x3922a: subss     xmm4, xmm5
+  0x3922e: subss     xmm0, xmm3
+  0x39232: mulss     xmm1, xmm0
+  0x39236: divss     xmm1, xmm4
+  0x3923a: movaps    xmm4, xmm7
+  0x3923d: addss     xmm6, xmm1
+  0x39241: movd      xmm0, edx
+  0x39245: cvtdq2ps  xmm0, xmm0
+  0x39248: comiss    xmm0, xmm3
+  0x3924b: jb        0x3927d
+  0x3924d: comiss    xmm0, xmm6
+  0x39250: jb        0x3927d
+  0x39252: movaps    xmm6, xmmword ptr [rsp + 0x20]
+  0x39257: subss     xmm4, xmm5
+  0x3925b: movaps    xmm8, xmmword ptr [rsp]
+  0x39260: movaps    xmm7, xmmword ptr [rsp + 0x10]
+  0x39265: movsxd    rax, edx
+  0x39268: mulss     xmm4, dword ptr [r8 + 0x14]
+  0x3926e: addss     xmm4, dword ptr [rcx + rax*4]
+  0x39273: movss     dword ptr [rcx + rax*4], xmm4
+  0x39278: add       rsp, 0x38
+  0x3927c: ret       
+  0x3927d: lea       eax, [rdx + 1]
+  0x39280: movd      xmm1, eax
+  0x39284: cvtdq2ps  xmm1, xmm1
+  0x39287: comiss    xmm3, xmm1
+  0x3928a: jb        0x39291
+  0x3928c: comiss    xmm6, xmm1
+  0x3928f: jae       0x392cc
+  0x39291: subss     xmm3, xmm0
+  0x39295: movsxd    rax, edx
+  0x39298: subss     xmm6, xmm0
+  0x3929c: movss     xmm0, dword ptr [0x88544]
+  0x392a4: subss     xmm4, xmm5
+  0x392a8: addss     xmm3, xmm6
+  0x392ac: mulss     xmm4, dword ptr [r8 + 0x14]
+  0x392b2: mulss     xmm3, dword ptr [0x88530]
+  0x392ba: subss     xmm0, xmm3
+  0x392be: mulss     xmm0, xmm4
+  0x392c2: addss     xmm0, dword ptr [rcx + rax*4]
+  0x392c7: movss     dword ptr [rcx + rax*4], xmm0
+  0x392cc: movaps    xmm6, xmmword ptr [rsp + 0x20]
+  0x392d1: movaps    xmm8, xmmword ptr [rsp]
+  0x392d6: movaps    xmm7, xmmword ptr [rsp + 0x10]
+  0x392db: add       rsp, 0x38
+  0x392df: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_000391a0 @ 0x391a0  size=320 */
+/* xrefs: called by fun_00038700 (11 sites) */
+/* confidence: HIGH */
+struct s_fun_000391a0_a3;
+#pragma pack(push, 1)
+struct s_fun_000391a0_a3 {
+    char _pad_0[20];
+    float field_14;
+    float field_18;
+    float field_1c;
+};
+#pragma pack(pop)
+void fun_000391a0(float*a1, int32_t a2, struct s_fun_000391a0_a3*a3, float a4, float a5, float a6, float a7) {
+    float v2;
+    float v3;
+    float v4;
+    float v1 = 0;
+
+    if (a5 == a7) {
+        return;
+    }
+    if (a5 > a3->field_1c) {
+        return;
+    }
+    if (a3->field_18 > a7) {
+        return;
+    }
+    v2 = a4;
+    v3 = a5;
+    if (a3->field_18 > a5) {
+        v3 = a3->field_18;
+        v2 = a4 + (v3 - a5) * (a6 - a4) / (a7 - a5);
+    }
+    v4 = a7;
+    v1 = a6;
+    if (a7 > a3->field_1c) {
+        v4 = a3->field_1c;
+        v1 = a6 + (v4 - a7) * (a6 - v2) / (a7 - v3);
+    }
+    if ((float)a2 >= v2 && (float)a2 >= v1) {
+        a1[a2] = (v4 - v3) * a3->field_14 + a1[a2];
+        return;
+    }
+    if (!(v2 >= (float)((int32_t)(a2 + 1))) || !(v1 >= (float)((int32_t)(a2 + 1)))) {
+        a1[a2] = (1.0f - (v2 - (float)a2 + (v1 - (float)a2)) * 0.5f) * ((v4 - v3) * a3->field_14) + a1[a2];
+        return;
+    }
+    return;
+}
+

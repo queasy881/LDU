@@ -1,0 +1,65 @@
+=== fun_00032790 @ 0x32790 size=62 blocks=4 calls=0 ===
+--- DISASM ---
+  0x32790: sub       dword ptr [rcx + 0xa0], 1
+  0x32797: mov       eax, dword ptr [rcx + 0xa0]
+  0x3279d: jne       0x327b3
+  0x3279f: mov       rax, qword ptr [rcx + 0x38]
+  0x327a3: add       rax, 0x38
+  0x327a7: movups    xmm0, xmmword ptr [rax]
+  0x327aa: movups    xmmword ptr [rcx + 0x60], xmm0
+  0x327ae: jmp       0x35070
+  0x327b3: dec       eax
+  0x327b5: cdqe      
+  0x327b7: shl       rax, 4
+  0x327bb: add       rax, qword ptr [rcx + 0xa8]
+  0x327c2: movups    xmm0, xmmword ptr [rax]
+  0x327c5: movups    xmmword ptr [rcx + 0x60], xmm0
+  0x327c9: jmp       0x35070
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_00032790 @ 0x32790  size=62 */
+/* xrefs: called by fun_0000f670 (1 site), fun_0001c360 (1 site), fun_0001d2c0 (1 site), fun_0001d510 (1 site), fun_0001e0d0 (1 site), fun_0003c610 (1 site), fun_0003d190 (1 site) */
+/* confidence: HIGH */
+struct s_fun_00032790_a1;
+struct s_fun_00032790_a1_38;
+struct s_fun_00032790_a1_a8_A10;
+#pragma pack(push, 1)
+struct s_fun_00032790_a1 {
+    char _pad_0[56];
+    struct s_fun_00032790_a1_38* field_38;
+    char _pad_40[32];
+    int64_t field_60;
+    char _pad_68[56];
+    int32_t field_a0;
+    char _pad_a4[4];
+    int64_t field_a8;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_00032790_a1_38 {
+    char _pad_0[56];
+    int64_t field_38;
+    int64_t field_40;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_00032790_a1_a8_A10 {
+    int64_t field_0;
+    int64_t field_8;
+};
+#pragma pack(pop)
+void fun_00035070();
+void fun_00032790(struct s_fun_00032790_a1*a1) {
+    --a1->field_a0;
+    if (a1->field_a0) {
+        a1->field_60 = ((struct s_fun_00032790_a1_a8_A10*)a1->field_a8)[(a1->field_a0 - 1)].field_0;
+        *(int64_t*)((char*)a1 + 0x68) = ((struct s_fun_00032790_a1_a8_A10*)a1->field_a8)[(a1->field_a0 - 1)].field_8;
+        fun_00035070(a1);
+    return;
+    }
+    a1->field_60 = a1->field_38->field_38;
+    *(int64_t*)((char*)a1 + 0x68) = a1->field_38->field_40;
+    fun_00035070(a1);
+    return;
+}
+

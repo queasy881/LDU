@@ -1,0 +1,65 @@
+=== fun_000025b0 @ 0x25b0 size=60 blocks=1 calls=1 ===
+--- DISASM ---
+  0x25b0: push      rbx
+  0x25b2: sub       rsp, 0x20
+  0x25b6: mov       rbx, rcx
+  0x25b9: mov       rax, rdx
+  0x25bc: lea       rcx, [0x87e48]
+  0x25c3: xorps     xmm0, xmm0
+  0x25c6: lea       rdx, [rbx + 8]
+  0x25ca: mov       qword ptr [rbx], rcx
+  0x25cd: lea       rcx, [rax + 8]
+  0x25d1: movups    xmmword ptr [rdx], xmm0
+  0x25d4: call      0x5f71c
+  0x25d9: lea       rax, [0x87e78]
+  0x25e0: mov       qword ptr [rbx], rax
+  0x25e3: mov       rax, rbx
+  0x25e6: add       rsp, 0x20
+  0x25ea: pop       rbx
+  0x25eb: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_000025b0 @ 0x25b0  size=60 */
+/* confidence: HIGH */
+#ifndef __DS_CLASSKW
+#define __DS_CLASSKW
+#ifndef __cplusplus
+#define class struct
+#endif
+#endif
+class std__bad_alloc;
+#ifndef __DS_CLS_std__bad_alloc
+#define __DS_CLS_std__bad_alloc
+#ifdef __cplusplus
+namespace std { 
+#pragma pack(push, 1)
+class bad_alloc {
+    void* __vftable;
+    int64_t field_8;
+    int64_t field_10;
+};
+#pragma pack(pop)
+} 
+typedef std::bad_alloc std__bad_alloc;
+#else
+#pragma pack(push, 1)
+class std__bad_alloc /* : std__exception */ {
+    void* __vftable;
+    int64_t field_8;
+    int64_t field_10;
+};
+#pragma pack(pop)
+#endif
+#endif
+extern void* std__bad_alloc__vftable;
+extern void* std__exception__vftable;
+int32_t fun_0005f71c();
+class std__bad_alloc* fun_000025b0(class std__bad_alloc*a1, int64_t a2) {
+    a1->__vftable = &std__exception__vftable;
+    a1->field_8 = 0;
+    a1->field_10 = 0;
+    fun_0005f71c(a2 + 8, &a1->field_8);
+    a1->__vftable = &std__bad_alloc__vftable;
+    return a1;
+}
+

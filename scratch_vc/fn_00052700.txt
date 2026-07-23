@@ -1,0 +1,27 @@
+=== fun_00052700 @ 0x52700 size=67 blocks=1 calls=1 ===
+--- DISASM ---
+  0x52700: movss     dword ptr [rsp + 0x20], xmm3
+  0x52706: movss     dword ptr [rsp + 0x18], xmm2
+  0x5270c: sub       rsp, 0x48
+  0x52710: mov       eax, dword ptr [rsp + 0x78]
+  0x52714: lea       r9, [rsp + 0x60]
+  0x52719: mov       dword ptr [rsp + 0x30], eax
+  0x5271d: mov       r8, rdx
+  0x52720: mov       rax, qword ptr [rsp + 0x70]
+  0x52725: mov       edx, 8
+  0x5272a: mov       qword ptr [rsp + 0x28], rax
+  0x5272f: lea       rax, [rsp + 0x68]
+  0x52734: mov       qword ptr [rsp + 0x20], rax
+  0x52739: call      0x52750
+  0x5273e: add       rsp, 0x48
+  0x52742: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_00052700 @ 0x52700  size=67 */
+/* xrefs: called by fun_000061f0 (2 sites), fun_00005170 (1 site) */
+/* confidence: HIGH */
+int32_t fun_00052750();
+int32_t fun_00052700(int64_t a1, int64_t a2, float a3, float a4, int64_t a5, int32_t a6) {
+    return fun_00052750(a1, 8, a2, &a3, &a4, a5, a6);
+}
+

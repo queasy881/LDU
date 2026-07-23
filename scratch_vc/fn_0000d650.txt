@@ -1,0 +1,45 @@
+=== fun_0000d650 @ 0xd650 size=97 blocks=1 calls=3 ===
+--- DISASM ---
+  0xd650: mov       qword ptr [rsp + 0x10], rbx
+  0xd655: push      rdi
+  0xd656: sub       rsp, 0x20
+  0xd65a: mov       rbx, rdx
+  0xd65d: mov       qword ptr [rsp + 0x30], 0
+  0xd666: mov       rdi, rcx
+  0xd669: lea       r8, [rsp + 0x30]
+  0xd66e: mov       rcx, rbx
+  0xd671: lea       rdx, [rsp + 0x40]
+  0xd676: call      0xd450
+  0xd67b: mov       r9d, 0xffffffff
+  0xd681: lea       r8, [rsp + 0x30]
+  0xd686: mov       rdx, rbx
+  0xd689: lea       rcx, [rsp + 0x40]
+  0xd68e: call      0xd1f0
+  0xd693: lea       r8, [rsp + 0x40]
+  0xd698: mov       rdx, rbx
+  0xd69b: mov       rcx, rdi
+  0xd69e: call      0xd6c0
+  0xd6a3: mov       rbx, qword ptr [rsp + 0x38]
+  0xd6a8: mov       rax, rdi
+  0xd6ab: add       rsp, 0x20
+  0xd6af: pop       rdi
+  0xd6b0: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_0000d650 @ 0xd650  size=97 */
+/* xrefs: called by fun_00047e20 (1 site) */
+/* confidence: HIGH */
+int64_t fun_0000d1f0();
+int64_t fun_0000d450();
+void fun_0000d6c0();
+int64_t fun_0000d650(int64_t a1, int64_t a2) {
+    char s1[16];
+    char s2[256];
+
+    *(int64_t*)s1 = 0;
+    fun_0000d450(a2, s2, s1);
+    fun_0000d1f0(s2, a2, s1, 0xffffffffLL);
+    fun_0000d6c0(a1, a2, s2);
+    return a1;
+}
+

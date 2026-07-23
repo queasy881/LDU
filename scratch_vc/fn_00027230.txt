@@ -1,0 +1,140 @@
+=== fun_00027230 @ 0x27230 size=224 blocks=10 calls=2 ===
+--- DISASM ---
+  0x27230: mov       qword ptr [rsp + 8], rbx
+  0x27235: mov       qword ptr [rsp + 0x10], rsi
+  0x2723a: push      rdi
+  0x2723b: sub       rsp, 0x20
+  0x2723f: xor       ebx, ebx
+  0x27241: mov       rdi, rcx
+  0x27244: cmp       dword ptr [rcx], ebx
+  0x27246: jle       0x2726a
+  0x27248: nop       dword ptr [rax + rax]
+  0x27250: movsxd    rax, ebx
+  0x27253: lea       rcx, [rax + rax*2]
+  0x27257: shl       rcx, 5
+  0x2725b: add       rcx, qword ptr [rdi + 8]
+  0x2725f: call      0x8230
+  0x27264: inc       ebx
+  0x27266: cmp       ebx, dword ptr [rdi]
+  0x27268: jl        0x27250
+  0x2726a: mov       r9, qword ptr [rdi + 8]
+  0x2726e: test      r9, r9
+  0x27271: je        0x27300
+  0x27277: mov       qword ptr [rdi], 0
+  0x2727e: mov       r8, qword ptr [0x174148]
+  0x27285: test      r8, r8
+  0x27288: je        0x272e8
+  0x2728a: movsx     rdx, word ptr [r8 + 0x28ec]
+  0x27292: lea       rcx, [r8 + 0x28f0]
+  0x27299: mov       r10d, dword ptr [r8 + 4]
+  0x2729d: lea       rcx, [rcx + rdx*8]
+  0x272a1: cmp       dword ptr [rcx], r10d
+  0x272a4: je        0x272dd
+  0x272a6: lea       ecx, [rdx + 1]
+  0x272a9: mov       eax, 0x2aaaaaab
+  0x272ae: imul      ecx
+  0x272b0: mov       eax, edx
+  0x272b2: shr       eax, 0x1f
+  0x272b5: add       edx, eax
+  0x272b7: lea       eax, [rdx + rdx*2]
+  0x272ba: add       eax, eax
+  0x272bc: sub       ecx, eax
+  0x272be: mov       word ptr [r8 + 0x28ec], cx
+  0x272c6: movsx     rcx, cx
+  0x272ca: add       rcx, 0x51e
+  0x272d1: lea       rcx, [r8 + rcx*8]
+  0x272d5: xor       eax, eax
+  0x272d7: mov       dword ptr [rcx], r10d
+  0x272da: mov       dword ptr [rcx + 4], eax
+  0x272dd: inc       word ptr [rcx + 6]
+  0x272e1: inc       dword ptr [r8 + 0x28e8]
+  0x272e8: mov       rdx, qword ptr [0x174150]
+  0x272ef: mov       rcx, r9
+  0x272f2: call      qword ptr [0x173040]
+  0x272f8: mov       qword ptr [rdi + 8], 0
+  0x27300: mov       rbx, qword ptr [rsp + 0x30]
+  0x27305: mov       rsi, qword ptr [rsp + 0x38]
+  0x2730a: add       rsp, 0x20
+  0x2730e: pop       rdi
+  0x2730f: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_00027230 @ 0x27230  size=224 */
+/* xrefs: called by fun_0001ab40 (1 site), fun_00021fa0 (1 site) */
+/* confidence: HIGH */
+#include <stdbool.h>
+struct s_fun_00027230_qword_174148;
+struct s_fun_00027230_v2;
+struct s_fun_00027230_v4;
+#pragma pack(push, 1)
+struct s_fun_00027230_qword_174148 {
+    char _pad_0[4];
+    int32_t field_4;
+    char _pad_8[10464];
+    int32_t field_28e8;
+    int16_t field_28ec;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_00027230_v2 {
+    int32_t field_0;
+    char _pad_4[2];
+    int16_t field_6;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_00027230_v4 {
+    int32_t field_0;
+    int32_t field_4;
+};
+#pragma pack(pop)
+#define qword_173040 (*(int64_t*)0x173040)
+#define qword_174148 (*(int64_t*)0x174148)
+#define qword_174150 (*(int64_t*)0x174150)
+int64_t fun_00008230();
+int64_t fun_00027230(int64_t*a1) {
+    struct s_fun_00027230_qword_174148* gs_174148 = (struct s_fun_00027230_qword_174148*)qword_174148;
+    int32_t v1;
+    struct s_fun_00027230_v2*v2;
+    int64_t result = 0;
+    int64_t v3;
+    struct s_fun_00027230_v4*v4;
+
+    if (*(int32_t*)a1 > 0) {
+        v1 = 0;
+        while (true) {
+            result = fun_00008230((int64_t)v1 * 0x60 + a1[1]);
+            ++v1;
+            if (v1 >= *(int32_t*)a1) break;
+        }
+    }
+    if (!a1[1]) {
+        return result;
+    }
+    *a1 = 0;
+    if (!qword_174148) {
+        result = ((int64_t(*)())(qword_173040))(a1[1], qword_174150, qword_174148, a1[1]);
+        a1[1] = 0;
+        return result;
+    }
+    v2 = (struct s_fun_00027230_v2*)(qword_174148 + 0x28f0 + (int64_t)gs_174148->field_28ec * 8);
+    if (v2->field_0 == gs_174148->field_4) {
+        ++v2->field_6;
+        ++gs_174148->field_28e8;
+        result = ((int64_t(*)())(qword_173040))(a1[1], qword_174150, qword_174148, a1[1]);
+        a1[1] = 0;
+        return result;
+    }
+    v3 = (int64_t)gs_174148->field_28ec + 1;
+    gs_174148->field_28ec = (int16_t)((int32_t)((int64_t)gs_174148->field_28ec + 1) - (int32_t)((int32_t)((int64_t)gs_174148->field_28ec + 1) / 6 * 3) * 2);
+    v4 = (struct s_fun_00027230_v4*)(qword_174148 + ((int64_t)((int16_t)((int32_t)v3 - (int32_t)((int32_t)v3 / 6 * 3) * 2)) + 0x51e) * 8);
+    v4->field_0 = gs_174148->field_4;
+    v4->field_4 = 0;
+    v2 = (struct s_fun_00027230_v2*)v4;
+    ++v2->field_6;
+    ++gs_174148->field_28e8;
+    result = ((int64_t(*)())(qword_173040))(a1[1], qword_174150, qword_174148, a1[1]);
+    a1[1] = 0;
+    return result;
+}
+

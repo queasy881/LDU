@@ -1,0 +1,272 @@
+=== fun_00059f00 @ 0x59f00 size=516 blocks=14 calls=12 ===
+--- DISASM ---
+  0x59f00: mov       qword ptr [rsp + 0x10], rbx
+  0x59f05: push      rsi
+  0x59f06: sub       rsp, 0x90
+  0x59f0d: mov       rax, qword ptr [0x1733c0]
+  0x59f14: xor       rax, rsp
+  0x59f17: mov       qword ptr [rsp + 0x88], rax
+  0x59f1f: mov       rsi, rcx
+  0x59f22: call      0x124c0
+  0x59f27: mov       qword ptr [rsp + 0x30], 2
+  0x59f30: lea       rcx, [0x89c90]
+  0x59f37: mov       qword ptr [rsp + 0x28], 0x14
+  0x59f40: mov       edx, 0xbd8
+  0x59f45: mov       r9d, 8
+  0x59f4b: mov       qword ptr [rsp + 0x20], 0x10
+  0x59f54: mov       r8d, 0x514
+  0x59f5a: mov       rbx, rax
+  0x59f5d: call      0xeb50
+  0x59f62: lea       rcx, [rsp + 0x50]
+  0x59f67: call      qword ptr [0x870b8]
+  0x59f6d: test      eax, eax
+  0x59f6f: je        0x5a0e1
+  0x59f75: lea       rcx, [rsp + 0x58]
+  0x59f7a: call      qword ptr [0x870b0]
+  0x59f80: test      eax, eax
+  0x59f82: je        0x5a0e1
+  0x59f88: mov       ecx, 0x58
+  0x59f8d: mov       qword ptr [rsp + 0xa0], rdi
+  0x59f95: call      0x16810
+  0x59f9a: mov       qword ptr [rsp + 0x48], rax
+  0x59f9f: mov       rdi, rax
+  0x59fa2: test      rax, rax
+  0x59fa5: je        0x59fc5
+  0x59fa7: xorps     xmm0, xmm0
+  0x59faa: xor       eax, eax
+  0x59fac: movups    xmmword ptr [rdi], xmm0
+  0x59faf: movups    xmmword ptr [rdi + 0x10], xmm0
+  0x59fb3: movups    xmmword ptr [rdi + 0x20], xmm0
+  0x59fb7: movups    xmmword ptr [rdi + 0x30], xmm0
+  0x59fbb: movups    xmmword ptr [rdi + 0x40], xmm0
+  0x59fbf: mov       qword ptr [rdi + 0x50], rax
+  0x59fc3: jmp       0x59fc7
+  0x59fc5: xor       edi, edi
+  0x59fc7: or        dword ptr [rbx + 4], 6
+  0x59fcb: lea       rax, [0x92d30]
+  0x59fd2: mov       qword ptr [rbx + 0x80], rax
+  0x59fd9: xor       ecx, ecx
+  0x59fdb: mov       qword ptr [rbx + 0x90], rdi
+  0x59fe2: mov       qword ptr [rdi], rsi
+  0x59fe5: mov       rax, qword ptr [rsp + 0x50]
+  0x59fea: mov       qword ptr [rdi + 0x20], rax
+  0x59fee: mov       rax, qword ptr [rsp + 0x58]
+  0x59ff3: mov       qword ptr [rdi + 0x18], rax
+  0x59ff7: mov       dword ptr [rdi + 0x28], 0xb
+  0x59ffe: mov       rbx, qword ptr [rbx + 0x90]
+  0x5a005: call      qword ptr [0x874b8]
+  0x5a00b: shr       rax, 0x10
+  0x5a00f: mov       r9d, 4
+  0x5a015: movzx     ecx, ax
+  0x5a018: lea       r8, [rbx + 0x2c]
+  0x5a01c: mov       edx, 0x20001004
+  0x5a021: call      qword ptr [0x870d8]
+  0x5a027: test      eax, eax
+  0x5a029: jne       0x5a02e
+  0x5a02b: mov       dword ptr [rbx + 0x2c], eax
+  0x5a02e: call      0x129c0
+  0x5a033: mov       rcx, qword ptr [rdi]
+  0x5a036: xor       ebx, ebx
+  0x5a038: mov       qword ptr [rax + 0x38], rcx
+  0x5a03c: mov       qword ptr [rax + 0x30], rcx
+  0x5a040: lea       rax, [0x92d48]
+  0x5a047: mov       qword ptr [rsp + 0x60], rax
+  0x5a04c: lea       rax, [0x92d58]
+  0x5a053: mov       qword ptr [rsp + 0x68], rax
+  0x5a058: lea       rax, [0x92d68]
+  0x5a05f: mov       qword ptr [rsp + 0x70], rax
+  0x5a064: lea       rax, [0x92d78]
+  0x5a06b: mov       qword ptr [rsp + 0x78], rax
+  0x5a070: lea       rax, [0x92d88]
+  0x5a077: mov       qword ptr [rsp + 0x80], rax
+  0x5a07f: mov       byte ptr [rdi + 0x31], 1
+  0x5a083: mov       rcx, qword ptr [rsp + rbx*8 + 0x60]
+  0x5a088: call      qword ptr [0x870d0]
+  0x5a08e: mov       rsi, rax
+  0x5a091: test      rax, rax
+  0x5a094: jne       0x5a0a9
+  0x5a096: inc       ebx
+  0x5a098: cmp       ebx, 5
+  0x5a09b: jl        0x5a083
+  0x5a09d: mov       rdi, qword ptr [rsp + 0xa0]
+  0x5a0a5: mov       al, 1
+  0x5a0a7: jmp       0x5a0e3
+  0x5a0a9: lea       rdx, [0x92d98]
+  0x5a0b0: mov       qword ptr [rdi + 0x38], rsi
+  0x5a0b4: mov       rcx, rsi
+  0x5a0b7: call      qword ptr [0x870c8]
+  0x5a0bd: lea       rdx, [0x92db0]
+  0x5a0c4: mov       rcx, rsi
+  0x5a0c7: mov       qword ptr [rdi + 0x40], rax
+  0x5a0cb: call      qword ptr [0x870c8]
+  0x5a0d1: mov       qword ptr [rdi + 0x48], rax
+  0x5a0d5: mov       al, 1
+  0x5a0d7: mov       rdi, qword ptr [rsp + 0xa0]
+  0x5a0df: jmp       0x5a0e3
+  0x5a0e1: xor       al, al
+  0x5a0e3: mov       rcx, qword ptr [rsp + 0x88]
+  0x5a0eb: xor       rcx, rsp
+  0x5a0ee: call      0x5dbe0
+  0x5a0f3: mov       rbx, qword ptr [rsp + 0xa8]
+  0x5a0fb: add       rsp, 0x90
+  0x5a102: pop       rsi
+  0x5a103: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_00059f00 @ 0x59f00  size=516 */
+typedef uint64_t FARPROC;
+typedef uint64_t HMODULE;
+typedef uint64_t LPCSTR;
+typedef uint64_t LPVOID;
+/* confidence: HIGH */
+#include <stdbool.h>
+#include <stddef.h>
+struct s_fun_00059f00_s2;
+struct s_fun_00059f00_v1;
+struct s_fun_00059f00_v2;
+struct s_fun_00059f00_v5;
+struct s_fun_00059f00_v3;
+#pragma pack(push, 1)
+struct s_fun_00059f00_s2 {
+    int64_t field_0;
+    int64_t field_8;
+    int64_t field_10;
+    int64_t field_18;
+    int64_t field_20;
+    int64_t field_28;
+    int64_t field_30;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_00059f00_v1 {
+    char _pad_0[4];
+    int32_t field_4;
+    char _pad_8[120];
+    int64_t field_80;
+    char _pad_88[8];
+    int64_t field_90;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_00059f00_v2 {
+    int64_t field_0;
+    int64_t field_8;
+    int64_t field_10;
+    char _pad_18[8];
+    int64_t field_20;
+    char _pad_28[8];
+    int64_t field_30;
+    char _pad_38[8];
+    int64_t field_40;
+    char _pad_48[8];
+    int64_t field_50;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_00059f00_v5 {
+    char _pad_0[48];
+    int64_t field_30;
+    int64_t field_38;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_00059f00_v3 {
+    int64_t field_0;
+    char _pad_8[16];
+    int64_t field_18;
+    int64_t field_20;
+    int32_t field_28;
+    char _pad_2c[5];
+    int8_t field_31;
+    char _pad_32[6];
+    int64_t field_38;
+    int64_t field_40;
+    int64_t field_48;
+};
+#pragma pack(pop)
+#define qword_1733c0 (*(int64_t*)0x1733c0)
+int64_t GetKeyboardLayout();
+int64_t GetLocaleInfoA();
+FARPROC GetProcAddress(HMODULE, LPCSTR);
+HMODULE LoadLibraryA(LPCSTR);
+int32_t QueryPerformanceCounter(LPVOID);
+int32_t QueryPerformanceFrequency(LPVOID);
+int32_t fun_0000eb50();
+int64_t fun_000124c0();
+int64_t fun_000129c0();
+int64_t fun_00016810();
+int32_t fun_00059f00(int64_t a1) {
+    char s1[8];
+    char s2[56];
+    int32_t v6;
+    struct s_fun_00059f00_v3*v3;
+    int64_t result;
+    struct s_fun_00059f00_v1*v1;
+    struct s_fun_00059f00_v2*v2;
+    int64_t v4;
+    struct s_fun_00059f00_v5*v5;
+    HMODULE hModule;
+    FARPROC pfn;
+
+    ((struct s_fun_00059f00_s2*)s2)->field_30 = qword_1733c0;
+    v1 = (struct s_fun_00059f00_v1*)fun_000124c0();
+    fun_0000eb50("1.92.7 WIP", 0xbd8, 0x514, 8, 0x10, 0x14, 2);
+    if (!QueryPerformanceFrequency(s1) || !QueryPerformanceCounter(s2)) {
+        result = 0;
+    } else {
+        v2 = (struct s_fun_00059f00_v2*)fun_00016810(0x58);
+        if (!v2) {
+            v3 = NULL;
+        } else {
+            v2->field_0 = 0;
+            v2->field_8 = 0;
+            v2->field_10 = 0;
+            *(int64_t*)((char*)v2 + 0x18) = 0;
+            v2->field_20 = 0;
+            *(int64_t*)((char*)v2 + 0x28) = 0;
+            v2->field_30 = 0;
+            *(int64_t*)((char*)v2 + 0x38) = 0;
+            v2->field_40 = 0;
+            *(int64_t*)((char*)v2 + 0x48) = 0;
+            v2->field_50 = 0;
+            v3 = (struct s_fun_00059f00_v3*)v2;
+        }
+        v1->field_4 |= 6;
+        v1->field_80 = (int64_t)"imgui_impl_win32";
+        v1->field_90 = (int64_t)v3;
+        v3->field_0 = a1;
+        v3->field_20 = *(int64_t*)s1;
+        v3->field_18 = ((struct s_fun_00059f00_s2*)s2)->field_0;
+        v3->field_28 = 0xb;
+        v4 = GetLocaleInfoA((uint16_t)((uint64_t)(GetKeyboardLayout(0)) >> 0x10), 0x20001004, v1->field_90 + 0x2c, 4);
+        if (!((int32_t)v4)) {
+            *(int32_t*)(v1->field_90 + 0x2c) = (int32_t)v4;
+        }
+        v5 = (struct s_fun_00059f00_v5*)fun_000129c0();
+        v5->field_38 = v3->field_0;
+        v5->field_30 = v3->field_0;
+        ((struct s_fun_00059f00_s2*)s2)->field_8 = (int64_t)"xinput1_4.dll";
+        ((struct s_fun_00059f00_s2*)s2)->field_10 = (int64_t)"xinput1_3.dll";
+        ((struct s_fun_00059f00_s2*)s2)->field_18 = (int64_t)"xinput9_1_0.dll";
+        ((struct s_fun_00059f00_s2*)s2)->field_20 = (int64_t)"xinput1_2.dll";
+        ((struct s_fun_00059f00_s2*)s2)->field_28 = (int64_t)"xinput1_1.dll";
+        v3->field_31 = 1;
+        v6 = 0;
+        while (true) {
+            hModule = LoadLibraryA(*(int64_t*)(&((struct s_fun_00059f00_s2*)s2)->field_8 + v6 * 8));
+            if (hModule) break;
+            ++v6;
+            if (v6 >= 5) {
+                result = 1;
+                return (int32_t)result;
+            }
+        }
+        v3->field_38 = hModule;
+        v3->field_40 = GetProcAddress(hModule, "XInputGetCapabilities");
+        pfn = GetProcAddress(hModule, "XInputGetState");
+        v3->field_48 = pfn;
+        result = (pfn & 0xffffff00) | 1;
+    }
+    return (int32_t)result;
+}
+

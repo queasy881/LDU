@@ -1,0 +1,109 @@
+=== fun_0003f480 @ 0x3f480 size=192 blocks=3 calls=0 ===
+--- DISASM ---
+  0x3f480: mov       r11, qword ptr [0x174148]
+  0x3f487: movsxd    rax, ecx
+  0x3f48a: mov       rcx, qword ptr [r11 + 0x22c8]
+  0x3f491: test      dword ptr [rcx + 4], 0x100000
+  0x3f498: jne       0x3f53f
+  0x3f49e: mov       r9, qword ptr [rcx + 0x18]
+  0x3f4a2: mov       r11, qword ptr [r11 + 0x1480]
+  0x3f4a9: imul      r10, rax, 0x74
+  0x3f4ad: mov       rax, qword ptr [r11 + 0x2c8]
+  0x3f4b4: movups    xmm0, xmmword ptr [r10 + r9 + 0x24]
+  0x3f4ba: movss     xmm1, dword ptr [r10 + r9 + 0x24]
+  0x3f4c1: movss     xmm2, dword ptr [r10 + r9 + 0x28]
+  0x3f4c8: movss     xmm3, dword ptr [r10 + r9 + 0x2c]
+  0x3f4cf: movss     xmm4, dword ptr [r10 + r9 + 0x30]
+  0x3f4d6: movups    xmmword ptr [r11 + 0x268], xmm0
+  0x3f4de: movss     dword ptr [rax + 0x60], xmm1
+  0x3f4e3: movss     dword ptr [rax + 0x64], xmm2
+  0x3f4e8: movss     dword ptr [rax + 0x68], xmm3
+  0x3f4ed: movss     dword ptr [rax + 0x6c], xmm4
+  0x3f4f2: mov       rax, qword ptr [r11 + 0x2c8]
+  0x3f4f9: movsxd    r8, dword ptr [rax + 0xa0]
+  0x3f500: mov       rdx, qword ptr [rax + 0xa8]
+  0x3f507: add       r8, r8
+  0x3f50a: movss     dword ptr [rdx + r8*8 - 0x10], xmm1
+  0x3f511: movss     dword ptr [rdx + r8*8 - 0xc], xmm2
+  0x3f518: movss     dword ptr [rdx + r8*8 - 8], xmm3
+  0x3f51f: movss     dword ptr [rdx + r8*8 - 4], xmm4
+  0x3f526: movzx     r8d, word ptr [r10 + r9 + 0x60]
+  0x3f52c: mov       rdx, qword ptr [r11 + 0x2c8]
+  0x3f533: mov       rcx, qword ptr [rcx + 0x1a0]
+  0x3f53a: jmp       0x34290
+  0x3f53f: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_0003f480 @ 0x3f480  size=192 */
+/* xrefs: called by fun_000564b0 (1 site) */
+/* confidence: HIGH */
+struct s_fun_0003f480_qword_174148;
+struct s_fun_0003f480_qword_174148_22c8;
+struct s_fun_0003f480_v1;
+struct s_fun_0003f480_v2;
+#pragma pack(push, 1)
+struct s_fun_0003f480_qword_174148 {
+    char _pad_0[5248];
+    void* field_1480;
+    char _pad_1488[3648];
+    struct s_fun_0003f480_qword_174148_22c8* field_22c8;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_0003f480_qword_174148_22c8 {
+    char _pad_0[4];
+    int32_t field_4;
+    char _pad_8[16];
+    int64_t field_18;
+    char _pad_20[384];
+    int64_t field_1a0;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_0003f480_v1 {
+    char _pad_0[616];
+    int64_t field_268;
+    char _pad_270[88];
+    int64_t field_2c8;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_0003f480_v2 {
+    char _pad_0[96];
+    float field_60;
+    float field_64;
+    float field_68;
+    float field_6c;
+    char _pad_70[48];
+    int32_t field_a0;
+    char _pad_a4[4];
+    int64_t field_a8;
+};
+#pragma pack(pop)
+#define qword_174148 (*(int64_t*)0x174148)
+int32_t fun_00034290();
+int32_t fun_0003f480(int32_t a1) {
+    struct s_fun_0003f480_qword_174148* gs_174148 = (struct s_fun_0003f480_qword_174148*)qword_174148;
+    struct s_fun_0003f480_v1*v1;
+    struct s_fun_0003f480_v2*v2;
+    float*v3;
+
+    if (gs_174148->field_22c8->field_4 & 0x100000) {
+        return a1;
+    }
+    v1 = (struct s_fun_0003f480_v1*)gs_174148->field_1480;
+    v1->field_268 = *(int64_t*)((int64_t)a1 * 0x74 + gs_174148->field_22c8->field_18 + 0x24);
+    *(int64_t*)((char*)v1 + 0x270) = *(int64_t*)((int64_t)a1 * 0x74 + gs_174148->field_22c8->field_18 + 0x2c);
+    v2 = (struct s_fun_0003f480_v2*)v1->field_2c8;
+    v2->field_60 = *(float*)((int64_t)a1 * 0x74 + gs_174148->field_22c8->field_18 + 0x24);
+    v2->field_64 = *(float*)((int64_t)a1 * 0x74 + gs_174148->field_22c8->field_18 + 0x28);
+    v2->field_68 = *(float*)((int64_t)a1 * 0x74 + gs_174148->field_22c8->field_18 + 0x2c);
+    v2->field_6c = *(float*)((int64_t)a1 * 0x74 + gs_174148->field_22c8->field_18 + 0x30);
+    v3 = (float*)(v2->field_a8 + (int64_t)v2->field_a0 * 0x10);
+    *(float*)((char*)v3 - 0x10) = *(float*)((int64_t)a1 * 0x74 + gs_174148->field_22c8->field_18 + 0x24);
+    *(float*)((char*)v3 - 0xc) = *(float*)((int64_t)a1 * 0x74 + gs_174148->field_22c8->field_18 + 0x28);
+    *(float*)((char*)v3 - 8) = *(float*)((int64_t)a1 * 0x74 + gs_174148->field_22c8->field_18 + 0x2c);
+    *(float*)((char*)v3 - 4) = *(float*)((int64_t)a1 * 0x74 + gs_174148->field_22c8->field_18 + 0x30);
+    return fun_00034290(gs_174148->field_22c8->field_1a0, ((int64_t*)gs_174148->field_1480)[0x59], (uint32_t)*(uint16_t*)((int64_t)a1 * 0x74 + gs_174148->field_22c8->field_18 + 0x60));
+}
+

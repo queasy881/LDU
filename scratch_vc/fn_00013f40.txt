@@ -1,0 +1,25 @@
+=== fun_00013f40 @ 0x13f40 size=22 blocks=5 calls=0 ===
+--- DISASM ---
+  0x13f40: nop       
+  0x13f42: movzx     eax, byte ptr [rcx]
+  0x13f45: cmp       al, 0x20
+  0x13f47: je        0x13f4d
+  0x13f49: cmp       al, 9
+  0x13f4b: jne       0x13f52
+  0x13f4d: inc       rcx
+  0x13f50: jmp       0x13f42
+  0x13f52: mov       rax, rcx
+  0x13f55: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_00013f40 @ 0x13f40  size=22 */
+/* xrefs: called by fun_0003f9e0 (7 sites) */
+/* confidence: HIGH */
+uint8_t* fun_00013f40(int64_t a1) {
+    uint8_t*result = 0;
+
+    for (result = (uint8_t*)a1; *result == ' ' || *result == '\t'; result++) {
+    }
+    return result;
+}
+

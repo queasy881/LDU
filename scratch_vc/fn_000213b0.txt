@@ -1,0 +1,86 @@
+=== fun_000213b0 @ 0x213b0 size=106 blocks=10 calls=0 ===
+--- DISASM ---
+  0x213b0: mov       rax, qword ptr [0x174148]
+  0x213b7: mov       rcx, qword ptr [rax + 0x1fd0]
+  0x213be: test      rcx, rcx
+  0x213c1: je        0x213cc
+  0x213c3: test      dword ptr [rcx + 0x14], 0x10000
+  0x213ca: jne       0x213ff
+  0x213cc: mov       ecx, dword ptr [rax + 0x2020]
+  0x213d2: cmp       ecx, 2
+  0x213d5: jne       0x213f4
+  0x213d7: test      byte ptr [rax + 0x28], 1
+  0x213db: je        0x213ff
+  0x213dd: cmp       byte ptr [rax + 0x76], 0
+  0x213e1: je        0x21410
+  0x213e3: mov       word ptr [rax + 0x1fc8], 0x101
+  0x213ec: mov       byte ptr [rax + 0x1fca], 1
+  0x213f3: ret       
+  0x213f4: cmp       ecx, 3
+  0x213f7: jne       0x213dd
+  0x213f9: test      byte ptr [rax + 0x28], 2
+  0x213fd: jne       0x213dd
+  0x213ff: mov       word ptr [rax + 0x1fc8], 0x100
+  0x21408: mov       byte ptr [rax + 0x1fca], 1
+  0x2140f: ret       
+  0x21410: mov       word ptr [rax + 0x1fc9], 0x101
+  0x21419: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_000213b0 @ 0x213b0  size=106 */
+/* xrefs: called by fun_00016de0 (2 sites), fun_00017ee0 (2 sites), fun_00019b80 (2 sites), fun_0004b530 (1 site) */
+/* confidence: HIGH */
+struct s_fun_000213b0_qword_174148;
+#pragma pack(push, 1)
+struct s_fun_000213b0_qword_174148 {
+    char _pad_0[40];
+    int8_t field_28;
+    char _pad_29[77];
+    int8_t field_76;
+    char _pad_77[8017];
+    int16_t field_1fc8;
+    int8_t field_1fca;
+    char _pad_1fcb[5];
+    void* field_1fd0;
+    char _pad_1fd8[72];
+    int32_t field_2020;
+};
+#pragma pack(pop)
+#define qword_174148 (*(int64_t*)0x174148)
+void fun_000213b0(void) {
+    struct s_fun_000213b0_qword_174148* gs_174148 = (struct s_fun_000213b0_qword_174148*)qword_174148;
+
+    if (gs_174148->field_1fd0 && ((int32_t*)gs_174148->field_1fd0)[5] & 0x10000) {
+        gs_174148->field_1fc8 = 0x100;
+        gs_174148->field_1fca = 1;
+        return;
+    }
+    if (gs_174148->field_2020 != 2) {
+        if (gs_174148->field_2020 == 3 && !(gs_174148->field_28 & 2)) {
+            gs_174148->field_1fc8 = 0x100;
+            gs_174148->field_1fca = 1;
+            return;
+        }
+        if (!gs_174148->field_76) {
+            *(int16_t*)(qword_174148 + 0x1fc9) = 0x101;
+            return;
+        }
+        gs_174148->field_1fc8 = 0x101;
+        gs_174148->field_1fca = 1;
+        return;
+    }
+    if (!(gs_174148->field_28 & 1)) {
+        gs_174148->field_1fc8 = 0x100;
+        gs_174148->field_1fca = 1;
+        return;
+    }
+    if (!gs_174148->field_76) {
+        *(int16_t*)(qword_174148 + 0x1fc9) = 0x101;
+        return;
+    } else {
+        gs_174148->field_1fc8 = 0x101;
+        gs_174148->field_1fca = 1;
+        return;
+    }
+}
+

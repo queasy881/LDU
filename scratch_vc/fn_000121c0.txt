@@ -1,0 +1,39 @@
+=== fun_000121c0 @ 0x121c0 size=67 blocks=1 calls=1 ===
+--- DISASM ---
+  0x121c0: sub       rsp, 0x38
+  0x121c4: mov       rdx, qword ptr [0x174148]
+  0x121cb: movsxd    rax, ecx
+  0x121ce: lea       rcx, [rsp + 0x20]
+  0x121d3: add       rax, rax
+  0x121d6: mulss     xmm1, dword ptr [rdx + 0xc6c]
+  0x121de: movups    xmm0, xmmword ptr [rdx + rax*8 + 0xd98]
+  0x121e6: movups    xmmword ptr [rsp + 0x20], xmm0
+  0x121eb: shufps    xmm0, xmm0, 0xff
+  0x121ef: mulss     xmm0, xmm1
+  0x121f3: movss     dword ptr [rsp + 0x2c], xmm0
+  0x121f9: call      0xe470
+  0x121fe: add       rsp, 0x38
+  0x12202: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_000121c0 @ 0x121c0  size=67 */
+/* xrefs: called by fun_0004b530 (5 sites), fun_000546e0 (4 sites), fun_000478f0 (3 sites), fun_000476d0 (2 sites), fun_00049690 (2 sites), fun_00049b50 (2 sites), fun_00049e40 (2 sites), fun_0004aaf0 (2 sites), +16 more */
+/* confidence: HIGH */
+struct s_fun_000121c0_s1;
+#pragma pack(push, 1)
+struct s_fun_000121c0_s1 {
+    int64_t field_0;
+    int64_t field_8;
+};
+#pragma pack(pop)
+#define qword_174148 (*(int64_t*)0x174148)
+int32_t fun_0000e470();
+int32_t fun_000121c0(int32_t a1, float a2) {
+    char s1[16];
+
+    ((struct s_fun_000121c0_s1*)s1)->field_0 = *(int64_t*)(qword_174148 + (int64_t)a1 * 0x10 + 0xd98);
+    ((struct s_fun_000121c0_s1*)s1)->field_8 = *(int64_t*)(qword_174148 + (int64_t)a1 * 0x10 + 0xda0);
+    *(float*)((char*)s1 + 0xc) = *(float*)(qword_174148 + (int64_t)a1 * 0x10 + 0xda4) * (a2 * *(float*)(qword_174148 + 0xc6c));
+    return fun_0000e470(s1);
+}
+

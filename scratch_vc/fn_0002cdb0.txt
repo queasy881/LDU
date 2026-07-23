@@ -1,0 +1,255 @@
+=== fun_0002cdb0 @ 0x2cdb0 size=400 blocks=26 calls=4 ===
+--- DISASM ---
+  0x2cdb0: push      r12
+  0x2cdb2: push      r15
+  0x2cdb4: sub       rsp, 0x48
+  0x2cdb8: mov       rax, qword ptr [rcx + 0x2b0]
+  0x2cdbf: mov       byte ptr [rax + 0xb9], 1
+  0x2cdc6: mov       r15, qword ptr [rcx + 0x70]
+  0x2cdca: movsxd    rax, dword ptr [rcx + 0x68]
+  0x2cdce: lea       r12, [r15 + rax*8]
+  0x2cdd2: cmp       r15, r12
+  0x2cdd5: je        0x2cf37
+  0x2cddb: mov       qword ptr [rsp + 0x60], rbx
+  0x2cde0: mov       qword ptr [rsp + 0x68], rbp
+  0x2cde5: mov       qword ptr [rsp + 0x70], rsi
+  0x2cdea: mov       qword ptr [rsp + 0x40], rdi
+  0x2cdef: mov       qword ptr [rsp + 0x38], r13
+  0x2cdf4: mov       r13d, 0xffff
+  0x2cdfa: mov       qword ptr [rsp + 0x30], r14
+  0x2cdff: movaps    xmmword ptr [rsp + 0x20], xmm6
+  0x2ce04: movss     xmm6, dword ptr [0x885e4]
+  0x2ce0c: nop       dword ptr [rax]
+  0x2ce10: mov       rbx, qword ptr [r15]
+  0x2ce13: movaps    xmm2, xmm6
+  0x2ce16: mov       rcx, rbx
+  0x2ce19: movss     xmm1, dword ptr [rbx + 0x1c]
+  0x2ce1e: call      0x2b9d0
+  0x2ce23: movzx     edx, word ptr [rbx + 0x32]
+  0x2ce27: mov       rdi, rax
+  0x2ce2a: test      dx, dx
+  0x2ce2d: je        0x2ce4e
+  0x2ce2f: movsxd    rcx, dword ptr [rax + 0x20]
+  0x2ce33: cmp       rdx, rcx
+  0x2ce36: jae       0x2ce43
+  0x2ce38: mov       rcx, qword ptr [rax + 0x28]
+  0x2ce3c: cmp       word ptr [rcx + rdx*2], r13w
+  0x2ce41: jne       0x2ce4e
+  0x2ce43: xor       r8d, r8d
+  0x2ce46: mov       rcx, rdi
+  0x2ce49: call      0x30320
+  0x2ce4e: movzx     edx, word ptr [rbx + 0x30]
+  0x2ce52: test      dx, dx
+  0x2ce55: je        0x2ce76
+  0x2ce57: movsxd    rax, dword ptr [rdi + 0x20]
+  0x2ce5b: cmp       rdx, rax
+  0x2ce5e: jae       0x2ce6b
+  0x2ce60: mov       rax, qword ptr [rdi + 0x28]
+  0x2ce64: cmp       word ptr [rax + rdx*2], r13w
+  0x2ce69: jne       0x2ce76
+  0x2ce6b: xor       r8d, r8d
+  0x2ce6e: mov       rcx, rdi
+  0x2ce71: call      0x30320
+  0x2ce76: mov       r14, qword ptr [rbx + 0x28]
+  0x2ce7a: movsxd    rax, dword ptr [rbx + 0x20]
+  0x2ce7e: lea       rbp, [r14 + rax*8]
+  0x2ce82: cmp       r14, rbp
+  0x2ce85: je        0x2cf07
+  0x2ce8b: nop       dword ptr [rax + rax]
+  0x2ce90: mov       rax, qword ptr [r14]
+  0x2ce93: lea       rsi, [0x91ffc]
+  0x2ce9a: mov       rcx, qword ptr [rax + 0x40]
+  0x2ce9e: test      rcx, rcx
+  0x2cea1: cmovne    rsi, rcx
+  0x2cea5: movzx     eax, word ptr [rsi]
+  0x2cea8: test      ax, ax
+  0x2ceab: je        0x2cefe
+  0x2cead: nop       dword ptr [rax]
+  0x2ceb0: movzx     ebx, ax
+  0x2ceb3: movzx     eax, word ptr [rsi + 2]
+  0x2ceb7: cmp       ebx, eax
+  0x2ceb9: ja        0x2cef1
+  0x2cebb: nop       dword ptr [rax + rax]
+  0x2cec0: cmp       ebx, r13d
+  0x2cec3: ja        0x2cef1
+  0x2cec5: movsxd    rax, dword ptr [rdi + 0x20]
+  0x2cec9: movzx     edx, bx
+  0x2cecc: cmp       rdx, rax
+  0x2cecf: jae       0x2cedc
+  0x2ced1: mov       rax, qword ptr [rdi + 0x28]
+  0x2ced5: cmp       word ptr [rax + rdx*2], r13w
+  0x2ceda: jne       0x2cee7
+  0x2cedc: xor       r8d, r8d
+  0x2cedf: mov       rcx, rdi
+  0x2cee2: call      0x30320
+  0x2cee7: movzx     eax, word ptr [rsi + 2]
+  0x2ceeb: inc       ebx
+  0x2ceed: cmp       ebx, eax
+  0x2ceef: jbe       0x2cec0
+  0x2cef1: movzx     eax, word ptr [rsi + 4]
+  0x2cef5: add       rsi, 4
+  0x2cef9: test      ax, ax
+  0x2cefc: jne       0x2ceb0
+  0x2cefe: add       r14, 8
+  0x2cf02: cmp       r14, rbp
+  0x2cf05: jne       0x2ce90
+  0x2cf07: add       r15, 8
+  0x2cf0b: cmp       r15, r12
+  0x2cf0e: jne       0x2ce10
+  0x2cf14: movaps    xmm6, xmmword ptr [rsp + 0x20]
+  0x2cf19: mov       r14, qword ptr [rsp + 0x30]
+  0x2cf1e: mov       r13, qword ptr [rsp + 0x38]
+  0x2cf23: mov       rdi, qword ptr [rsp + 0x40]
+  0x2cf28: mov       rsi, qword ptr [rsp + 0x70]
+  0x2cf2d: mov       rbp, qword ptr [rsp + 0x68]
+  0x2cf32: mov       rbx, qword ptr [rsp + 0x60]
+  0x2cf37: add       rsp, 0x48
+  0x2cf3b: pop       r15
+  0x2cf3d: pop       r12
+  0x2cf3f: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_0002cdb0 @ 0x2cdb0  size=400 */
+/* xrefs: called by fun_0002cf40 (1 site) */
+/* confidence: HIGH */
+#include <stdbool.h>
+struct s_fun_0002cdb0_a1;
+struct s_fun_0002cdb0_v18;
+struct s_fun_0002cdb0_v2;
+struct s_fun_0002cdb0_v12;
+#pragma pack(push, 1)
+struct s_fun_0002cdb0_a1 {
+    char _pad_0[104];
+    int32_t field_68;
+    char _pad_6c[4];
+    int64_t field_70;
+    char _pad_78[568];
+    void* field_2b0;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_0002cdb0_v18 {
+    char _pad_0[32];
+    int32_t field_20;
+    char _pad_24[4];
+    int64_t field_28;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_0002cdb0_v2 {
+    char _pad_0[32];
+    int32_t field_20;
+    char _pad_24[4];
+    int64_t field_28;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_0002cdb0_v12 {
+    uint16_t field_0;
+    uint16_t field_2;
+    uint16_t field_4;
+};
+#pragma pack(pop)
+int32_t fun_0002b9d0(int64_t, float, float);
+int64_t fun_00030320();
+void fun_0002cdb0(struct s_fun_0002cdb0_a1*a1) {
+    int32_t v3 = 0;
+    int64_t*v1;
+    uint32_t v4;
+    int32_t v5;
+    int64_t*v6;
+    uint32_t v10;
+    uint32_t v11;
+    struct s_fun_0002cdb0_v12*v12;
+    int32_t v13;
+    uint32_t v15;
+    uint32_t v16;
+    int32_t v17;
+    int16_t*v7;
+    int16_t*v14;
+    struct s_fun_0002cdb0_v18*v18;
+    struct s_fun_0002cdb0_v2*v2;
+    int64_t*v8;
+    uint16_t*v9;
+
+    *(int8_t*)((char*)a1->field_2b0 + 0xb9) = 1;
+    if (!((int64_t)a1->field_68 * 8)) {
+        return;
+    }
+    v1 = (int64_t*)a1->field_70;
+    do {
+        v2 = (struct s_fun_0002cdb0_v2*)fun_0002b9d0(*v1, *(float*)(*v1 + 0x1c), -1.0f);
+        if (*(uint16_t*)(*v1 + 0x32)) {
+            if ((uint64_t)((uint32_t)*(uint16_t*)(*v1 + 0x32)) >= (uint64_t)((int64_t)v2->field_20)) {
+                fun_00030320(v2, (uint32_t)*(uint16_t*)(*v1 + 0x32), 0);
+                v3 = 0;
+            } else if (*(int16_t*)(v2->field_28 + (uint32_t)*(uint16_t*)(*v1 + 0x32) * 2) == -1) {
+                fun_00030320(v2, (uint32_t)*(uint16_t*)(*v1 + 0x32), 0);
+                v3 = 0;
+            }
+        }
+        if (*(uint16_t*)(*v1 + 0x30)) {
+            if ((uint64_t)((uint32_t)*(uint16_t*)(*v1 + 0x30)) >= (uint64_t)((int64_t)v2->field_20)) {
+                fun_00030320(v2, (uint32_t)*(uint16_t*)(*v1 + 0x30), 0);
+                v3 = 0;
+            } else if (*(int16_t*)(v2->field_28 + (uint32_t)*(uint16_t*)(*v1 + 0x30) * 2) == -1) {
+                fun_00030320(v2, (uint32_t)*(uint16_t*)(*v1 + 0x30), 0);
+                v3 = 0;
+            }
+        }
+        if ((int64_t)*(int32_t*)(*v1 + 0x20) * 8) {
+            v4 = *(uint16_t*)(*v1 + 0x30);
+            v5 = v3;
+            v6 = (int64_t*)*(int64_t*)(*v1 + 0x28);
+            v7 = (int16_t*)(uint32_t)v2;
+            do {
+                v8 = (int64_t*)(*v6 + 0x40);
+                v9 = (uint16_t*)(*v8 != 0 ? *v8 : 0x91ffc);
+                if (*v9) {
+                    v10 = *v9;
+                    v11 = v4;
+                    v12 = (struct s_fun_0002cdb0_v12*)v9;
+                    v13 = v5;
+                    v14 = v7;
+                    do {
+                        if ((uint32_t)((uint16_t)v10) <= (uint32_t)v12->field_2) {
+                            v15 = v11;
+                            v16 = (uint16_t)v10;
+                            v17 = v13;
+                            v18 = (struct s_fun_0002cdb0_v18*)v14;
+                            while (true) {
+                                v11 = v15;
+                                v13 = v17;
+                                v14 = (int16_t*)v18;
+                                if ((uint32_t)(v16) > 0xffff) break;
+                                if ((uint64_t)((uint16_t)v16) >= (uint64_t)((int64_t)v18->field_20)) {
+                                    fun_00030320(v18, (uint16_t)v16, 0);
+                                    v17 = 0;
+                                } else if (*(int16_t*)(v18->field_28 + (uint16_t)v16 * 2) == -1) {
+                                    fun_00030320(v18, (uint16_t)v16, 0);
+                                    v17 = 0;
+                                }
+                                v15 = (uint16_t)v16;
+                                v11 = (uint16_t)v16;
+                                ++v16;
+                                v13 = v17;
+                                v14 = (int16_t*)v18;
+                                if ((uint32_t)(v16) > (uint32_t)v12->field_2) break;
+                            }
+                        }
+                        v10 = v12->field_4;
+                        v12 = (struct s_fun_0002cdb0_v12*)(&v12->field_4);
+                        v4 = v11;
+                        v5 = v13;
+                        v7 = v14;
+                    } while (v12->field_0);
+                }
+                v6 = (int64_t*)((char*)v6 + 8);
+                v3 = v5;
+            } while ((int64_t)(v6) != (int64_t)(*(int64_t*)(*v1 + 0x28) + (int64_t)*(int32_t*)(*v1 + 0x20) * 8));
+        }
+        v1 = (int64_t*)((char*)v1 + 8);
+    } while ((int64_t)(v1) != (int64_t)(a1->field_70 + (int64_t)a1->field_68 * 8));
+    return;
+}
+

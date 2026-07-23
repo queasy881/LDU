@@ -1,0 +1,137 @@
+=== fun_00026890 @ 0x26890 size=224 blocks=11 calls=1 ===
+--- DISASM ---
+  0x26890: mov       qword ptr [rsp + 8], rbx
+  0x26895: push      rdi
+  0x26896: sub       rsp, 0x20
+  0x2689a: mov       rdx, qword ptr [rcx + 0x2710]
+  0x268a1: xor       ebx, ebx
+  0x268a3: test      rdx, rdx
+  0x268a6: mov       rdi, rcx
+  0x268a9: lea       rax, [rdx + 4]
+  0x268ad: cmovne    rbx, rax
+  0x268b1: test      rbx, rbx
+  0x268b4: je        0x26965
+  0x268ba: nop       word ptr [rax + rax]
+  0x268c0: cmp       byte ptr [rbx + 0xe], 0
+  0x268c4: je        0x26937
+  0x268c6: mov       ecx, dword ptr [rbx]
+  0x268c8: call      0x11ab0
+  0x268cd: mov       rdx, rax
+  0x268d0: test      rax, rax
+  0x268d3: je        0x26933
+  0x268d5: movsx     ecx, word ptr [rbx + 6]
+  0x268d9: movd      xmm1, ecx
+  0x268dd: movsx     ecx, word ptr [rbx + 4]
+  0x268e1: cvtdq2ps  xmm1, xmm1
+  0x268e4: movd      xmm0, ecx
+  0x268e8: cvtdq2ps  xmm0, xmm0
+  0x268eb: movss     dword ptr [rax + 0x2c], xmm1
+  0x268f0: movss     dword ptr [rax + 0x28], xmm0
+  0x268f5: movsx     eax, word ptr [rbx + 8]
+  0x268f9: test      ax, ax
+  0x268fc: jle       0x26929
+  0x268fe: movsx     ecx, word ptr [rbx + 0xa]
+  0x26902: test      cx, cx
+  0x26905: jle       0x26929
+  0x26907: movd      xmm1, eax
+  0x2690b: cvtdq2ps  xmm1, xmm1
+  0x2690e: movd      xmm0, ecx
+  0x26912: cvtdq2ps  xmm0, xmm0
+  0x26915: movss     dword ptr [rdx + 0x38], xmm1
+  0x2691a: movss     dword ptr [rdx + 0x3c], xmm0
+  0x2691f: movss     dword ptr [rdx + 0x30], xmm1
+  0x26924: movss     dword ptr [rdx + 0x34], xmm0
+  0x26929: movzx     eax, byte ptr [rbx + 0xc]
+  0x2692d: mov       byte ptr [rdx + 0xcf], al
+  0x26933: mov       byte ptr [rbx + 0xe], 0
+  0x26937: movsxd    r8, dword ptr [rbx - 4]
+  0x2693b: mov       rdx, qword ptr [rdi + 0x2710]
+  0x26942: add       r8, rbx
+  0x26945: movsxd    rcx, dword ptr [rdi + 0x2708]
+  0x2694c: add       rdx, 4
+  0x26950: xor       ebx, ebx
+  0x26952: add       rdx, rcx
+  0x26955: cmp       r8, rdx
+  0x26958: cmovne    rbx, r8
+  0x2695c: test      rbx, rbx
+  0x2695f: jne       0x268c0
+  0x26965: mov       rbx, qword ptr [rsp + 0x30]
+  0x2696a: add       rsp, 0x20
+  0x2696e: pop       rdi
+  0x2696f: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_00026890 @ 0x26890  size=224 */
+/* confidence: HIGH */
+struct s_fun_00026890_a1;
+struct s_fun_00026890_v1;
+struct s_fun_00026890_v3;
+#pragma pack(push, 1)
+struct s_fun_00026890_a1 {
+    char _pad_0[9992];
+    int32_t field_2708;
+    char _pad_270c[4];
+    int64_t field_2710;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_00026890_v1 {
+    int32_t field_0;
+    int16_t field_4;
+    int16_t field_6;
+    int16_t field_8;
+    int16_t field_a;
+    uint8_t field_c;
+    char _pad_d[1];
+    int8_t field_e;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_00026890_v3 {
+    char _pad_0[40];
+    float field_28;
+    float field_2c;
+    float field_30;
+    float field_34;
+    float field_38;
+    float field_3c;
+    char _pad_40[143];
+    int8_t field_cf;
+};
+#pragma pack(pop)
+int64_t fun_00011ab0();
+void fun_00026890(struct s_fun_00026890_a1*a1) {
+    struct s_fun_00026890_v1*v1 = 0;
+    struct s_fun_00026890_v3*v3;
+    int8_t*v4;
+    int64_t v2;
+    int64_t v5;
+
+    v2 = a1->field_2710 != 0 ? a1->field_2710 + 4 : 0;
+    if (!v2) {
+        return;
+    }
+    v1 = (struct s_fun_00026890_v1*)v2;
+    do {
+        if (v1->field_e) {
+            v3 = (struct s_fun_00026890_v3*)fun_00011ab0((uint32_t)v1->field_0);
+            if (v3) {
+                v3->field_2c = (float)((int32_t)v1->field_6);
+                v3->field_28 = (float)((int32_t)v1->field_4);
+                if (v1->field_8 > 0 && v1->field_a > 0) {
+                    v3->field_38 = (float)((int32_t)v1->field_8);
+                    v3->field_3c = (float)((int32_t)v1->field_a);
+                    v3->field_30 = (float)((int32_t)v1->field_8);
+                    v3->field_34 = (float)((int32_t)v1->field_a);
+                }
+                v3->field_cf = (int8_t)v1->field_c;
+            }
+            v1->field_e = 0;
+        }
+        v4 = (int8_t*)((char*)v1 + (int64_t)*(int32_t*)((char*)v1 - 4));
+        v5 = (int64_t)(v4) != (int64_t)(a1->field_2710 + 4 + (int64_t)a1->field_2708) ? (int64_t)(v4) : 0;
+        v1 = (struct s_fun_00026890_v1*)v5;
+    } while (v5);
+    return;
+}
+

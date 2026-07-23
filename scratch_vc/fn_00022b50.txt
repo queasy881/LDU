@@ -1,0 +1,122 @@
+=== fun_00022b50 @ 0x22b50 size=226 blocks=18 calls=6 ===
+--- DISASM ---
+  0x22b50: push      rbx
+  0x22b52: push      rbp
+  0x22b53: push      rsi
+  0x22b54: push      rdi
+  0x22b55: push      r14
+  0x22b57: sub       rsp, 0x30
+  0x22b5b: mov       rsi, qword ptr [rcx + 0x28]
+  0x22b5f: mov       rdi, rcx
+  0x22b62: movaps    xmmword ptr [rsp + 0x20], xmm6
+  0x22b67: xorps     xmm6, xmm6
+  0x22b6a: comiss    xmm6, dword ptr [rcx + 0x10]
+  0x22b6e: setae     bpl
+  0x22b72: call      0x13750
+  0x22b77: test      al, al
+  0x22b79: je        0x22b8a
+  0x22b7b: xor       ebx, ebx
+  0x22b7d: movzx     ecx, al
+  0x22b80: mov       eax, dword ptr [rdi + 4]
+  0x22b83: cmp       dword ptr [rdi], eax
+  0x22b85: cmovl     ebx, ecx
+  0x22b88: jmp       0x22b8c
+  0x22b8a: xor       bl, bl
+  0x22b8c: mov       rax, qword ptr [rsi + 0x22c8]
+  0x22b93: test      rax, rax
+  0x22b96: je        0x22bb6
+  0x22b98: cmp       byte ptr [rax + 0x245], 0
+  0x22b9f: jne       0x22bb6
+  0x22ba1: test      byte ptr [rsi + 0x2824], 0x20
+  0x22ba8: je        0x22bb6
+  0x22baa: lea       rcx, [0x89a68]
+  0x22bb1: call      0xf0a0
+  0x22bb6: test      bpl, bpl
+  0x22bb9: je        0x22be2
+  0x22bbb: movss     xmm0, dword ptr [rdi + 0x10]
+  0x22bc0: comiss    xmm0, xmm6
+  0x22bc3: jbe       0x22be2
+  0x22bc5: test      byte ptr [rsi + 0x2824], 0x20
+  0x22bcc: je        0x22be2
+  0x22bce: cvtps2pd  xmm1, xmm0
+  0x22bd1: lea       rcx, [0x89a98]
+  0x22bd8: movq      rdx, xmm1
+  0x22bdd: call      0xf0a0
+  0x22be2: mov       eax, dword ptr [rsi + 0x2824]
+  0x22be8: and       eax, 0x20
+  0x22beb: test      bl, bl
+  0x22bed: je        0x22c07
+  0x22bef: test      eax, eax
+  0x22bf1: je        0x22c1f
+  0x22bf3: mov       r8d, dword ptr [rdi + 4]
+  0x22bf7: lea       rcx, [0x89ac8]
+  0x22bfe: mov       edx, dword ptr [rdi]
+  0x22c00: call      0xf0a0
+  0x22c05: jmp       0x22c1f
+  0x22c07: test      eax, eax
+  0x22c09: je        0x22c17
+  0x22c0b: lea       rcx, [0x89af0]
+  0x22c12: call      0xf0a0
+  0x22c17: mov       rcx, rdi
+  0x22c1a: call      0xfa20
+  0x22c1f: movaps    xmm6, xmmword ptr [rsp + 0x20]
+  0x22c24: movzx     eax, bl
+  0x22c27: add       rsp, 0x30
+  0x22c2b: pop       r14
+  0x22c2d: pop       rdi
+  0x22c2e: pop       rsi
+  0x22c2f: pop       rbp
+  0x22c30: pop       rbx
+  0x22c31: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_00022b50 @ 0x22b50  size=226 */
+/* xrefs: called by fun_0004a060 (2 sites) */
+/* confidence: HIGH */
+struct s_fun_00022b50_a1;
+#pragma pack(push, 1)
+struct s_fun_00022b50_a1 {
+    int32_t field_0;
+    int32_t field_4;
+    char _pad_8[8];
+    float field_10;
+    char _pad_14[20];
+    void* field_28;
+};
+#pragma pack(pop)
+int32_t fun_0000f0a0();
+void fun_0000fa20();
+int32_t fun_00013750();
+uint8_t fun_00022b50(struct s_fun_00022b50_a1*a1) {
+    int32_t result;
+    int32_t v1;
+    double v2 = 0;
+
+    v1 = fun_00013750(a1);
+    if (!((uint8_t)v1)) {
+        result = 0;
+    } else {
+        result = a1->field_0 < a1->field_4 ? (uint8_t)v1 : 0;
+    }
+    if (((int64_t*)a1->field_28)[0x459] && !*(int8_t*)(((int64_t*)a1->field_28)[0x459] + 0x245) && *(int8_t*)((char*)a1->field_28 + 0x2824) & 0x20) {
+        fun_0000f0a0("Clipper: Step(): inside frozen table row.\n");
+    }
+    if (a1->field_10 <= 0.0f != 0 && a1->field_10 > 0.0f && *(int8_t*)((char*)a1->field_28 + 0x2824) & 0x20) {
+        v2 = (double)a1->field_10;
+        fun_0000f0a0("Clipper: Step(): computed ItemsHeight: %.2f.\n", *(uint64_t*)(&v2));
+    }
+    if (!((uint8_t)result)) {
+        if (!(((int32_t*)a1->field_28)[0xa09] & 0x20)) {
+            fun_0000fa20(a1, *(uint64_t*)(&v2));
+            return (uint8_t)result;
+        }
+        fun_0000f0a0("Clipper: Step(): End.\n");
+        fun_0000fa20(a1, *(uint64_t*)(&v2));
+        return (uint8_t)result;
+    } else if (((int32_t*)a1->field_28)[0xa09] & 0x20) {
+        fun_0000f0a0("Clipper: Step(): display %d to %d.\n", (uint32_t)a1->field_0, (uint32_t)a1->field_4);
+        return (uint8_t)result;
+    }
+    return (uint8_t)result;
+}
+

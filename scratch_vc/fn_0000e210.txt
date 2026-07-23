@@ -1,0 +1,250 @@
+=== fun_0000e210 @ 0xe210 size=378 blocks=27 calls=4 ===
+--- DISASM ---
+  0xe210: push      rbx
+  0xe212: push      rbp
+  0xe213: push      rsi
+  0xe214: push      rdi
+  0xe215: push      r14
+  0xe217: sub       rsp, 0x20
+  0xe21b: mov       rdi, qword ptr [0x174148]
+  0xe222: movzx     r14d, dl
+  0xe226: movsxd    rbp, ecx
+  0xe229: test      byte ptr [rdi + 0x2824], 8
+  0xe230: je        0xe294
+  0xe232: mov       r8d, r14d
+  0xe235: lea       rcx, [0x8a7f8]
+  0xe23c: mov       edx, ebp
+  0xe23e: call      0xf0a0
+  0xe243: test      byte ptr [rdi + 0x2824], 8
+  0xe24a: je        0xe294
+  0xe24c: mov       ebx, ebp
+  0xe24e: cmp       ebp, dword ptr [rdi + 0x1f88]
+  0xe254: jge       0xe294
+  0xe256: test      byte ptr [rdi + 0x2824], 8
+  0xe25d: je        0xe28a
+  0xe25f: movsxd    rax, ebx
+  0xe262: imul      rcx, rax, 0x38
+  0xe266: mov       rax, qword ptr [rdi + 0x1f90]
+  0xe26d: mov       r8, qword ptr [rcx + rax + 8]
+  0xe272: test      r8, r8
+  0xe275: je        0xe27b
+  0xe277: mov       r8, qword ptr [r8 + 8]
+  0xe27b: mov       edx, dword ptr [rcx + rax]
+  0xe27e: lea       rcx, [0x8a830]
+  0xe285: call      0xf0a0
+  0xe28a: inc       ebx
+  0xe28c: cmp       ebx, dword ptr [rdi + 0x1f88]
+  0xe292: jl        0xe256
+  0xe294: mov       rax, qword ptr [rdi + 0x1f90]
+  0xe29b: mov       edx, ebp
+  0xe29d: imul      rcx, rbp, 0x38
+  0xe2a1: mov       rbx, qword ptr [rcx + rax + 8]
+  0xe2a6: mov       rsi, qword ptr [rcx + rax + 0x10]
+  0xe2ab: lea       rcx, [rdi + 0x1f88]
+  0xe2b2: call      0x28300
+  0xe2b7: test      r14b, r14b
+  0xe2ba: je        0xe37f
+  0xe2c0: test      rbx, rbx
+  0xe2c3: je        0xe37f
+  0xe2c9: mov       eax, dword ptr [rbx + 0x14]
+  0xe2cc: bt        eax, 0x1c
+  0xe2d0: jae       0xe2d9
+  0xe2d2: mov       rsi, qword ptr [rbx + 0x3b0]
+  0xe2d9: test      rsi, rsi
+  0xe2dc: je        0xe36c
+  0xe2e2: cmp       byte ptr [rsi + 0xcd], 0
+  0xe2e9: jne       0xe36c
+  0xe2ef: mov       ecx, 0xffffffff
+  0xe2f4: bt        eax, 0x18
+  0xe2f8: jae       0xe312
+  0xe2fa: nop       word ptr [rax + rax]
+  0xe300: mov       rbx, qword ptr [rbx + 0x3b0]
+  0xe307: xor       ecx, ecx
+  0xe309: test      dword ptr [rbx + 0x14], 0x1000000
+  0xe310: jne       0xe300
+  0xe312: movsx     edx, word ptr [rbx + 0xe2]
+  0xe319: add       edx, ecx
+  0xe31b: js        0xe356
+  0xe31d: mov       rax, qword ptr [0x174148]
+  0xe324: mov       r8, qword ptr [rax + 0x1438]
+  0xe32b: nop       dword ptr [rax + rax]
+  0xe330: mov       rcx, qword ptr [r8 + rdx*8]
+  0xe334: test      rcx, rcx
+  0xe337: je        0xe351
+  0xe339: cmp       byte ptr [rcx + 0xcd], 0
+  0xe340: je        0xe351
+  0xe342: mov       eax, dword ptr [rcx + 0x14]
+  0xe345: and       eax, 0x10200
+  0xe34a: cmp       eax, 0x10200
+  0xe34f: jne       0xe358
+  0xe351: sub       edx, 1
+  0xe354: jns       0xe330
+  0xe356: xor       ecx, ecx
+  0xe358: mov       edx, 1
+  0xe35d: add       rsp, 0x20
+  0xe361: pop       r14
+  0xe363: pop       rdi
+  0xe364: pop       rsi
+  0xe365: pop       rbp
+  0xe366: pop       rbx
+  0xe367: jmp       0x11e40
+  0xe36c: xor       edx, edx
+  0xe36e: mov       rcx, rsi
+  0xe371: cmp       dword ptr [rdi + 0x1fdc], edx
+  0xe377: sete      dl
+  0xe37a: call      0x11e40
+  0xe37f: add       rsp, 0x20
+  0xe383: pop       r14
+  0xe385: pop       rdi
+  0xe386: pop       rsi
+  0xe387: pop       rbp
+  0xe388: pop       rbx
+  0xe389: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_0000e210 @ 0xe210  size=378 */
+/* xrefs: called by fun_0000e130 (1 site), fun_0000e390 (1 site), fun_0001bcd0 (1 site) */
+/* confidence: HIGH */
+#include <stdbool.h>
+struct s_fun_0000e210_qword_174148;
+struct s_fun_0000e210_qword_174148_1f90_A38;
+struct s_fun_0000e210_v10;
+struct s_fun_0000e210_v11;
+struct s_fun_0000e210_t60;
+#pragma pack(push, 1)
+struct s_fun_0000e210_qword_174148 {
+    char _pad_0[5176];
+    void* field_1438;
+    char _pad_1440[2888];
+    int32_t field_1f88;
+    char _pad_1f8c[4];
+    int64_t field_1f90;
+    char _pad_1f98[68];
+    int32_t field_1fdc;
+    char _pad_1fe0[2116];
+    int8_t field_2824;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_0000e210_qword_174148_1f90_A38 {
+    int32_t field_0;
+    char _pad_4[4];
+    int64_t field_8;
+    char _pad_end[40];
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_0000e210_v10 {
+    char _pad_0[20];
+    int32_t field_14;
+    char _pad_18[202];
+    int16_t field_e2;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_0000e210_v11 {
+    char _pad_0[20];
+    int32_t field_14;
+    char _pad_18[920];
+    int64_t field_3b0;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_0000e210_t60 {
+    char _pad_0[8];
+    int64_t field_8;
+    int64_t field_10;
+};
+#pragma pack(pop)
+#define qword_174148 (*(int64_t*)0x174148)
+int32_t fun_0000f0a0();
+int32_t fun_00011e40();
+int64_t fun_00028300();
+int32_t fun_0000e210(int64_t a1, int32_t a2) {
+    struct s_fun_0000e210_qword_174148* gs_174148 = (struct s_fun_0000e210_qword_174148*)qword_174148;
+    int64_t v6;
+    uint64_t v7;
+    struct s_fun_0000e210_v11*v11;
+    int32_t v2 = 0;
+    uint64_t v5 = 0;
+    int8_t*v1 = 0;
+    int32_t v9;
+    struct s_fun_0000e210_v10*v10;
+    int64_t result;
+    int64_t v8 = 0;
+    bool v4;
+    bool v3;
+
+    v3 = 0;
+    v4 = 0;
+    if (gs_174148->field_2824 & 8) {
+        fun_0000f0a0("[popup] ClosePopupToLevel(%d), restore_under=%d\n", (uint32_t)a1, (uint8_t)a2);
+        v5 = (uint8_t)a2;
+        if (gs_174148->field_2824 & 8) {
+            v6 = a1;
+            v7 = (uint8_t)a2;
+            v5 = (uint8_t)a2;
+            if (a1 < gs_174148->field_1f88) {
+                do {
+                    if (gs_174148->field_2824 & 8) {
+                        v7 = ((struct s_fun_0000e210_qword_174148_1f90_A38*)gs_174148->field_1f90)[v6].field_8;
+                        if (v7) {
+                            v7 = *(int64_t*)(((struct s_fun_0000e210_qword_174148_1f90_A38*)gs_174148->field_1f90)[v6].field_8 + 8);
+                        }
+                        fun_0000f0a0("[popup] - Closing PopupID 0x%08X Window \"%s\"\n", (uint32_t)((struct s_fun_0000e210_qword_174148_1f90_A38*)gs_174148->field_1f90)[v6].field_0, v7);
+                    }
+                    v6 = (int32_t)v6 + 1;
+                    v5 = v7;
+                } while (v6 < gs_174148->field_1f88);
+            }
+        }
+    }
+    result = fun_00028300(&gs_174148->field_1f88, (uint32_t)a1);
+    if (!((uint8_t)a2)) {
+        v3 = 1;
+    } else {
+        v8 = (int64_t)a1 * 0x38;
+        if (!*(int64_t*)(v8 + gs_174148->field_1f90 + 8)) {
+            v3 = 1;
+        } else {
+            v1 = (int8_t*)*(int64_t*)(v8 + gs_174148->field_1f90 + 0x10);
+            if ((*(int32_t*)(*(int64_t*)(v8 + gs_174148->field_1f90 + 8) + 0x14) >> 0x1c) & 1) {
+                v1 = (int8_t*)*(int64_t*)(*(int64_t*)(v8 + gs_174148->field_1f90 + 8) + 0x3b0);
+            }
+            if (!v1 || v1[0xcd]) {
+                result = fun_00011e40(v1, gs_174148->field_1fdc == 0, v5);
+                v3 = 1;
+            }
+        }
+    }
+    if (v3) {
+        return (int32_t)result;
+    }
+    v9 = -1;
+    v10 = (struct s_fun_0000e210_v10*)*(int64_t*)(v8 + gs_174148->field_1f90 + 8);
+    if ((v10->field_14 >> 0x18) & 1) {
+        v11 = (struct s_fun_0000e210_v11*)*(int64_t*)(v8 + gs_174148->field_1f90 + 8);
+        while (true) {
+            v9 = 0;
+            v10 = (struct s_fun_0000e210_v10*)v11->field_3b0;
+            v11 = (struct s_fun_0000e210_v11*)v11->field_3b0;
+            if (!(v11->field_14 & 0x1000000)) break;
+        }
+    }
+    if ((int32_t)v10->field_e2 + v9 < 0) {
+        v4 = 1;
+    } else {
+        v2 = (int32_t)v10->field_e2 + v9;
+        while (!((int64_t*)gs_174148->field_1438)[v2] || !*(int8_t*)(((int64_t*)gs_174148->field_1438)[v2] + 0xcd) || (*(int32_t*)(((int64_t*)gs_174148->field_1438)[v2] + 0x14) & 0x10200) == 0x10200) {
+            --v2;
+            if (v2 >= 0) continue;
+            v4 = 1;
+            break;
+        }
+    }
+    if (v4) {
+        return fun_00011e40(a1, 1);
+    }
+    return fun_00011e40(a1, 1);
+}
+

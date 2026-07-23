@@ -1,0 +1,35 @@
+=== fun_0002b320 @ 0x2b320 size=99 blocks=1 calls=1 ===
+--- DISASM ---
+  0x2b320: push      rbx
+  0x2b322: sub       rsp, 0x60
+  0x2b326: movss     xmm0, dword ptr [rsp + 0x90]
+  0x2b32f: xor       eax, eax
+  0x2b331: mov       dword ptr [rsp + 0x50], eax
+  0x2b335: mov       rbx, rdx
+  0x2b338: mov       qword ptr [rsp + 0x48], rax
+  0x2b33d: mov       rdx, rcx
+  0x2b340: mov       rax, qword ptr [rsp + 0xa8]
+  0x2b348: mov       rcx, rbx
+  0x2b34b: mov       qword ptr [rsp + 0x40], rax
+  0x2b350: mov       rax, qword ptr [rsp + 0xa0]
+  0x2b358: mov       qword ptr [rsp + 0x38], rax
+  0x2b35d: mov       qword ptr [rsp + 0x30], rax
+  0x2b362: mov       rax, qword ptr [rsp + 0x98]
+  0x2b36a: mov       qword ptr [rsp + 0x28], rax
+  0x2b36f: movss     dword ptr [rsp + 0x20], xmm0
+  0x2b375: call      0x306d0
+  0x2b37a: mov       rax, rbx
+  0x2b37d: add       rsp, 0x60
+  0x2b381: pop       rbx
+  0x2b382: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_0002b320 @ 0x2b320  size=99 */
+/* xrefs: called by fun_0001eae0 (2 sites), fun_0000d0b0 (1 site), fun_0001e870 (1 site), fun_0001fdf0 (1 site) */
+/* confidence: HIGH */
+int64_t fun_000306d0();
+int64_t fun_0002b320(int64_t a1, int64_t a2, int64_t a3, int64_t a4, float a5, int64_t a6, int64_t a7, int64_t a8) {
+    fun_000306d0(a2, a1, a3, a4, a5, a6, a7, a7, a8, 0, 0);
+    return a2;
+}
+

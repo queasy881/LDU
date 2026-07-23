@@ -1,0 +1,44 @@
+=== fun_00051ac0 @ 0x51ac0 size=80 blocks=3 calls=1 ===
+--- DISASM ---
+  0x51ac0: push      rbx
+  0x51ac2: sub       rsp, 0x20
+  0x51ac6: mov       rdx, qword ptr [0x174148]
+  0x51acd: mov       rbx, rcx
+  0x51ad0: mov       rax, qword ptr [rdx + 0x1480]
+  0x51ad7: mov       byte ptr [rax + 0xce], 1
+  0x51ade: mov       rax, qword ptr [rdx + 0x1480]
+  0x51ae5: cmp       byte ptr [rax + 0xd1], 0
+  0x51aec: jne       0x51b0a
+  0x51aee: xor       edx, edx
+  0x51af0: call      0x119d0
+  0x51af5: mov       r8, rax
+  0x51af8: xorps     xmm3, xmm3
+  0x51afb: mov       rdx, rbx
+  0x51afe: xor       ecx, ecx
+  0x51b00: add       rsp, 0x20
+  0x51b04: pop       rbx
+  0x51b05: jmp       0x51b10
+  0x51b0a: add       rsp, 0x20
+  0x51b0e: pop       rbx
+  0x51b0f: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_00051ac0 @ 0x51ac0  size=80 */
+/* xrefs: called by fun_0000c2e0 (1 site), fun_0001a7e0 (1 site) */
+/* confidence: HIGH */
+#define qword_174148 (*(int64_t*)0x174148)
+int64_t fun_000119d0();
+int32_t fun_00051b10();
+int64_t fun_00051ac0(int64_t a1) {
+    int64_t v2;
+    int8_t*v1;
+
+    v1 = (int8_t*)*(int64_t*)(qword_174148 + 0x1480);
+    v1[0xce] = 1;
+    if (v1[0xd1]) {
+        return *(int64_t*)(qword_174148 + 0x1480);
+    }
+    v2 = fun_000119d0(a1, 0);
+    return fun_00051b10(0, a1, v2, 0.0f);
+}
+

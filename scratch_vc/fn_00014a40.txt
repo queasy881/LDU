@@ -1,0 +1,34 @@
+=== fun_00014a40 @ 0x14a40 size=31 blocks=4 calls=0 ===
+--- DISASM ---
+  0x14a40: mov       rax, qword ptr [0x174148]
+  0x14a47: cmp       dword ptr [rax + 0x14dc], 0
+  0x14a4e: jne       0x14a5c
+  0x14a50: cmp       dword ptr [rax + 0x14e0], 0
+  0x14a57: jne       0x14a5c
+  0x14a59: xor       al, al
+  0x14a5b: ret       
+  0x14a5c: mov       al, 1
+  0x14a5e: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_00014a40 @ 0x14a40  size=31 */
+/* xrefs: called by fun_0003c610 (1 site) */
+/* confidence: HIGH */
+struct s_fun_00014a40_qword_174148;
+#pragma pack(push, 1)
+struct s_fun_00014a40_qword_174148 {
+    char _pad_0[5340];
+    int32_t field_14dc;
+    int32_t field_14e0;
+};
+#pragma pack(pop)
+#define qword_174148 (*(int64_t*)0x174148)
+int32_t fun_00014a40(void) {
+    struct s_fun_00014a40_qword_174148* gs_174148 = (struct s_fun_00014a40_qword_174148*)qword_174148;
+
+    if (gs_174148->field_14dc || gs_174148->field_14e0) {
+        return 1;
+    }
+    return 0;
+}
+

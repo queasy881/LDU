@@ -1,0 +1,64 @@
+=== fun_00047680 @ 0x47680 size=75 blocks=9 calls=4 ===
+--- DISASM ---
+  0x47680: push      rbx
+  0x47682: sub       rsp, 0x20
+  0x47686: mov       rbx, rcx
+  0x47689: mov       rcx, qword ptr [rcx + 8]
+  0x4768d: test      rcx, rcx
+  0x47690: je        0x47698
+  0x47692: call      0x168c0
+  0x47697: nop       
+  0x47698: mov       rcx, qword ptr [rbx + 0x50]
+  0x4769c: test      rcx, rcx
+  0x4769f: je        0x476a7
+  0x476a1: call      0x168c0
+  0x476a6: nop       
+  0x476a7: mov       rcx, qword ptr [rbx + 0x40]
+  0x476ab: test      rcx, rcx
+  0x476ae: je        0x476b6
+  0x476b0: call      0x168c0
+  0x476b5: nop       
+  0x476b6: mov       rcx, qword ptr [rbx + 0x30]
+  0x476ba: test      rcx, rcx
+  0x476bd: je        0x476c5
+  0x476bf: call      0x168c0
+  0x476c4: nop       
+  0x476c5: add       rsp, 0x20
+  0x476c9: pop       rbx
+  0x476ca: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_00047680 @ 0x47680  size=75 */
+/* xrefs: called by fun_00008390 (1 site) */
+/* confidence: HIGH */
+struct s_fun_00047680_a1;
+#pragma pack(push, 1)
+struct s_fun_00047680_a1 {
+    char _pad_0[8];
+    int64_t field_8;
+    char _pad_10[32];
+    int64_t field_30;
+    char _pad_38[8];
+    int64_t field_40;
+    char _pad_48[8];
+    int64_t field_50;
+};
+#pragma pack(pop)
+void fun_000168c0();
+void fun_00047680(struct s_fun_00047680_a1*a1) {
+    if (a1->field_8) {
+        fun_000168c0(a1->field_8);
+    }
+    if (a1->field_50) {
+        fun_000168c0(a1->field_50);
+    }
+    if (a1->field_40) {
+        fun_000168c0(a1->field_40);
+    }
+    if (!a1->field_30) {
+        return;
+    }
+    fun_000168c0(a1->field_30);
+    return;
+}
+

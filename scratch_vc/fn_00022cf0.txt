@@ -1,0 +1,57 @@
+=== fun_00022cf0 @ 0x22cf0 size=91 blocks=4 calls=0 ===
+--- DISASM ---
+  0x22cf0: mov       rcx, qword ptr [0x174148]
+  0x22cf7: xorps     xmm1, xmm1
+  0x22cfa: ucomiss   xmm0, xmm1
+  0x22cfd: mov       rax, qword ptr [rcx + 0x1480]
+  0x22d04: mov       byte ptr [rax + 0xce], 1
+  0x22d0b: mov       rax, qword ptr [rcx + 0x1480]
+  0x22d12: movaps    xmm2, xmm0
+  0x22d15: jp        0x22d21
+  0x22d17: jne       0x22d21
+  0x22d19: movss     xmm2, dword ptr [rcx + 0xcdc]
+  0x22d21: movss     xmm0, dword ptr [rax + 0x15c]
+  0x22d29: subss     xmm0, xmm2
+  0x22d2d: movss     dword ptr [rax + 0x15c], xmm0
+  0x22d35: addss     xmm0, dword ptr [rax + 0x28]
+  0x22d3a: addss     xmm0, dword ptr [rax + 0x160]
+  0x22d42: movss     dword ptr [rax + 0x118], xmm0
+  0x22d4a: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_00022cf0 @ 0x22cf0  size=91 */
+/* xrefs: called by fun_000564b0 (1 site) */
+/* confidence: HIGH */
+struct s_fun_00022cf0_qword_174148;
+#pragma pack(push, 1)
+struct s_fun_00022cf0_qword_174148 {
+    char _pad_0[3292];
+    float field_cdc;
+    char _pad_ce0[1952];
+    void* field_1480;
+};
+#pragma pack(pop)
+#define qword_174148 (*(int64_t*)0x174148)
+void fun_00022cf0(float a1) {
+    struct s_fun_00022cf0_qword_174148* gs_174148 = (struct s_fun_00022cf0_qword_174148*)qword_174148;
+    float v1;
+    float v3;
+    int64_t*v2;
+
+    *(int8_t*)((char*)gs_174148->field_1480 + 0xce) = 1;
+    v1 = a1;
+    if (a1 != 0.0f) {
+        v2 = (int64_t*)(&gs_174148->field_1480);
+        v3 = *(float*)(*v2 + 0x15c) - v1;
+        *(float*)(*v2 + 0x15c) -= v1;
+        *(float*)(*v2 + 0x118) = v3 + *(float*)(*v2 + 0x28) + *(float*)(*v2 + 0x160);
+        return;
+    }
+    v1 = gs_174148->field_cdc;
+    v2 = (int64_t*)(&gs_174148->field_1480);
+    v3 = *(float*)(*v2 + 0x15c) - v1;
+    *(float*)(*v2 + 0x15c) -= v1;
+    *(float*)(*v2 + 0x118) = v3 + *(float*)(*v2 + 0x28) + *(float*)(*v2 + 0x160);
+    return;
+}
+

@@ -1,0 +1,52 @@
+=== fun_0005b170 @ 0x5b170 size=74 blocks=3 calls=3 ===
+--- DISASM ---
+  0x5b170: push      rbx
+  0x5b172: push      rbp
+  0x5b173: push      rsi
+  0x5b174: push      rdi
+  0x5b175: sub       rsp, 0x38
+  0x5b179: mov       rbx, r9
+  0x5b17c: mov       rdi, r8
+  0x5b17f: mov       esi, edx
+  0x5b181: mov       rbp, rcx
+  0x5b184: call      0x122b0
+  0x5b189: test      rax, rax
+  0x5b18c: jne       0x5b197
+  0x5b18e: add       rsp, 0x38
+  0x5b192: pop       rdi
+  0x5b193: pop       rsi
+  0x5b194: pop       rbp
+  0x5b195: pop       rbx
+  0x5b196: ret       
+  0x5b197: call      0x124c0
+  0x5b19c: mov       r9, rbx
+  0x5b19f: mov       qword ptr [rsp + 0x20], rax
+  0x5b1a4: mov       r8, rdi
+  0x5b1a7: mov       edx, esi
+  0x5b1a9: mov       rcx, rbp
+  0x5b1ac: call      0x5b1c0
+  0x5b1b1: add       rsp, 0x38
+  0x5b1b5: pop       rdi
+  0x5b1b6: pop       rsi
+  0x5b1b7: pop       rbp
+  0x5b1b8: pop       rbx
+  0x5b1b9: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_0005b170 @ 0x5b170  size=74 */
+/* xrefs: called by fun_00001b70 (1 site) */
+/* confidence: HIGH */
+int64_t fun_000124c0();
+int64_t fun_0005b1c0();
+int64_t get_174148();
+int64_t fun_0005b170(int64_t a1, int32_t a2, int64_t a3) {
+    int64_t result;
+
+    result = get_174148();
+    if (result) {
+        fun_000124c0();
+        return (int64_t)fun_0005b1c0(a1, a2, a3);
+    }
+    return result;
+}
+

@@ -1,0 +1,156 @@
+=== fun_0004a4b0 @ 0x4a4b0 size=277 blocks=14 calls=0 ===
+--- DISASM ---
+  0x4a4b0: cmp       ecx, 9
+  0x4a4b3: ja        0x4a5c2
+  0x4a4b9: movsxd    rax, ecx
+  0x4a4bc: lea       r9, [rip - 0x4a4c3]
+  0x4a4c3: mov       ecx, dword ptr [r9 + rax*4 + 0x4a5c8]
+  0x4a4cb: add       rcx, r9
+  0x4a4ce: jmp       rcx
+  0x4a4d0: movzx     ecx, byte ptr [r8]
+  0x4a4d4: movzx     r8d, byte ptr [rdx]
+  0x4a4d8: cmp       r8b, cl
+  0x4a4db: jge       0x4a4e3
+  0x4a4dd: mov       eax, 0xffffffff
+  0x4a4e2: ret       
+  0x4a4e3: xor       eax, eax
+  0x4a4e5: cmp       r8b, cl
+  0x4a4e8: setg      al
+  0x4a4eb: ret       
+  0x4a4ec: movzx     ecx, byte ptr [r8]
+  0x4a4f0: movzx     r8d, byte ptr [rdx]
+  0x4a4f4: cmp       r8b, cl
+  0x4a4f7: jb        0x4a4dd
+  0x4a4f9: xor       eax, eax
+  0x4a4fb: cmp       r8b, cl
+  0x4a4fe: seta      al
+  0x4a501: ret       
+  0x4a502: movzx     ecx, word ptr [r8]
+  0x4a506: movzx     r8d, word ptr [rdx]
+  0x4a50a: cmp       r8w, cx
+  0x4a50e: jl        0x4a4dd
+  0x4a510: xor       eax, eax
+  0x4a512: cmp       r8w, cx
+  0x4a516: setg      al
+  0x4a519: ret       
+  0x4a51a: movzx     ecx, word ptr [r8]
+  0x4a51e: movzx     r8d, word ptr [rdx]
+  0x4a522: cmp       r8w, cx
+  0x4a526: jb        0x4a4dd
+  0x4a528: xor       eax, eax
+  0x4a52a: cmp       r8w, cx
+  0x4a52e: seta      al
+  0x4a531: ret       
+  0x4a532: mov       ecx, dword ptr [r8]
+  0x4a535: mov       r8d, dword ptr [rdx]
+  0x4a538: cmp       r8d, ecx
+  0x4a53b: jl        0x4a4dd
+  0x4a53d: xor       eax, eax
+  0x4a53f: cmp       r8d, ecx
+  0x4a542: setg      al
+  0x4a545: ret       
+  0x4a546: mov       ecx, dword ptr [r8]
+  0x4a549: mov       r8d, dword ptr [rdx]
+  0x4a54c: cmp       r8d, ecx
+  0x4a54f: jb        0x4a4dd
+  0x4a551: xor       eax, eax
+  0x4a553: cmp       r8d, ecx
+  0x4a556: seta      al
+  0x4a559: ret       
+  0x4a55a: mov       rcx, qword ptr [r8]
+  0x4a55d: mov       r8, qword ptr [rdx]
+  0x4a560: cmp       r8, rcx
+  0x4a563: jl        0x4a4dd
+  0x4a569: xor       eax, eax
+  0x4a56b: cmp       r8, rcx
+  0x4a56e: setg      al
+  0x4a571: ret       
+  0x4a572: mov       rcx, qword ptr [r8]
+  0x4a575: mov       r8, qword ptr [rdx]
+  0x4a578: cmp       r8, rcx
+  0x4a57b: jb        0x4a4dd
+  0x4a581: xor       eax, eax
+  0x4a583: cmp       r8, rcx
+  0x4a586: seta      al
+  0x4a589: ret       
+  0x4a58a: movss     xmm0, dword ptr [r8]
+  0x4a58b: movups    xmm0, xmmword ptr [r8]
+  0x4a58f: movss     xmm1, dword ptr [rdx]
+  0x4a593: comiss    xmm0, xmm1
+  0x4a596: ja        0x4a4dd
+  0x4a59c: xor       eax, eax
+  0x4a59e: comiss    xmm1, xmm0
+  0x4a5a1: seta      al
+  0x4a5a4: ret       
+  0x4a5a5: movsd     xmm0, qword ptr [r8]
+  0x4a5aa: movsd     xmm1, qword ptr [rdx]
+  0x4a5ae: comisd    xmm0, xmm1
+  0x4a5b2: ja        0x4a4dd
+  0x4a5b8: xor       eax, eax
+  0x4a5ba: comisd    xmm1, xmm0
+  0x4a5be: seta      al
+  0x4a5c1: ret       
+  0x4a5c2: xor       eax, eax
+  0x4a5c4: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_0004a4b0 @ 0x4a4b0  size=277 */
+/* xrefs: called by fun_00055600 (1 site) */
+/* confidence: HIGH */
+int32_t fun_0004a4b0(int32_t a1, int64_t*a2, int64_t*a3) {
+    switch ((int64_t)a1) {
+        case 0:
+            if ((int8_t)*(uint8_t*)a2 >= (int8_t)*(uint8_t*)a3) {
+                return (int8_t)*(uint8_t*)a2 > (int8_t)*(uint8_t*)a3;
+            }
+            return -1;
+        case 1:
+            if ((uint32_t)(*(uint8_t*)a2) < (uint32_t)(*(uint8_t*)a3)) {
+                return -1;
+            }
+            return (uint32_t)(*(uint8_t*)a2) > (uint32_t)(*(uint8_t*)a3);
+        case 2:
+            if ((int16_t)*(uint16_t*)a2 < (int16_t)*(uint16_t*)a3) {
+                return -1;
+            }
+            return (int16_t)*(uint16_t*)a2 > (int16_t)*(uint16_t*)a3;
+        case 3:
+            if ((uint32_t)(*(uint16_t*)a2) < (uint32_t)(*(uint16_t*)a3)) {
+                return -1;
+            }
+            return (uint32_t)(*(uint16_t*)a2) > (uint32_t)(*(uint16_t*)a3);
+        case 4:
+            if (*(int32_t*)a2 < *(int32_t*)a3) {
+                return -1;
+            }
+            return *(int32_t*)a2 > *(int32_t*)a3;
+        case 5:
+            if ((uint32_t)(*(int32_t*)a2) < (uint32_t)(*(int32_t*)a3)) {
+                return -1;
+            }
+            return (uint32_t)(*(int32_t*)a2) > (uint32_t)(*(int32_t*)a3);
+        case 6:
+            if (*a2 < *a3) {
+                return -1;
+            }
+            return *a2 > *a3;
+        case 7:
+            if ((uint64_t)(*a2) < (uint64_t)(*a3)) {
+                return -1;
+            }
+            return (uint32_t)(*a2) > (uint32_t)(*a3);
+        case 8:
+            if (*(float*)a3 > *(float*)a2) {
+                return -1;
+            }
+            return *(float*)a2 > *(float*)a3;
+        case 9:
+            if (*a3 > *a2) {
+                return -1;
+            }
+            return *a2 > *a3;
+        default:
+            return 0;
+    }
+}
+

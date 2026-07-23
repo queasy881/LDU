@@ -1,0 +1,79 @@
+=== fun_000486c0 @ 0x486c0 size=146 blocks=1 calls=0 ===
+--- DISASM ---
+  0x486c0: mov       r8, qword ptr [0x174148]
+  0x486c7: cmp       rdx, -1
+  0x486cb: sete      al
+  0x486ce: mov       byte ptr [r8 + 0x2386], al
+  0x486d5: mov       byte ptr [r8 + 0x2387], al
+  0x486dc: mov       dword ptr [r8 + 0x2380], ecx
+  0x486e3: mov       byte ptr [r8 + 0x2385], 1
+  0x486eb: movzx     eax, word ptr [r8 + 0x120]
+  0x486f3: mov       word ptr [r8 + 0x238c], ax
+  0x486fb: mov       rax, qword ptr [r8 + 0x1480]
+  0x48702: movss     xmm1, dword ptr [r8 + 0x100]
+  0x4870b: movss     xmm0, dword ptr [r8 + 0x104]
+  0x48714: subss     xmm1, dword ptr [rax + 0x128]
+  0x4871c: subss     xmm0, dword ptr [rax + 0x12c]
+  0x48724: xor       eax, eax
+  0x48726: mov       qword ptr [r8 + 0x23a0], rax
+  0x4872d: movss     dword ptr [r8 + 0x2398], xmm1
+  0x48736: movss     dword ptr [r8 + 0x239c], xmm0
+  0x4873f: movss     dword ptr [r8 + 0x2390], xmm1
+  0x48748: movss     dword ptr [r8 + 0x2394], xmm0
+  0x48751: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_000486c0 @ 0x486c0  size=146 */
+/* xrefs: called by fun_0004f600 (1 site) */
+/* confidence: HIGH */
+struct s_fun_000486c0_qword_174148;
+struct s_fun_000486c0_qword_174148_1480;
+#pragma pack(push, 1)
+struct s_fun_000486c0_qword_174148 {
+    char _pad_0[256];
+    float field_100;
+    float field_104;
+    char _pad_108[24];
+    uint16_t field_120;
+    char _pad_122[4958];
+    struct s_fun_000486c0_qword_174148_1480* field_1480;
+    char _pad_1488[3832];
+    int32_t field_2380;
+    char _pad_2384[1];
+    int8_t field_2385;
+    int8_t field_2386;
+    int8_t field_2387;
+    char _pad_2388[4];
+    int16_t field_238c;
+    char _pad_238e[2];
+    float field_2390;
+    float field_2394;
+    float field_2398;
+    float field_239c;
+    int64_t field_23a0;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_000486c0_qword_174148_1480 {
+    char _pad_0[296];
+    float field_128;
+    float field_12c;
+};
+#pragma pack(pop)
+#define qword_174148 (*(int64_t*)0x174148)
+void fun_000486c0(int32_t a1, int64_t a2) {
+    struct s_fun_000486c0_qword_174148* gs_174148 = (struct s_fun_000486c0_qword_174148*)qword_174148;
+
+    gs_174148->field_2386 = a2 == -1;
+    gs_174148->field_2387 = a2 == -1;
+    gs_174148->field_2380 = a1;
+    gs_174148->field_2385 = 1;
+    gs_174148->field_238c = (int16_t)gs_174148->field_120;
+    gs_174148->field_23a0 = 0;
+    gs_174148->field_2398 = gs_174148->field_100 - gs_174148->field_1480->field_128;
+    gs_174148->field_239c = gs_174148->field_104 - gs_174148->field_1480->field_12c;
+    gs_174148->field_2390 = gs_174148->field_100 - gs_174148->field_1480->field_128;
+    gs_174148->field_2394 = gs_174148->field_104 - gs_174148->field_1480->field_12c;
+    return;
+}
+

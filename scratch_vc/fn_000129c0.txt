@@ -1,0 +1,16 @@
+=== fun_000129c0 @ 0x129c0 size=18 blocks=1 calls=0 ===
+--- DISASM ---
+  0x129c0: mov       rax, qword ptr [0x174148]
+  0x129c7: mov       rax, qword ptr [rax + 0x1fc0]
+  0x129ce: mov       rax, qword ptr [rax]
+  0x129d1: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_000129c0 @ 0x129c0  size=18 */
+/* xrefs: called by fun_00059f00 (1 site) */
+/* confidence: HIGH */
+#define qword_174148 (*(int64_t*)0x174148)
+int64_t fun_000129c0(void) {
+    return *(int64_t*)(*(int64_t*)(qword_174148 + 0x1fc0));
+}
+

@@ -1,0 +1,18 @@
+=== fun_00008700 @ 0x8700 size=15 blocks=1 calls=1 ===
+--- DISASM ---
+  0x8700: sub       rsp, 0x28
+  0x8704: call      0xfa20
+  0x8709: nop       
+  0x870a: add       rsp, 0x28
+  0x870e: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_00008700 @ 0x8700  size=15 */
+/* xrefs: called by fun_0004a060 (1 site) */
+/* confidence: HIGH */
+void fun_0000fa20();
+void fun_00008700(void) {
+    fun_0000fa20();
+    return;
+}
+

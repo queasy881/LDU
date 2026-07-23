@@ -1,0 +1,294 @@
+=== fun_0000f2e0 @ 0xf2e0 size=683 blocks=36 calls=10 ===
+--- DISASM ---
+  0xf2e0: mov       qword ptr [rsp + 0x20], rbx
+  0xf2e5: push      rdi
+  0xf2e6: sub       rsp, 0x60
+  0xf2ea: mov       rax, qword ptr [0x1733c0]
+  0xf2f1: xor       rax, rsp
+  0xf2f4: mov       qword ptr [rsp + 0x50], rax
+  0xf2f9: mov       eax, dword ptr [rdx]
+  0xf2fb: mov       rdi, rcx
+  0xf2fe: mov       rbx, qword ptr [0x174148]
+  0xf305: cmp       eax, 1
+  0xf308: jne       0xf3c5
+  0xf30e: movss     xmm2, dword ptr [rdx + 0xc]
+  0xf313: movss     xmm1, dword ptr [0x8ae90]
+  0xf31b: ucomiss   xmm2, xmm1
+  0xf31e: jp        0xf34f
+  0xf320: jne       0xf34f
+  0xf322: movss     xmm0, dword ptr [rdx + 0x10]
+  0xf327: ucomiss   xmm0, xmm1
+  0xf32a: jp        0xf34f
+  0xf32c: jne       0xf34f
+  0xf32e: test      byte ptr [rbx + 0x2824], 0x80
+  0xf335: je        0xf54c
+  0xf33b: mov       rdx, rcx
+  0xf33e: lea       rcx, [0x8a118]
+  0xf345: call      0xf0a0
+  0xf34a: jmp       0xf54c
+  0xf34f: test      byte ptr [rbx + 0x2824], 0x80
+  0xf356: je        0xf54c
+  0xf35c: movsxd    rcx, dword ptr [rdx + 0x14]
+  0xf360: lea       rax, [0x8a100]
+  0xf367: mov       qword ptr [rsp + 0x30], rax
+  0xf36c: lea       rax, [0x8a108]
+  0xf373: mov       qword ptr [rsp + 0x38], rax
+  0xf378: lea       rax, [0x8a114]
+  0xf37f: mov       qword ptr [rsp + 0x40], rax
+  0xf384: cmp       ecx, 2
+  0xf387: ja        0xf390
+  0xf389: mov       rcx, qword ptr [rsp + rcx*8 + 0x30]
+  0xf38e: jmp       0xf397
+  0xf390: lea       rcx, [0x89b88]
+  0xf397: movss     xmm3, dword ptr [rdx + 0x10]
+  0xf39c: mov       rdx, rdi
+  0xf39f: cvtps2pd  xmm3, xmm3
+  0xf3a2: mov       qword ptr [rsp + 0x20], rcx
+  0xf3a7: lea       rcx, [0x8a140]
+  0xf3ae: cvtps2pd  xmm2, xmm2
+  0xf3b1: movq      r9, xmm3
+  0xf3b6: movq      r8, xmm2
+  0xf3bb: call      0xf0a0
+  0xf3c0: jmp       0xf54c
+  0xf3c5: cmp       eax, 3
+  0xf3c8: jne       0xf445
+  0xf3ca: test      byte ptr [rbx + 0x2824], 0x80
+  0xf3d1: je        0xf54c
+  0xf3d7: movsxd    rcx, dword ptr [rdx + 0x14]
+  0xf3db: lea       rax, [0x8a100]
+  0xf3e2: mov       qword ptr [rsp + 0x30], rax
+  0xf3e7: lea       rax, [0x8a108]
+  0xf3ee: mov       qword ptr [rsp + 0x38], rax
+  0xf3f3: lea       rax, [0x8a114]
+  0xf3fa: mov       qword ptr [rsp + 0x40], rax
+  0xf3ff: cmp       ecx, 2
+  0xf402: ja        0xf40b
+  0xf404: mov       rcx, qword ptr [rsp + rcx*8 + 0x30]
+  0xf409: jmp       0xf412
+  0xf40b: lea       rcx, [0x89b88]
+  0xf412: cmp       byte ptr [rdx + 0x10], 0
+  0xf416: lea       rax, [0x8a168]
+  0xf41d: mov       r8d, dword ptr [rdx + 0xc]
+  0xf421: lea       r9, [0x8a170]
+  0xf428: mov       qword ptr [rsp + 0x20], rcx
+  0xf42d: cmovne    r9, rax
+  0xf431: mov       rdx, rdi
+  0xf434: lea       rcx, [0x8a178]
+  0xf43b: call      0xf0a0
+  0xf440: jmp       0xf54c
+  0xf445: cmp       eax, 2
+  0xf448: jne       0xf4c5
+  0xf44a: test      byte ptr [rbx + 0x2824], 0x80
+  0xf451: je        0xf54c
+  0xf457: movsxd    rcx, dword ptr [rdx + 0x14]
+  0xf45b: lea       rax, [0x8a100]
+  0xf462: mov       qword ptr [rsp + 0x30], rax
+  0xf467: lea       rax, [0x8a108]
+  0xf46e: mov       qword ptr [rsp + 0x38], rax
+  0xf473: lea       rax, [0x8a114]
+  0xf47a: mov       qword ptr [rsp + 0x40], rax
+  0xf47f: cmp       ecx, 2
+  0xf482: ja        0xf48b
+  0xf484: mov       rcx, qword ptr [rsp + rcx*8 + 0x30]
+  0xf489: jmp       0xf492
+  0xf48b: lea       rcx, [0x89b88]
+  0xf492: movss     xmm3, dword ptr [rdx + 0x10]
+  0xf497: movss     xmm2, dword ptr [rdx + 0xc]
+  0xf49c: mov       rdx, rdi
+  0xf49f: cvtps2pd  xmm3, xmm3
+  0xf4a2: mov       qword ptr [rsp + 0x20], rcx
+  0xf4a7: lea       rcx, [0x8a1a0]
+  0xf4ae: cvtps2pd  xmm2, xmm2
+  0xf4b1: movq      r9, xmm3
+  0xf4b6: movq      r8, xmm2
+  0xf4bb: call      0xf0a0
+  0xf4c0: jmp       0xf54c
+  0xf4c5: cmp       eax, 4
+  0xf4c8: jne       0xf508
+  0xf4ca: test      byte ptr [rbx + 0x2824], 0x80
+  0xf4d1: je        0xf54c
+  0xf4d3: cmp       byte ptr [rdx + 0x10], 0
+  0xf4d7: lea       rax, [0x8a168]
+  0xf4de: mov       ecx, dword ptr [rdx + 0xc]
+  0xf4e1: lea       rbx, [0x8a170]
+  0xf4e8: cmovne    rbx, rax
+  0xf4ec: call      0x12810
+  0xf4f1: mov       r8, rax
+  0xf4f4: lea       rcx, [0x8a1c8]
+  0xf4fb: mov       r9, rbx
+  0xf4fe: mov       rdx, rdi
+  0xf501: call      0xf0a0
+  0xf506: jmp       0xf54c
+  0xf508: cmp       eax, 5
+  0xf50b: jne       0xf567
+  0xf50d: mov       qword ptr [rsp + 0x80], rsi
+  0xf515: lea       rcx, [rsp + 0x48]
+  0xf51a: mov       esi, dword ptr [rdx + 0xc]
+  0xf51d: mov       edx, esi
+  0xf51f: call      0x141d0
+  0xf524: test      byte ptr [rbx + 0x2824], 0x80
+  0xf52b: je        0xf544
+  0xf52d: mov       r9d, esi
+  0xf530: lea       r8, [rsp + 0x48]
+  0xf535: mov       rdx, rdi
+  0xf538: lea       rcx, [0x8a1e0]
+  0xf53f: call      0xf0a0
+  0xf544: mov       rsi, qword ptr [rsp + 0x80]
+  0xf54c: mov       rcx, qword ptr [rsp + 0x50]
+  0xf551: xor       rcx, rsp
+  0xf554: call      0x5dbe0
+  0xf559: mov       rbx, qword ptr [rsp + 0x88]
+  0xf561: add       rsp, 0x60
+  0xf565: pop       rdi
+  0xf566: ret       
+  0xf567: cmp       eax, 6
+  0xf56a: jne       0xf54c
+  0xf56c: test      byte ptr [rbx + 0x2824], 0x80
+  0xf573: je        0xf54c
+  0xf575: movzx     r8d, byte ptr [rdx + 0xc]
+  0xf57a: lea       rcx, [0x8a200]
+  0xf581: mov       rdx, rdi
+  0xf584: call      0xf0a0
+  0xf589: jmp       0xf54c
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_0000f2e0 @ 0xf2e0  size=683 */
+/* xrefs: called by fun_00023740 (1 site) */
+/* confidence: HIGH */
+struct s_fun_0000f2e0_a2;
+#pragma pack(push, 1)
+struct s_fun_0000f2e0_a2 {
+    int32_t field_0;
+    char _pad_4[16];
+    int32_t field_14;
+};
+#pragma pack(pop)
+#define qword_1733c0 (*(int64_t*)0x1733c0)
+#define qword_174148 (*(int64_t*)0x174148)
+int32_t fun_0000f0a0();
+int64_t fun_00012810();
+int32_t fun_000141d0();
+int32_t fun_0000f2e0(int64_t a1, struct s_fun_0000f2e0_a2*a2) {
+    char buf1[16];
+    char s1[24];
+    int64_t v1;
+    int32_t result;
+    double v2;
+    double v3;
+    double v4;
+    double v5;
+
+    *(int64_t*)((char*)s1 + 8) = qword_1733c0;
+    if (a2->field_0 != 1) {
+        if (a2->field_0 != 3) {
+            if (a2->field_0 != 2) {
+                if (a2->field_0 != 4) {
+                    if (a2->field_0 != 5) {
+                        result = a2->field_0;
+                        if (result == 6) {
+                            result = a2->field_0;
+                            if (*(int8_t*)(qword_174148 + 0x2824) & 0x80) {
+                                result = fun_0000f0a0("[io] %s: AppFocused %d\n", a1, (uint32_t)*(uint8_t*)((char*)a2 + 0xc));
+                                return result;
+                            }
+                        }
+                        return result;
+                    } else {
+                        result = fun_000141d0(s1, (uint32_t)*(int32_t*)((char*)a2 + 0xc));
+                        if (!(*(int8_t*)(qword_174148 + 0x2824) & 0x80)) {
+                            return result;
+                        }
+                        result = fun_0000f0a0("[io] %s: Text: '%s' (U+%08X)\n", a1, s1, (uint32_t)*(int32_t*)((char*)a2 + 0xc));
+                        return result;
+                    }
+                    return result;
+                } else {
+                    result = a2->field_0;
+                    if (*(int8_t*)(qword_174148 + 0x2824) & 0x80) {
+                        result = fun_0000f0a0("[io] %s: Key \"%s\" %s\n", a1, fun_00012810((uint32_t)*(int32_t*)((char*)a2 + 0xc)), *(int8_t*)((char*)a2 + 0x10) != 0 ? "Down" : 0x8a170);
+                        return result;
+                    }
+                    return result;
+                }
+                return result;
+            } else {
+                result = a2->field_0;
+                if (*(int8_t*)(qword_174148 + 0x2824) & 0x80) {
+                    if ((uint32_t)(a2->field_14) > 2) {
+                        v1 = (int64_t)"Unknown";
+                        v4 = (double)*(float*)((char*)a2 + 0x10);
+                        v5 = (double)*(float*)((char*)a2 + 0xc);
+                        result = fun_0000f0a0("[io] %s: MouseWheel (%.3f, %.3f) (%s)\n", a1, *(uint64_t*)(&v5), *(uint64_t*)(&v4), v1);
+                        return result;
+                    }
+                    v1 = *(int64_t*)((char*)buf1 + ((int64_t)a2->field_14 * 8));
+                    v4 = (double)*(float*)((char*)a2 + 0x10);
+                    v5 = (double)*(float*)((char*)a2 + 0xc);
+                    result = fun_0000f0a0("[io] %s: MouseWheel (%.3f, %.3f) (%s)\n", a1, *(uint64_t*)(&v5), *(uint64_t*)(&v4), v1);
+                    return result;
+                }
+                return result;
+            }
+            return result;
+        } else {
+            result = a2->field_0;
+            if (*(int8_t*)(qword_174148 + 0x2824) & 0x80) {
+                if ((uint32_t)(a2->field_14) > 2) {
+                    v1 = (int64_t)"Unknown";
+                    result = fun_0000f0a0("[io] %s: MouseButton %d %s (%s)\n", a1, (uint32_t)*(int32_t*)((char*)a2 + 0xc), *(int8_t*)((char*)a2 + 0x10) != 0 ? "Down" : 0x8a170, v1);
+                    return result;
+                }
+                v1 = *(int64_t*)((char*)buf1 + ((int64_t)a2->field_14 * 8));
+                result = fun_0000f0a0("[io] %s: MouseButton %d %s (%s)\n", a1, (uint32_t)*(int32_t*)((char*)a2 + 0xc), *(int8_t*)((char*)a2 + 0x10) != 0 ? "Down" : 0x8a170, v1);
+                return result;
+            }
+            return result;
+        }
+        return result;
+    } else {
+        if (*(float*)((char*)a2 + 0xc) != -3.4028235e+38f) {
+            result = a2->field_0;
+            if (*(int8_t*)(qword_174148 + 0x2824) & 0x80) {
+                if ((uint32_t)(a2->field_14) > 2) {
+                    v1 = (int64_t)"Unknown";
+                    v2 = (double)*(float*)((char*)a2 + 0x10);
+                    v3 = (double)*(float*)((char*)a2 + 0xc);
+                    result = fun_0000f0a0("[io] %s: MousePos (%.1f, %.1f) (%s)\n", a1, *(uint64_t*)(&v3), *(uint64_t*)(&v2), v1);
+                    return result;
+                }
+                v1 = *(int64_t*)((char*)buf1 + ((int64_t)a2->field_14 * 8));
+                v2 = (double)*(float*)((char*)a2 + 0x10);
+                v3 = (double)*(float*)((char*)a2 + 0xc);
+                result = fun_0000f0a0("[io] %s: MousePos (%.1f, %.1f) (%s)\n", a1, *(uint64_t*)(&v3), *(uint64_t*)(&v2), v1);
+                return result;
+            }
+            return result;
+        } else {
+            if (*(float*)((char*)a2 + 0x10) == -3.4028235e+38f) {
+                result = a2->field_0;
+                if (*(int8_t*)(qword_174148 + 0x2824) & 0x80) {
+                    result = fun_0000f0a0("[io] %s: MousePos (-FLT_MAX, -FLT_MAX)\n", a1);
+                    return result;
+                }
+                return result;
+            }
+            result = a2->field_0;
+            if (*(int8_t*)(qword_174148 + 0x2824) & 0x80) {
+                if ((uint32_t)(a2->field_14) > 2) {
+                    v1 = (int64_t)"Unknown";
+                    v2 = (double)*(float*)((char*)a2 + 0x10);
+                    v3 = (double)*(float*)((char*)a2 + 0xc);
+                    result = fun_0000f0a0("[io] %s: MousePos (%.1f, %.1f) (%s)\n", a1, *(uint64_t*)(&v3), *(uint64_t*)(&v2), v1);
+                } else {
+                    v1 = *(int64_t*)((char*)buf1 + ((int64_t)a2->field_14 * 8));
+                    v2 = (double)*(float*)((char*)a2 + 0x10);
+                    v3 = (double)*(float*)((char*)a2 + 0xc);
+                    result = fun_0000f0a0("[io] %s: MousePos (%.1f, %.1f) (%s)\n", a1, *(uint64_t*)(&v3), *(uint64_t*)(&v2), v1);
+                }
+            }
+            return result;
+        }
+        return result;
+    }
+}
+

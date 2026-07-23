@@ -1,0 +1,37 @@
+=== fun_000153e0 @ 0x153e0 size=59 blocks=5 calls=0 ===
+--- DISASM ---
+  0x153e0: mov       rax, qword ptr [0x174148]
+  0x153e7: movsxd    rdx, ecx
+  0x153ea: cmp       byte ptr [rdx + rax + 0x108], 0
+  0x153f2: jne       0x153f7
+  0x153f4: xor       al, al
+  0x153f6: ret       
+  0x153f7: xorps     xmm0, xmm0
+  0x153fa: comiss    xmm0, xmm1
+  0x153fd: jbe       0x15407
+  0x153ff: movss     xmm1, dword ptr [rax + 0x90]
+  0x15407: movss     xmm0, dword ptr [rax + rdx*4 + 0xbb4]
+  0x15410: mulss     xmm1, xmm1
+  0x15414: comiss    xmm0, xmm1
+  0x15417: setae     al
+  0x1541a: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_000153e0 @ 0x153e0  size=59 */
+/* xrefs: called by fun_0003d6b0 (1 site), fun_00049e40 (1 site), fun_000546e0 (1 site) */
+/* confidence: HIGH */
+#define qword_174148 (*(int64_t*)0x174148)
+uint8_t fun_000153e0(int8_t*a1, float a2) {
+    float v1;
+
+    if (!*(int8_t*)((char*)((int64_t)a1 + qword_174148) + 0x108)) {
+        return 0;
+    }
+    v1 = a2;
+    if (!(a2 < 0.0f)) {
+        return (int8_t)(*(float*)(qword_174148 + (int64_t)((int64_t)a1) * 4 + 0xbb4) >= v1 * v1);
+    }
+    v1 = *(float*)(qword_174148 + 0x90);
+    return (int8_t)(*(float*)(qword_174148 + (int64_t)((int64_t)a1) * 4 + 0xbb4) >= v1 * v1);
+}
+

@@ -1,0 +1,39 @@
+=== fun_00017230 @ 0x17230 size=40 blocks=5 calls=0 ===
+--- DISASM ---
+  0x17230: mov       rax, qword ptr [0x174148]
+  0x17237: cmp       byte ptr [rax + 0x2071], 0
+  0x1723e: je        0x17255
+  0x17240: cmp       dword ptr [rax + 0x20c0], 0
+  0x17247: jne       0x17255
+  0x17249: cmp       dword ptr [rax + 0x2130], 0
+  0x17250: jne       0x17255
+  0x17252: mov       al, 1
+  0x17254: ret       
+  0x17255: xor       al, al
+  0x17257: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_00017230 @ 0x17230  size=40 */
+/* xrefs: called by fun_0004a910 (1 site), fun_000564b0 (1 site) */
+/* confidence: HIGH */
+struct s_fun_00017230_qword_174148;
+#pragma pack(push, 1)
+struct s_fun_00017230_qword_174148 {
+    char _pad_0[8305];
+    int8_t field_2071;
+    char _pad_2072[78];
+    int32_t field_20c0;
+    char _pad_20c4[108];
+    int32_t field_2130;
+};
+#pragma pack(pop)
+#define qword_174148 (*(int64_t*)0x174148)
+uint8_t fun_00017230(void) {
+    struct s_fun_00017230_qword_174148* gs_174148 = (struct s_fun_00017230_qword_174148*)qword_174148;
+
+    if (!gs_174148->field_2071 || gs_174148->field_20c0 || gs_174148->field_2130) {
+        return 0;
+    }
+    return 1;
+}
+

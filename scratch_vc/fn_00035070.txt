@@ -1,0 +1,110 @@
+=== fun_00035070 @ 0x35070 size=157 blocks=10 calls=1 ===
+--- DISASM ---
+  0x35070: push      rbx
+  0x35072: push      rbp
+  0x35073: push      rsi
+  0x35074: push      rdi
+  0x35075: push      r14
+  0x35077: sub       rsp, 0x20
+  0x3507b: movsxd    r14, dword ptr [rcx]
+  0x3507e: mov       rdi, rcx
+  0x35081: mov       rax, qword ptr [rcx + 8]
+  0x35085: lea       rdx, [r14 + r14*8]
+  0x35089: cmp       dword ptr [rax + rdx*8 - 0x20], 0
+  0x3508e: lea       rbx, [rax + rdx*8]
+  0x35092: je        0x350b7
+  0x35094: mov       rax, qword ptr [rbx - 0x48]
+  0x35098: cmp       rax, qword ptr [rcx + 0x60]
+  0x3509c: jne       0x350a8
+  0x3509e: mov       rax, qword ptr [rbx - 0x40]
+  0x350a2: cmp       rax, qword ptr [rcx + 0x68]
+  0x350a6: je        0x350fa
+  0x350a8: add       rsp, 0x20
+  0x350ac: pop       r14
+  0x350ae: pop       rdi
+  0x350af: pop       rsi
+  0x350b0: pop       rbp
+  0x350b1: pop       rbx
+  0x350b2: jmp       0x290d0
+  0x350b7: cmp       r14d, 1
+  0x350bb: jle       0x350fa
+  0x350bd: mov       r8d, 0x24
+  0x350c3: lea       rdx, [rbx - 0x90]
+  0x350ca: add       rcx, 0x60
+  0x350ce: call      0x84a90
+  0x350d3: test      eax, eax
+  0x350d5: jne       0x350fa
+  0x350d7: mov       eax, dword ptr [rbx - 0x68]
+  0x350da: add       eax, dword ptr [rbx - 0x6c]
+  0x350dd: cmp       eax, dword ptr [rbx - 0x24]
+  0x350e0: jne       0x350fa
+  0x350e2: cmp       qword ptr [rbx - 0x60], 0
+  0x350e7: jne       0x350fa
+  0x350e9: lea       eax, [r14 - 1]
+  0x350ed: mov       dword ptr [rdi], eax
+  0x350ef: add       rsp, 0x20
+  0x350f3: pop       r14
+  0x350f5: pop       rdi
+  0x350f6: pop       rsi
+  0x350f7: pop       rbp
+  0x350f8: pop       rbx
+  0x350f9: ret       
+  0x350fa: movups    xmm0, xmmword ptr [rdi + 0x60]
+  0x350fe: movups    xmmword ptr [rbx - 0x48], xmm0
+  0x35102: add       rsp, 0x20
+  0x35106: pop       r14
+  0x35108: pop       rdi
+  0x35109: pop       rsi
+  0x3510a: pop       rbp
+  0x3510b: pop       rbx
+  0x3510c: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_00035070 @ 0x35070  size=157 */
+/* confidence: HIGH */
+struct s_fun_00035070_a1;
+struct s_fun_00035070_v2;
+#pragma pack(push, 1)
+struct s_fun_00035070_a1 {
+    int32_t field_0;
+    char _pad_4[4];
+    void* field_8;
+    char _pad_10[80];
+    int64_t field_60;
+    int64_t field_68;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_00035070_v2 {
+    int64_t field_0;
+    int64_t field_8;
+};
+#pragma pack(pop)
+void fun_000290d0();
+int64_t fun_00084a90();
+void fun_00035070(struct s_fun_00035070_a1*a1) {
+    struct s_fun_00035070_v2*v2;
+    int32_t v1;
+
+    v1 = 0;
+    if (!*(int32_t*)((char*)((char*)a1->field_8 + (int64_t)a1->field_0 * 0x48) - 0x20)) {
+        if (a1->field_0 > 1 && !((int32_t)fun_00084a90(&a1->field_60, (char*)a1->field_8 + (int64_t)a1->field_0 * 0x48 - 0x90, 0x24)) && *(int32_t*)((char*)((char*)a1->field_8 + (int64_t)a1->field_0 * 0x48) - 0x68) + *(int32_t*)((char*)((char*)a1->field_8 + (int64_t)a1->field_0 * 0x48) - 0x6c) == *(int32_t*)((char*)((char*)a1->field_8 + (int64_t)a1->field_0 * 0x48) - 0x24) && !*(int64_t*)((char*)((char*)a1->field_8 + (int64_t)a1->field_0 * 0x48) - 0x60)) {
+            v1 = 2;
+        }
+    } else if (*(int64_t*)((char*)((char*)a1->field_8 + (int64_t)a1->field_0 * 0x48) - 0x48) != a1->field_60 || *(int64_t*)((char*)((char*)a1->field_8 + (int64_t)a1->field_0 * 0x48) - 0x40) != a1->field_68) {
+        v1 = 1;
+    }
+    if (!v1) {
+        v2 = (struct s_fun_00035070_v2*)((char*)a1->field_8 + (int64_t)a1->field_0 * 0x48 - 0x48);
+        v2->field_0 = a1->field_60;
+        v2->field_8 = a1->field_68;
+        return;
+    }
+    if (v1 == 1) {
+        fun_000290d0();
+    return;
+    }
+    a1->field_0 = (int32_t)((int64_t)a1->field_0 - 1);
+    return;
+}
+

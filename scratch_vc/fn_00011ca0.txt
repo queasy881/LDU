@@ -1,0 +1,55 @@
+=== fun_00011ca0 @ 0x11ca0 size=112 blocks=9 calls=0 ===
+--- DISASM ---
+  0x11ca0: mov       edx, ecx
+  0x11ca2: and       edx, 0xffff0fff
+  0x11ca8: lea       eax, [rdx - 0x20f]
+  0x11cae: cmp       eax, 7
+  0x11cb1: ja        0x11d0d
+  0x11cb3: lea       eax, [rdx - 0x20f]
+  0x11cb9: test      eax, 0xfffffffb
+  0x11cbe: je        0x11d05
+  0x11cc0: lea       eax, [rdx - 0x210]
+  0x11cc6: test      eax, 0xfffffffb
+  0x11ccb: je        0x11cfd
+  0x11ccd: lea       eax, [rdx - 0x211]
+  0x11cd3: test      eax, 0xfffffffb
+  0x11cd8: je        0x11cf5
+  0x11cda: lea       eax, [rdx - 0x212]
+  0x11ce0: mov       edx, 0
+  0x11ce5: test      eax, 0xfffffffb
+  0x11cea: mov       eax, 0x8000
+  0x11cef: cmovne    eax, edx
+  0x11cf2: or        eax, ecx
+  0x11cf4: ret       
+  0x11cf5: mov       eax, 0x4000
+  0x11cfa: or        eax, ecx
+  0x11cfc: ret       
+  0x11cfd: mov       eax, 0x2000
+  0x11d02: or        eax, ecx
+  0x11d04: ret       
+  0x11d05: mov       eax, 0x1000
+  0x11d0a: or        eax, ecx
+  0x11d0c: ret       
+  0x11d0d: mov       eax, ecx
+  0x11d0f: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_00011ca0 @ 0x11ca0  size=112 */
+/* xrefs: called by fun_00014e60 (1 site), fun_00021860 (1 site) */
+/* confidence: HIGH */
+int32_t fun_00011ca0(int32_t a1) {
+    if ((uint32_t)((int32_t)((a1 & 0xffff0fff) - 0x20f)) > 7) {
+        return a1;
+    }
+    if (!(((a1 & 0xffff0fff) - 0x20f) & 0xfffffffb)) {
+        return 0x1000 | a1;
+    }
+    if (!(((a1 & 0xffff0fff) - 0x210) & 0xfffffffb)) {
+        return 0x2000 | a1;
+    }
+    if (!(((a1 & 0xffff0fff) - 0x211) & 0xfffffffb)) {
+        return 0x4000 | a1;
+    }
+    return ((((a1 & 0xffff0fff) - 0x212) & 0xfffffffb) != 0 ? 0 : 0x8000) | a1;
+}
+

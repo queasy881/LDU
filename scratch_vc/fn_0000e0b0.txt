@@ -1,0 +1,93 @@
+=== fun_0000e0b0 @ 0xe0b0 size=113 blocks=9 calls=0 ===
+--- DISASM ---
+  0xe0b0: movss     xmm1, dword ptr [rdx + 4]
+  0xe0b5: movss     xmm0, dword ptr [rcx + 4]
+  0xe0ba: comiss    xmm1, xmm0
+  0xe0bd: ja        0xe0c8
+  0xe0bf: movss     xmm1, dword ptr [rdx + 0xc]
+  0xe0c4: minss     xmm1, xmm0
+  0xe0c8: movss     xmm0, dword ptr [rdx]
+  0xe0cc: movss     xmm2, dword ptr [rcx]
+  0xe0d0: comiss    xmm0, xmm2
+  0xe0d3: ja        0xe0de
+  0xe0d5: movss     xmm0, dword ptr [rdx + 8]
+  0xe0da: minss     xmm0, xmm2
+  0xe0de: movss     dword ptr [rcx], xmm0
+  0xe0e2: movss     dword ptr [rcx + 4], xmm1
+  0xe0e7: movss     xmm1, dword ptr [rdx + 4]
+  0xe0ec: movss     xmm0, dword ptr [rcx + 0xc]
+  0xe0f1: comiss    xmm1, xmm0
+  0xe0f4: ja        0xe0ff
+  0xe0f6: movss     xmm1, dword ptr [rdx + 0xc]
+  0xe0fb: minss     xmm1, xmm0
+  0xe0ff: movss     xmm0, dword ptr [rdx]
+  0xe103: movss     xmm2, dword ptr [rcx + 8]
+  0xe108: comiss    xmm0, xmm2
+  0xe10b: ja        0xe116
+  0xe10d: movss     xmm0, dword ptr [rdx + 8]
+  0xe112: minss     xmm0, xmm2
+  0xe116: movss     dword ptr [rcx + 0xc], xmm1
+  0xe11b: movss     dword ptr [rcx + 8], xmm0
+  0xe120: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_0000e0b0 @ 0xe0b0  size=113 */
+/* xrefs: called by fun_00018db0 (1 site) */
+/* confidence: HIGH */
+struct Vec4;
+struct Vec2;
+#ifndef __DS_TY_Vec4
+#define __DS_TY_Vec4
+#pragma pack(push, 1)
+struct Vec4 {
+    float x;
+    float y;
+    float z;
+    float w;
+};
+#pragma pack(pop)
+#endif
+#ifndef __DS_TY_Vec2
+#define __DS_TY_Vec2
+#pragma pack(push, 1)
+struct Vec2 {
+    float x;
+    float y;
+};
+#pragma pack(pop)
+#endif
+#ifndef __min
+#define __min(a,b) ((a)<(b)?(a):(b))
+#endif
+void fun_0000e0b0(struct Vec4*a1, struct Vec2*a2) {
+    float v1;
+    float v2;
+    float v3;
+    float v4;
+
+    v1 = a2->y;
+    if (!(v1 > a1->y)) {
+        v1 = __min(*(float*)((char*)a2 + 0xc), a1->y);
+    }
+    v2 = a2->x;
+    if (!(v2 > a1->x)) {
+        v2 = __min(*(float*)((char*)a2 + 8), a1->x);
+    }
+    a1->x = v2;
+    a1->y = v1;
+    v3 = a2->y;
+    if (!(v3 > a1->w)) {
+        v3 = __min(*(float*)((char*)a2 + 0xc), a1->w);
+    }
+    v4 = a2->x;
+    if (v4 > a1->z) {
+        a1->w = v3;
+        a1->z = v4;
+        return;
+    }
+    v4 = __min(*(float*)((char*)a2 + 8), a1->z);
+    a1->w = v3;
+    a1->z = v4;
+    return;
+}
+

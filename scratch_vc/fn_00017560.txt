@@ -1,0 +1,43 @@
+=== fun_00017560 @ 0x17560 size=57 blocks=5 calls=0 ===
+--- DISASM ---
+  0x17560: mov       r8, qword ptr [0x174148]
+  0x17567: cmp       qword ptr [r8 + 0x1fd0], rcx
+  0x1756e: jne       0x17598
+  0x17570: cmp       byte ptr [r8 + 0x2071], 0
+  0x17578: je        0x17598
+  0x1757a: mov       eax, dword ptr [rcx + 0x170]
+  0x17580: cmp       dword ptr [r8 + 0x1fdc], eax
+  0x17587: jne       0x17598
+  0x17589: and       dword ptr [r8 + 0x2074], 0xfffffff0
+  0x17591: or        dword ptr [r8 + 0x2074], edx
+  0x17598: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_00017560 @ 0x17560  size=57 */
+/* xrefs: called by fun_0004a910 (1 site), fun_0004aaf0 (1 site) */
+/* confidence: HIGH */
+struct s_fun_00017560_qword_174148;
+#pragma pack(push, 1)
+struct s_fun_00017560_qword_174148 {
+    char _pad_0[8144];
+    int64_t field_1fd0;
+    char _pad_1fd8[4];
+    int32_t field_1fdc;
+    char _pad_1fe0[145];
+    int8_t field_2071;
+};
+#pragma pack(pop)
+#define qword_174148 (*(int64_t*)0x174148)
+void fun_00017560(int32_t*a1, int32_t a2) {
+    struct s_fun_00017560_qword_174148* gs_174148 = (struct s_fun_00017560_qword_174148*)qword_174148;
+    int32_t*v1;
+
+    if ((int64_t)(gs_174148->field_1fd0) != (int64_t)(a1) || !gs_174148->field_2071 || gs_174148->field_1fdc != a1[0x5c]) {
+        return;
+    }
+    v1 = (int32_t*)(qword_174148 + 0x2074);
+    *v1 &= 0xfffffff0;
+    *v1 |= a2;
+    return;
+}
+

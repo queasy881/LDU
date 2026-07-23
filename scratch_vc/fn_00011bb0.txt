@@ -1,0 +1,89 @@
+=== fun_00011bb0 @ 0x11bb0 size=111 blocks=10 calls=0 ===
+--- DISASM ---
+  0x11bb0: mov       qword ptr [rsp + 8], rbx
+  0x11bb5: mov       r10d, r8d
+  0x11bb8: mov       r11d, edx
+  0x11bbb: test      ecx, ecx
+  0x11bbd: js        0x11c0e
+  0x11bbf: mov       r9, qword ptr [0x174148]
+  0x11bc6: mov       ebx, dword ptr [r9 + 0x1430]
+  0x11bcd: nop       dword ptr [rax]
+  0x11bd0: cmp       ecx, ebx
+  0x11bd2: jge       0x11c0e
+  0x11bd4: cmp       ecx, r11d
+  0x11bd7: je        0x11c0e
+  0x11bd9: mov       eax, ecx
+  0x11bdb: lea       r8, [rax*8]
+  0x11be3: mov       rax, qword ptr [r9 + 0x1438]
+  0x11bea: mov       rdx, qword ptr [r8 + rax]
+  0x11bee: cmp       byte ptr [rdx + 0xcd], 0
+  0x11bf5: je        0x11c09
+  0x11bf7: cmp       rdx, qword ptr [rdx + 0x3c0]
+  0x11bfe: jne       0x11c09
+  0x11c00: test      dword ptr [rdx + 0x14], 0x20000
+  0x11c07: je        0x11c16
+  0x11c09: add       ecx, r10d
+  0x11c0c: jns       0x11bd0
+  0x11c0e: xor       eax, eax
+  0x11c10: mov       rbx, qword ptr [rsp + 8]
+  0x11c15: ret       
+  0x11c16: mov       rbx, qword ptr [rsp + 8]
+  0x11c1b: mov       rax, rdx
+  0x11c1e: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_00011bb0 @ 0x11bb0  size=111 */
+/* xrefs: called by fun_0001aa90 (2 sites), fun_00019b80 (1 site) */
+/* confidence: HIGH */
+#include <stdbool.h>
+struct s_fun_00011bb0_qword_174148;
+#pragma pack(push, 1)
+struct s_fun_00011bb0_qword_174148 {
+    char _pad_0[5168];
+    int32_t field_1430;
+    char _pad_1434[4];
+    int64_t field_1438;
+};
+#pragma pack(pop)
+#define qword_174148 (*(int64_t*)0x174148)
+int64_t fun_00011bb0(int32_t a1, int32_t a2, int32_t a3) {
+    struct s_fun_00011bb0_qword_174148* gs_174148 = (struct s_fun_00011bb0_qword_174148*)qword_174148;
+    int32_t v1 = 0;
+    int64_t*v3;
+    bool v2;
+
+    v2 = 0;
+    if (a1 < 0) {
+        v2 = 1;
+    } else {
+        v1 = a1;
+        while (v1 < gs_174148->field_1430 && v1 != a2) {
+            if (!*(int8_t*)(*(int64_t*)(v1 * 8 + gs_174148->field_1438) + 0xcd)) {
+                v1 += a3;
+                if (v1 >= 0) continue;
+                v2 = 1;
+            } else {
+                v3 = (int64_t*)(v1 * 8 + gs_174148->field_1438);
+                if (*v3 != *(int64_t*)(*v3 + 0x3c0) || *(int32_t*)(*(int64_t*)(v1 * 8 + gs_174148->field_1438) + 0x14) & 0x20000) {
+                    v1 += a3;
+                    if (v1 >= 0) {
+                        continue;
+                    } else {
+                        v2 = 1;
+                    }
+                }
+            }
+            if (v2) {
+                return 0;
+            }
+            return *(int64_t*)(v1 * 8 + gs_174148->field_1438);
+        }
+        v2 = 1;
+    }
+    if (v2) {
+        return 0;
+    } else {
+        return *(int64_t*)(v1 * 8 + gs_174148->field_1438);
+    }
+}
+

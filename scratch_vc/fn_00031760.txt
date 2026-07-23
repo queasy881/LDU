@@ -1,0 +1,375 @@
+=== fun_00031760 @ 0x31760 size=994 blocks=9 calls=2 ===
+--- DISASM ---
+  0x31760: sub       rsp, 0x28
+  0x31764: test      dword ptr [0x1741b8], 0x3000000
+  0x3176e: jne       0x31b3d
+  0x31774: mov       qword ptr [rsp + 0x38], rbx
+  0x31779: xor       r10d, r10d
+  0x3177c: mov       qword ptr [rsp + 0x20], rdi
+  0x31781: lea       rdi, [0x1741b0]
+  0x31788: nop       dword ptr [rax + rax]
+  0x31790: lea       r9d, [r10 + r10]
+  0x31794: mov       eax, r10d
+  0x31797: and       eax, 0xf
+  0x3179a: mov       edx, 3
+  0x3179f: lea       ecx, [rax + rax]
+  0x317a2: mov       eax, r10d
+  0x317a5: shl       edx, cl
+  0x317a7: not       edx
+  0x317a9: shr       rax, 4
+  0x317ad: and       edx, dword ptr [rdi + rax*4]
+  0x317b0: lea       r8, [rdi + rax*4]
+  0x317b4: mov       eax, 2
+  0x317b9: shl       eax, cl
+  0x317bb: lea       ecx, [r9 + 2]
+  0x317bf: or        edx, eax
+  0x317c1: and       ecx, 0x1e
+  0x317c4: mov       dword ptr [r8], edx
+  0x317c7: mov       eax, 2
+  0x317cc: shl       eax, cl
+  0x317ce: lea       edx, [r10 + 1]
+  0x317d2: shr       rdx, 4
+  0x317d6: lea       r8, [rdi + rdx*4]
+  0x317da: mov       edx, 3
+  0x317df: shl       edx, cl
+  0x317e1: lea       ecx, [r9 + 4]
+  0x317e5: not       edx
+  0x317e7: and       ecx, 0x1e
+  0x317ea: and       edx, dword ptr [r8]
+  0x317ed: or        edx, eax
+  0x317ef: mov       eax, 2
+  0x317f4: mov       dword ptr [r8], edx
+  0x317f7: lea       edx, [r10 + 2]
+  0x317fb: shr       rdx, 4
+  0x317ff: lea       r8, [rdi + rdx*4]
+  0x31803: shl       eax, cl
+  0x31805: mov       edx, 3
+  0x3180a: shl       edx, cl
+  0x3180c: lea       ecx, [r9 + 6]
+  0x31810: not       edx
+  0x31812: and       ecx, 0x1e
+  0x31815: and       edx, dword ptr [r8]
+  0x31818: or        edx, eax
+  0x3181a: mov       eax, 2
+  0x3181f: mov       dword ptr [r8], edx
+  0x31822: lea       edx, [r10 + 3]
+  0x31826: shr       rdx, 4
+  0x3182a: lea       r8, [rdi + rdx*4]
+  0x3182e: shl       eax, cl
+  0x31830: mov       edx, 3
+  0x31835: shl       edx, cl
+  0x31837: lea       ecx, [r9 + 8]
+  0x3183b: not       edx
+  0x3183d: and       ecx, 0x1e
+  0x31840: and       edx, dword ptr [r8]
+  0x31843: or        edx, eax
+  0x31845: mov       eax, 2
+  0x3184a: mov       dword ptr [r8], edx
+  0x3184d: lea       edx, [r10 + 4]
+  0x31851: shr       rdx, 4
+  0x31855: lea       r8, [rdi + rdx*4]
+  0x31859: shl       eax, cl
+  0x3185b: mov       edx, 3
+  0x31860: shl       edx, cl
+  0x31862: lea       ecx, [r9 + 0xa]
+  0x31866: not       edx
+  0x31868: and       ecx, 0x1e
+  0x3186b: and       edx, dword ptr [r8]
+  0x3186e: or        edx, eax
+  0x31870: mov       eax, 2
+  0x31875: mov       dword ptr [r8], edx
+  0x31878: lea       edx, [r10 + 5]
+  0x3187c: shr       rdx, 4
+  0x31880: lea       r8, [rdi + rdx*4]
+  0x31884: shl       eax, cl
+  0x31886: mov       edx, 3
+  0x3188b: shl       edx, cl
+  0x3188d: lea       ecx, [r9 + 0xc]
+  0x31891: not       edx
+  0x31893: and       edx, dword ptr [r8]
+  0x31896: or        edx, eax
+  0x31898: mov       dword ptr [r8], edx
+  0x3189b: and       ecx, 0x1e
+  0x3189e: lea       edx, [r10 + 6]
+  0x318a2: shr       rdx, 4
+  0x318a6: mov       eax, 2
+  0x318ab: lea       r8, [rdi + rdx*4]
+  0x318af: shl       eax, cl
+  0x318b1: mov       edx, 3
+  0x318b6: shl       edx, cl
+  0x318b8: lea       ecx, [r9 + 0xe]
+  0x318bc: not       edx
+  0x318be: and       ecx, 0x1e
+  0x318c1: and       edx, dword ptr [r8]
+  0x318c4: or        edx, eax
+  0x318c6: mov       eax, 2
+  0x318cb: mov       dword ptr [r8], edx
+  0x318ce: lea       edx, [r10 + 7]
+  0x318d2: shr       rdx, 4
+  0x318d6: lea       r8, [rdi + rdx*4]
+  0x318da: shl       eax, cl
+  0x318dc: mov       edx, 3
+  0x318e1: shl       edx, cl
+  0x318e3: not       edx
+  0x318e5: and       edx, dword ptr [r8]
+  0x318e8: or        edx, eax
+  0x318ea: lea       eax, [r10 - 8]
+  0x318ee: mov       dword ptr [r8], edx
+  0x318f1: and       eax, 0xf
+  0x318f4: lea       edx, [r10 + 8]
+  0x318f8: shr       rdx, 4
+  0x318fc: lea       r8, [rdi + rdx*4]
+  0x31900: mov       edx, 3
+  0x31905: lea       ecx, [rax + rax]
+  0x31908: mov       eax, 2
+  0x3190d: shl       edx, cl
+  0x3190f: not       edx
+  0x31911: shl       eax, cl
+  0x31913: and       edx, dword ptr [r8]
+  0x31916: or        edx, eax
+  0x31918: lea       eax, [r10 - 7]
+  0x3191c: mov       dword ptr [r8], edx
+  0x3191f: and       eax, 0xf
+  0x31922: lea       edx, [r10 + 9]
+  0x31926: shr       rdx, 4
+  0x3192a: lea       r8, [rdi + rdx*4]
+  0x3192e: mov       edx, 3
+  0x31933: lea       ecx, [rax + rax]
+  0x31936: mov       eax, 2
+  0x3193b: shl       edx, cl
+  0x3193d: not       edx
+  0x3193f: shl       eax, cl
+  0x31941: and       edx, dword ptr [r8]
+  0x31944: or        edx, eax
+  0x31946: lea       eax, [r10 - 6]
+  0x3194a: mov       dword ptr [r8], edx
+  0x3194d: and       eax, 0xf
+  0x31950: lea       edx, [r10 + 0xa]
+  0x31954: shr       rdx, 4
+  0x31958: lea       r8, [rdi + rdx*4]
+  0x3195c: mov       edx, 3
+  0x31961: lea       ecx, [rax + rax]
+  0x31964: mov       eax, 2
+  0x31969: shl       edx, cl
+  0x3196b: not       edx
+  0x3196d: shl       eax, cl
+  0x3196f: and       edx, dword ptr [r8]
+  0x31972: or        edx, eax
+  0x31974: lea       eax, [r10 - 5]
+  0x31978: mov       dword ptr [r8], edx
+  0x3197b: and       eax, 0xf
+  0x3197e: lea       edx, [r10 + 0xb]
+  0x31982: shr       rdx, 4
+  0x31986: lea       r8, [rdi + rdx*4]
+  0x3198a: mov       edx, 3
+  0x3198f: lea       ecx, [rax + rax]
+  0x31992: mov       eax, 2
+  0x31997: shl       edx, cl
+  0x31999: not       edx
+  0x3199b: shl       eax, cl
+  0x3199d: and       edx, dword ptr [r8]
+  0x319a0: or        edx, eax
+  0x319a2: mov       dword ptr [r8], edx
+  0x319a5: lea       edx, [r10 + 0xc]
+  0x319a9: shr       rdx, 4
+  0x319ad: lea       eax, [r10 - 4]
+  0x319b1: lea       r8, [rdi + rdx*4]
+  0x319b5: and       eax, 0xf
+  0x319b8: mov       edx, 3
+  0x319bd: lea       ecx, [rax + rax]
+  0x319c0: mov       eax, 2
+  0x319c5: shl       edx, cl
+  0x319c7: not       edx
+  0x319c9: shl       eax, cl
+  0x319cb: and       edx, dword ptr [r8]
+  0x319ce: or        edx, eax
+  0x319d0: lea       eax, [r10 - 3]
+  0x319d4: mov       dword ptr [r8], edx
+  0x319d7: and       eax, 0xf
+  0x319da: lea       edx, [r10 + 0xd]
+  0x319de: shr       rdx, 4
+  0x319e2: lea       r8, [rdi + rdx*4]
+  0x319e6: mov       edx, 3
+  0x319eb: lea       ecx, [rax + rax]
+  0x319ee: mov       eax, 2
+  0x319f3: shl       edx, cl
+  0x319f5: not       edx
+  0x319f7: shl       eax, cl
+  0x319f9: and       edx, dword ptr [r8]
+  0x319fc: or        edx, eax
+  0x319fe: lea       eax, [r10 - 2]
+  0x31a02: mov       dword ptr [r8], edx
+  0x31a05: and       eax, 0xf
+  0x31a08: lea       edx, [r10 + 0xe]
+  0x31a0c: shr       rdx, 4
+  0x31a10: lea       r8, [rdi + rdx*4]
+  0x31a14: mov       edx, 3
+  0x31a19: lea       ecx, [rax + rax]
+  0x31a1c: mov       eax, 2
+  0x31a21: shl       edx, cl
+  0x31a23: not       edx
+  0x31a25: shl       eax, cl
+  0x31a27: and       edx, dword ptr [r8]
+  0x31a2a: or        edx, eax
+  0x31a2c: lea       eax, [r10 - 1]
+  0x31a30: mov       dword ptr [r8], edx
+  0x31a33: and       eax, 0xf
+  0x31a36: lea       edx, [r10 + 0xf]
+  0x31a3a: add       r10d, 0x10
+  0x31a3e: shr       rdx, 4
+  0x31a42: lea       r8, [rdi + rdx*4]
+  0x31a46: mov       edx, 3
+  0x31a4b: lea       ecx, [rax + rax]
+  0x31a4e: mov       eax, 2
+  0x31a53: shl       edx, cl
+  0x31a55: not       edx
+  0x31a57: shl       eax, cl
+  0x31a59: and       edx, dword ptr [r8]
+  0x31a5c: or        edx, eax
+  0x31a5e: mov       dword ptr [r8], edx
+  0x31a61: cmp       r10d, 0x80
+  0x31a68: jb        0x31790
+  0x31a6e: lea       rbx, [0x92004]
+  0x31a75: nop       word ptr [rax + rax]
+  0x31a80: lea       r8, [0x92006]
+  0x31a87: mov       rdx, rbx
+  0x31a8a: lea       rcx, [rsp + 0x30]
+  0x31a8f: call      0x14040
+  0x31a94: movsxd    rcx, eax
+  0x31a97: add       rbx, rcx
+  0x31a9a: mov       ecx, dword ptr [rsp + 0x30]
+  0x31a9e: mov       eax, ecx
+  0x31aa0: and       ecx, 0xf
+  0x31aa3: shr       rax, 4
+  0x31aa7: add       ecx, ecx
+  0x31aa9: lea       rdx, [rdi + rax*4]
+  0x31aad: mov       eax, 3
+  0x31ab2: shl       eax, cl
+  0x31ab4: not       eax
+  0x31ab6: and       dword ptr [rdx], eax
+  0x31ab8: cmp       byte ptr [rbx], 0
+  0x31abb: jne       0x31a80
+  0x31abd: lea       rbx, [0x92008]
+  0x31ac4: nop       dword ptr [rax]
+  0x31ac8: nop       dword ptr [rax + rax]
+  0x31ad0: lea       r8, [0x9200e]
+  0x31ad7: mov       rdx, rbx
+  0x31ada: lea       rcx, [rsp + 0x30]
+  0x31adf: call      0x14040
+  0x31ae4: mov       edx, dword ptr [rsp + 0x30]
+  0x31ae8: movsxd    rcx, eax
+  0x31aeb: mov       eax, edx
+  0x31aed: and       eax, 0xf
+  0x31af0: add       rbx, rcx
+  0x31af3: lea       ecx, [rax + rax]
+  0x31af6: mov       eax, edx
+  0x31af8: shr       rax, 4
+  0x31afc: mov       edx, 3
+  0x31b01: shl       edx, cl
+  0x31b03: lea       r8, [rdi + rax*4]
+  0x31b07: not       edx
+  0x31b09: mov       eax, 1
+  0x31b0e: and       edx, dword ptr [r8]
+  0x31b11: shl       eax, cl
+  0x31b13: or        edx, eax
+  0x31b15: mov       dword ptr [r8], edx
+  0x31b18: cmp       byte ptr [rbx], 0
+  0x31b1b: jne       0x31ad0
+  0x31b1d: mov       eax, dword ptr [0x1741d0]
+  0x31b23: mov       rdi, qword ptr [rsp + 0x20]
+  0x31b28: and       eax, 0xeaaaaa94
+  0x31b2d: mov       rbx, qword ptr [rsp + 0x38]
+  0x31b32: or        eax, 0x2aaaaa94
+  0x31b37: mov       dword ptr [0x1741d0], eax
+  0x31b3d: add       rsp, 0x28
+  0x31b41: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_00031760 @ 0x31760  size=994 */
+/* confidence: HIGH */
+#include <stdbool.h>
+#define dword_1741b8 (*(int32_t*)0x1741b8)
+#define dword_1741d0 (*(int32_t*)0x1741d0)
+int32_t fun_00014040();
+void fun_00031760(void) {
+    char s1[256];
+    int32_t v1;
+    int8_t*v18;
+    int8_t*v20;
+    int32_t v19;
+    int32_t v21;
+    int64_t v2;
+    int32_t v3;
+    int32_t v4;
+    int32_t v5;
+    int64_t v6;
+    int64_t v7;
+    int64_t v8;
+    int64_t v9;
+    int64_t v10;
+    int64_t v11;
+    int64_t v12;
+    int64_t v13;
+    int64_t v14;
+    int64_t v15;
+    int64_t v16;
+    int64_t v17;
+
+    if (dword_1741b8 & 0x3000000) {
+        return;
+    }
+    v1 = 0;
+    while (true) {
+        v2 = (v1 & 0xf) * 2;
+        ((int32_t*)0x1741b0)[((uint64_t)((uint32_t)v1) >> 4)] = (~(3 << v2) & ((int32_t*)0x1741b0)[((uint64_t)((uint32_t)v1) >> 4)]) | (2 << v2);
+        v3 = (v1 * 2 + 2) & 0x1e;
+        ((int32_t*)0x1741b0)[((uint64_t)(v1 + 1) >> 4)] = (~(3 << v3) & ((int32_t*)0x1741b0)[((uint64_t)(v1 + 1) >> 4)]) | (2 << v3);
+        v4 = (v1 * 2 + 4) & 0x1e;
+        ((int32_t*)0x1741b0)[((uint64_t)(v1 + 2) >> 4)] = (~(3 << v4) & ((int32_t*)0x1741b0)[((uint64_t)(v1 + 2) >> 4)]) | (2 << v4);
+        v5 = (v1 * 2 + 6) & 0x1e;
+        ((int32_t*)0x1741b0)[((uint64_t)(v1 + 3) >> 4)] = (~(3 << v5) & ((int32_t*)0x1741b0)[((uint64_t)(v1 + 3) >> 4)]) | (2 << v5);
+        v6 = v1 * 2 + 8;
+        ((int32_t*)0x1741b0)[((uint64_t)(v1 + 4) >> 4)] = (~(3 << (v6 & 0x1e)) & ((int32_t*)0x1741b0)[((uint64_t)(v1 + 4) >> 4)]) | (2 << (v6 & 0x1e));
+        v7 = v1 * 2;
+        ((int32_t*)0x1741b0)[((uint64_t)(v1 + 5) >> 4)] = (~(3 << ((v7 + 0xa) & 0x1e)) & ((int32_t*)0x1741b0)[((uint64_t)(v1 + 5) >> 4)]) | (2 << ((v7 + 0xa) & 0x1e));
+        v8 = v1 * 2;
+        ((int32_t*)0x1741b0)[((uint64_t)(v1 + 6) >> 4)] = (~(3 << ((v8 + 0xc) & 0x1e)) & ((int32_t*)0x1741b0)[((uint64_t)(v1 + 6) >> 4)]) | (2 << ((v8 + 0xc) & 0x1e));
+        v9 = v1 * 2;
+        ((int32_t*)0x1741b0)[((uint64_t)(v1 + 7) >> 4)] = (~(3 << ((v9 + 0xe) & 0x1e)) & ((int32_t*)0x1741b0)[((uint64_t)(v1 + 7) >> 4)]) | (2 << ((v9 + 0xe) & 0x1e));
+        v10 = v1 - 8;
+        ((int32_t*)0x1741b0)[((uint64_t)(v1 + 8) >> 4)] = (~(3 << (v10 & 0xf) * 2) & ((int32_t*)0x1741b0)[((uint64_t)(v1 + 8) >> 4)]) | (2 << (v10 & 0xf) * 2);
+        v11 = v1 - 7;
+        ((int32_t*)0x1741b0)[((uint64_t)(v1 + 9) >> 4)] = (~(3 << (v11 & 0xf) * 2) & ((int32_t*)0x1741b0)[((uint64_t)(v1 + 9) >> 4)]) | (2 << (v11 & 0xf) * 2);
+        v12 = v1 - 6;
+        ((int32_t*)0x1741b0)[((uint64_t)(v1 + 0xa) >> 4)] = (~(3 << (v12 & 0xf) * 2) & ((int32_t*)0x1741b0)[((uint64_t)(v1 + 0xa) >> 4)]) | (2 << (v12 & 0xf) * 2);
+        v13 = v1 - 5;
+        ((int32_t*)0x1741b0)[((uint64_t)(v1 + 0xb) >> 4)] = (~(3 << (v13 & 0xf) * 2) & ((int32_t*)0x1741b0)[((uint64_t)(v1 + 0xb) >> 4)]) | (2 << (v13 & 0xf) * 2);
+        v14 = v1 - 4;
+        ((int32_t*)0x1741b0)[((uint64_t)(v1 + 0xc) >> 4)] = (~(3 << (v14 & 0xf) * 2) & ((int32_t*)0x1741b0)[((uint64_t)(v1 + 0xc) >> 4)]) | (2 << (v14 & 0xf) * 2);
+        v15 = v1 - 3;
+        ((int32_t*)0x1741b0)[((uint64_t)(v1 + 0xd) >> 4)] = (~(3 << (v15 & 0xf) * 2) & ((int32_t*)0x1741b0)[((uint64_t)(v1 + 0xd) >> 4)]) | (2 << (v15 & 0xf) * 2);
+        v16 = v1 - 2;
+        ((int32_t*)0x1741b0)[((uint64_t)(v1 + 0xe) >> 4)] = (~(3 << (v16 & 0xf) * 2) & ((int32_t*)0x1741b0)[((uint64_t)(v1 + 0xe) >> 4)]) | (2 << (v16 & 0xf) * 2);
+        v17 = v1 - 1;
+        ((int32_t*)0x1741b0)[((uint64_t)(v1 + 0xf) >> 4)] = (~(3 << (v17 & 0xf) * 2) & ((int32_t*)0x1741b0)[((uint64_t)(v1 + 0xf) >> 4)]) | (2 << (v17 & 0xf) * 2);
+        v1 += 0x10;
+        if ((uint32_t)(v1) >= 0x80) break;
+    }
+    v18 = (int8_t*)0x92004;
+    while (true) {
+        v19 = fun_00014040(s1, v18, 0x92006);
+        ((int32_t*)0x1741b0)[((uint64_t)((uint32_t)*(int32_t*)s1) >> 4)] &= ~(3 << (*(int32_t*)s1 & 0xf) * 2);
+        v18 = (int8_t*)(v18 + (int64_t)v19);
+        if (!*v18) break;
+    }
+    v20 = (int8_t*)".,;!?\"";
+    while (true) {
+        v21 = fun_00014040(s1, v20, 0x9200e);
+        ((int32_t*)0x1741b0)[((uint64_t)((uint32_t)*(int32_t*)s1) >> 4)] = (~(3 << (*(int32_t*)s1 & 0xf) * 2) & ((int32_t*)0x1741b0)[((uint64_t)((uint32_t)*(int32_t*)s1) >> 4)]) | (1 << (*(int32_t*)s1 & 0xf) * 2);
+        v20 = (int8_t*)(v20 + (int64_t)v21);
+        if (!*v20) break;
+    }
+    dword_1741d0 = (dword_1741d0 & 0xeaaaaa94) | 0x2aaaaa94;
+    return;
+}
+

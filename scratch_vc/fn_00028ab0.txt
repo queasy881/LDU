@@ -1,0 +1,113 @@
+=== fun_00028ab0 @ 0x28ab0 size=223 blocks=11 calls=3 ===
+--- DISASM ---
+  0x28ab0: test      r9d, 0xff000000
+  0x28ab7: je        0x28b8e
+  0x28abd: mov       qword ptr [rsp + 8], rbx
+  0x28ac2: push      rdi
+  0x28ac3: sub       rsp, 0x30
+  0x28ac7: movss     xmm3, dword ptr [0x88530]
+  0x28acf: mov       edi, r9d
+  0x28ad2: comiss    xmm3, xmm2
+  0x28ad5: mov       rbx, rcx
+  0x28ad8: ja        0x28b84
+  0x28ade: mov       eax, dword ptr [rsp + 0x60]
+  0x28ae2: test      eax, eax
+  0x28ae4: jg        0x28b07
+  0x28ae6: subss     xmm2, xmm3
+  0x28aea: mov       dword ptr [rsp + 0x28], 0
+  0x28af2: xor       r9d, r9d
+  0x28af5: mov       dword ptr [rsp + 0x20], 0x30
+  0x28afd: call      0x351d0
+  0x28b02: dec       dword ptr [rbx + 0x50]
+  0x28b05: jmp       0x28b56
+  0x28b07: cmp       eax, 3
+  0x28b0a: jge       0x28b13
+  0x28b0c: mov       eax, 3
+  0x28b11: jmp       0x28b1d
+  0x28b13: mov       ecx, 0x200
+  0x28b18: cmp       eax, ecx
+  0x28b1a: cmovg     eax, ecx
+  0x28b1d: movd      xmm0, eax
+  0x28b21: subss     xmm2, xmm3
+  0x28b25: cvtdq2ps  xmm0, xmm0
+  0x28b28: dec       eax
+  0x28b2a: mov       rcx, rbx
+  0x28b2d: mov       dword ptr [rsp + 0x28], eax
+  0x28b31: xorps     xmm3, xmm3
+  0x28b34: movaps    xmm1, xmm0
+  0x28b37: subss     xmm1, dword ptr [0x88544]
+  0x28b3f: mulss     xmm1, dword ptr [0x8ae54]
+  0x28b47: divss     xmm1, xmm0
+  0x28b4b: movss     dword ptr [rsp + 0x20], xmm1
+  0x28b51: call      0x31fd0
+  0x28b56: movss     xmm0, dword ptr [rsp + 0x68]
+  0x28b5c: mov       r9d, edi
+  0x28b5f: mov       r8d, dword ptr [rbx + 0x50]
+  0x28b63: mov       rcx, rbx
+  0x28b66: mov       rdx, qword ptr [rbx + 0x58]
+  0x28b6a: movss     dword ptr [rsp + 0x28], xmm0
+  0x28b70: mov       dword ptr [rsp + 0x20], 1
+  0x28b78: call      0x29f30
+  0x28b7d: mov       dword ptr [rbx + 0x50], 0
+  0x28b84: mov       rbx, qword ptr [rsp + 0x40]
+  0x28b89: add       rsp, 0x30
+  0x28b8d: pop       rdi
+  0x28b8e: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_00028ab0 @ 0x28ab0  size=223 */
+/* xrefs: called by fun_000026d0 (1 site), fun_00004ac0 (1 site) */
+/* confidence: HIGH */
+struct s_fun_00028ab0_a1;
+#pragma pack(push, 1)
+struct s_fun_00028ab0_a1 {
+    char _pad_0[80];
+    int32_t field_50;
+    char _pad_54[4];
+    int64_t field_58;
+};
+#pragma pack(pop)
+#ifndef __min
+#define __min(a,b) ((a)<(b)?(a):(b))
+#endif
+void fun_00029f30();
+int32_t fun_00031fd0();
+void fun_000351d0();
+void fun_00028ab0(struct s_fun_00028ab0_a1*a1, int64_t a2, float a3, int32_t a4, int32_t a5, float a6) {
+    float v1;
+    float v2;
+    int32_t v3;
+
+    if (!(a4 & 0xff000000)) {
+        return;
+    }
+    if (a3 < 0.5f) {
+        return;
+    }
+    if (a5 <= 0) {
+        v1 = 0.0f;
+        v2 = 6.72623e-44f;
+        fun_000351d0(a1, a2, *(float*)&a3 - 0.5f, 0, v2, v1);
+        --a1->field_50;
+        fun_00029f30(a1, a1->field_58, (uint32_t)a1->field_50, a4, 1, a6);
+        a1->field_50 = 0;
+        return;
+    }
+    if (a5 >= 3) {
+        v3 = __min(a5, 0x200);
+        v1 = v3 - 1.4013e-45f;
+        v2 = (*(float*)&v3 - 1.0f) * 6.2831855f / (float)v3;
+        fun_00031fd0(a1, a2, *(float*)&a3 - 0.5f, 0.0f, v2, v1);
+        fun_00029f30(a1, a1->field_58, (uint32_t)a1->field_50, a4, 1, a6);
+        a1->field_50 = 0;
+        return;
+    }
+    v3 = 3;
+    v1 = v3 - 1.4013e-45f;
+    v2 = (*(float*)&v3 - 1.0f) * 6.2831855f / (float)v3;
+    fun_00031fd0(a1, a2, *(float*)&a3 - 0.5f, 0.0f, v2, v1);
+    fun_00029f30(a1, a1->field_58, (uint32_t)a1->field_50, a4, 1, a6);
+    a1->field_50 = 0;
+    return;
+}
+

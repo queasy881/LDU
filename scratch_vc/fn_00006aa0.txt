@@ -1,0 +1,1910 @@
+=== fun_00006aa0 @ 0x6aa0 size=3372 blocks=9 calls=9 ===
+--- DISASM ---
+  0x6aa0: mov       qword ptr [rsp + 8], rcx
+  0x6aa5: push      rbx
+  0x6aa6: push      rbp
+  0x6aa7: push      rsi
+  0x6aa8: push      rdi
+  0x6aa9: sub       rsp, 0x38
+  0x6aad: mov       rsi, rdx
+  0x6ab0: mov       rdi, rcx
+  0x6ab3: add       rcx, 0x28
+  0x6ab7: call      0x77d0
+  0x6abc: nop       
+  0x6abd: xorps     xmm0, xmm0
+  0x6ac0: movups    xmmword ptr [rdi + 0xc00], xmm0
+  0x6ac7: movups    xmmword ptr [rdi + 0xc10], xmm0
+  0x6ace: movups    xmmword ptr [rdi + 0xc20], xmm0
+  0x6ad5: movups    xmmword ptr [rdi + 0xc30], xmm0
+  0x6adc: movups    xmmword ptr [rdi + 0xc40], xmm0
+  0x6ae3: movups    xmmword ptr [rdi + 0xc50], xmm0
+  0x6aea: mov       word ptr [rdi + 0xc38], 0x2e
+  0x6af3: lea       rcx, [rdi + 0xc60]
+  0x6afa: call      0x7a00
+  0x6aff: xor       ebp, ebp
+  0x6b01: mov       qword ptr [rdi + 0x1178], rbp
+  0x6b08: mov       qword ptr [rdi + 0x1180], rbp
+  0x6b0f: lea       rcx, [rdi + 0x11b0]
+  0x6b16: call      0x28580
+  0x6b1b: nop       
+  0x6b1c: mov       qword ptr [rdi + 0x13f8], rbp
+  0x6b23: mov       qword ptr [rdi + 0x1400], rbp
+  0x6b2a: mov       qword ptr [rdi + 0x1408], rbp
+  0x6b31: mov       qword ptr [rdi + 0x1410], rbp
+  0x6b38: mov       qword ptr [rdi + 0x1420], rbp
+  0x6b3f: mov       qword ptr [rdi + 0x1428], rbp
+  0x6b46: mov       qword ptr [rdi + 0x1430], rbp
+  0x6b4d: mov       qword ptr [rdi + 0x1438], rbp
+  0x6b54: mov       qword ptr [rdi + 0x1440], rbp
+  0x6b5b: mov       qword ptr [rdi + 0x1448], rbp
+  0x6b62: mov       qword ptr [rdi + 0x1450], rbp
+  0x6b69: mov       qword ptr [rdi + 0x1458], rbp
+  0x6b70: mov       qword ptr [rdi + 0x1460], rbp
+  0x6b77: mov       qword ptr [rdi + 0x1468], rbp
+  0x6b7e: mov       qword ptr [rdi + 0x14b0], rbp
+  0x6b85: mov       qword ptr [rdi + 0x14c4], rbp
+  0x6b8c: mov       qword ptr [rdi + 0x14cc], rbp
+  0x6b93: mov       qword ptr [rdi + 0x150c], rbp
+  0x6b9a: xorps     xmm0, xmm0
+  0x6b9d: xor       eax, eax
+  0x6b9f: movups    xmmword ptr [rdi + 0x1558], xmm0
+  0x6ba6: mov       dword ptr [rdi + 0x1568], eax
+  0x6bac: lea       rax, [rdi + 0x156c]
+  0x6bb3: mov       ecx, 0x9b
+  0x6bb8: nop       dword ptr [rax + rax]
+  0x6bc0: mov       qword ptr [rax], 0xffffffffffffffff
+  0x6bc7: mov       word ptr [rax + 8], 0
+  0x6bcd: lea       rax, [rax + 0xc]
+  0x6bd1: sub       rcx, 1
+  0x6bd5: jne       0x6bc0
+  0x6bd7: lea       rcx, [rdi + 0x1cb0]
+  0x6bde: mov       qword ptr [rsp + 0x68], rcx
+  0x6be3: mov       qword ptr [rcx + 0x138], rbp
+  0x6bea: mov       qword ptr [rcx + 0x140], rbp
+  0x6bf1: mov       qword ptr [rcx + 0x148], rbp
+  0x6bf8: mov       qword ptr [rcx + 0x150], rbp
+  0x6bff: call      0xdc70
+  0x6c04: nop       
+  0x6c05: mov       qword ptr [rdi + 0x1e20], rbp
+  0x6c0c: mov       qword ptr [rdi + 0x1e28], rbp
+  0x6c13: mov       qword ptr [rdi + 0x1e38], rbp
+  0x6c1a: mov       qword ptr [rdi + 0x1e40], rbp
+  0x6c21: mov       qword ptr [rdi + 0x1e48], rbp
+  0x6c28: mov       qword ptr [rdi + 0x1e50], rbp
+  0x6c2f: mov       qword ptr [rdi + 0x1e30], 0xffffffffffffffff
+  0x6c3a: xorps     xmm0, xmm0
+  0x6c3d: movups    xmmword ptr [rdi + 0x1e58], xmm0
+  0x6c44: movups    xmmword ptr [rdi + 0x1e68], xmm0
+  0x6c4b: movups    xmmword ptr [rdi + 0x1e78], xmm0
+  0x6c52: movups    xmmword ptr [rdi + 0x1e88], xmm0
+  0x6c59: movups    xmmword ptr [rdi + 0x1e98], xmm0
+  0x6c60: xorps     xmm1, xmm1
+  0x6c63: xor       eax, eax
+  0x6c65: movups    xmmword ptr [rdi + 0x1ea8], xmm1
+  0x6c6c: movups    xmmword ptr [rdi + 0x1eb8], xmm1
+  0x6c73: movups    xmmword ptr [rdi + 0x1ec8], xmm1
+  0x6c7a: movups    xmmword ptr [rdi + 0x1ed8], xmm1
+  0x6c81: movups    xmmword ptr [rdi + 0x1ee8], xmm1
+  0x6c88: movups    xmmword ptr [rdi + 0x1ef8], xmm1
+  0x6c8f: movups    xmmword ptr [rdi + 0x1f08], xmm1
+  0x6c96: mov       qword ptr [rdi + 0x1f18], rax
+  0x6c9d: mov       qword ptr [rdi + 0x1f28], rbp
+  0x6ca4: mov       qword ptr [rdi + 0x1f30], rbp
+  0x6cab: mov       qword ptr [rdi + 0x1f38], rbp
+  0x6cb2: mov       qword ptr [rdi + 0x1f40], rbp
+  0x6cb9: mov       qword ptr [rdi + 0x1f48], rbp
+  0x6cc0: mov       qword ptr [rdi + 0x1f50], rbp
+  0x6cc7: mov       qword ptr [rdi + 0x1f58], rbp
+  0x6cce: mov       qword ptr [rdi + 0x1f60], rbp
+  0x6cd5: mov       qword ptr [rdi + 0x1f68], rbp
+  0x6cdc: mov       qword ptr [rdi + 0x1f70], rbp
+  0x6ce3: mov       qword ptr [rdi + 0x1f78], rbp
+  0x6cea: mov       qword ptr [rdi + 0x1f80], rbp
+  0x6cf1: mov       qword ptr [rdi + 0x1f88], rbp
+  0x6cf8: mov       qword ptr [rdi + 0x1f90], rbp
+  0x6cff: mov       qword ptr [rdi + 0x1f98], rbp
+  0x6d06: mov       qword ptr [rdi + 0x1fa0], rbp
+  0x6d0d: mov       qword ptr [rdi + 0x1fa8], rbp
+  0x6d14: mov       qword ptr [rdi + 0x1fb0], rbp
+  0x6d1b: mov       qword ptr [rdi + 0x1fb8], rbp
+  0x6d22: mov       qword ptr [rdi + 0x1fc0], rbp
+  0x6d29: mov       qword ptr [rdi + 0x1ff8], rbp
+  0x6d30: mov       qword ptr [rdi + 0x2000], rbp
+  0x6d37: mov       qword ptr [rdi + 0x2048], rbp
+  0x6d3e: mov       qword ptr [rdi + 0x2050], rbp
+  0x6d45: mov       qword ptr [rdi + 0x2038], rbp
+  0x6d4c: mov       qword ptr [rdi + 0x2040], rbp
+  0x6d53: mov       dword ptr [rdi + 0x2058], ebp
+  0x6d59: mov       qword ptr [rdi + 0x2068], 0xffffffffffffffff
+  0x6d64: mov       dword ptr [rdi + 0x2064], 0x7f7fffff
+  0x6d6e: mov       dword ptr [rdi + 0x2060], 0x7f7fffff
+  0x6d78: mov       dword ptr [rdi + 0x205c], 0x7f7fffff
+  0x6d82: mov       qword ptr [rdi + 0x208c], rbp
+  0x6d89: mov       qword ptr [rdi + 0x2094], rbp
+  0x6d90: mov       qword ptr [rdi + 0x209c], rbp
+  0x6d97: mov       qword ptr [rdi + 0x20a4], rbp
+  0x6d9e: mov       qword ptr [rdi + 0x20c8], rbp
+  0x6da5: mov       qword ptr [rdi + 0x20d0], rbp
+  0x6dac: mov       qword ptr [rdi + 0x20b8], rbp
+  0x6db3: mov       qword ptr [rdi + 0x20c0], rbp
+  0x6dba: mov       dword ptr [rdi + 0x20d8], ebp
+  0x6dc0: mov       qword ptr [rdi + 0x20e8], 0xffffffffffffffff
+  0x6dcb: mov       dword ptr [rdi + 0x20e4], 0x7f7fffff
+  0x6dd5: mov       dword ptr [rdi + 0x20e0], 0x7f7fffff
+  0x6ddf: mov       dword ptr [rdi + 0x20dc], 0x7f7fffff
+  0x6de9: mov       qword ptr [rdi + 0x2100], rbp
+  0x6df0: mov       qword ptr [rdi + 0x2108], rbp
+  0x6df7: mov       qword ptr [rdi + 0x20f0], rbp
+  0x6dfe: mov       qword ptr [rdi + 0x20f8], rbp
+  0x6e05: mov       dword ptr [rdi + 0x2110], ebp
+  0x6e0b: mov       qword ptr [rdi + 0x2120], 0xffffffffffffffff
+  0x6e16: mov       dword ptr [rdi + 0x211c], 0x7f7fffff
+  0x6e20: mov       dword ptr [rdi + 0x2118], 0x7f7fffff
+  0x6e2a: mov       dword ptr [rdi + 0x2114], 0x7f7fffff
+  0x6e34: mov       qword ptr [rdi + 0x2138], rbp
+  0x6e3b: mov       qword ptr [rdi + 0x2140], rbp
+  0x6e42: mov       qword ptr [rdi + 0x2128], rbp
+  0x6e49: mov       qword ptr [rdi + 0x2130], rbp
+  0x6e50: mov       dword ptr [rdi + 0x2148], ebp
+  0x6e56: mov       qword ptr [rdi + 0x2158], 0xffffffffffffffff
+  0x6e61: mov       dword ptr [rdi + 0x2154], 0x7f7fffff
+  0x6e6b: mov       dword ptr [rdi + 0x2150], 0x7f7fffff
+  0x6e75: mov       dword ptr [rdi + 0x214c], 0x7f7fffff
+  0x6e7f: mov       qword ptr [rdi + 0x2170], rbp
+  0x6e86: mov       qword ptr [rdi + 0x2178], rbp
+  0x6e8d: mov       qword ptr [rdi + 0x2160], rbp
+  0x6e94: mov       qword ptr [rdi + 0x2168], rbp
+  0x6e9b: mov       dword ptr [rdi + 0x2180], ebp
+  0x6ea1: mov       qword ptr [rdi + 0x2190], 0xffffffffffffffff
+  0x6eac: mov       dword ptr [rdi + 0x218c], 0x7f7fffff
+  0x6eb6: mov       dword ptr [rdi + 0x2188], 0x7f7fffff
+  0x6ec0: mov       dword ptr [rdi + 0x2184], 0x7f7fffff
+  0x6eca: mov       qword ptr [rdi + 0x21e4], rbp
+  0x6ed1: mov       qword ptr [rdi + 0x21ec], rbp
+  0x6ed8: mov       qword ptr [rdi + 0x2214], rbp
+  0x6edf: mov       qword ptr [rdi + 0x2208], rbp
+  0x6ee6: mov       dword ptr [rdi + 0x2210], ebp
+  0x6eec: movups    xmmword ptr [rdi + 0x2220], xmm0
+  0x6ef3: movups    xmmword ptr [rdi + 0x2230], xmm0
+  0x6efa: mov       word ptr [rdi + 0x2240], ax
+  0x6f01: mov       dword ptr [rdi + 0x221c], 0xffffffff
+  0x6f0b: mov       byte ptr [rdi + 0x2242], al
+  0x6f11: mov       qword ptr [rdi + 0x2248], rbp
+  0x6f18: mov       qword ptr [rdi + 0x2250], rbp
+  0x6f1f: mov       qword ptr [rdi + 0x2258], rbp
+  0x6f26: mov       qword ptr [rdi + 0x2260], rbp
+  0x6f2d: mov       qword ptr [rdi + 0x2290], rbp
+  0x6f34: mov       qword ptr [rdi + 0x2298], rbp
+  0x6f3b: mov       qword ptr [rdi + 0x22b8], rbp
+  0x6f42: mov       qword ptr [rdi + 0x22c0], rbp
+  0x6f49: mov       qword ptr [rdi + 0x22d8], rbp
+  0x6f50: mov       qword ptr [rdi + 0x22e0], rbp
+  0x6f57: mov       qword ptr [rdi + 0x22e8], rbp
+  0x6f5e: mov       qword ptr [rdi + 0x22f0], rbp
+  0x6f65: mov       qword ptr [rdi + 0x22f8], rbp
+  0x6f6c: mov       qword ptr [rdi + 0x2300], rbp
+  0x6f73: mov       qword ptr [rdi + 0x2308], rbp
+  0x6f7a: mov       qword ptr [rdi + 0x2310], rbp
+  0x6f81: mov       qword ptr [rdi + 0x2318], rbp
+  0x6f88: mov       qword ptr [rdi + 0x2320], rbp
+  0x6f8f: mov       qword ptr [rdi + 0x2328], rbp
+  0x6f96: mov       qword ptr [rdi + 0x2338], rbp
+  0x6f9d: mov       qword ptr [rdi + 0x2340], rbp
+  0x6fa4: mov       qword ptr [rdi + 0x2348], rbp
+  0x6fab: mov       qword ptr [rdi + 0x2350], rbp
+  0x6fb2: mov       qword ptr [rdi + 0x2358], rbp
+  0x6fb9: mov       qword ptr [rdi + 0x2360], rbp
+  0x6fc0: mov       qword ptr [rdi + 0x2368], rbp
+  0x6fc7: mov       qword ptr [rdi + 0x2370], rbp
+  0x6fce: mov       qword ptr [rdi + 0x2378], rbp
+  0x6fd5: movups    xmmword ptr [rdi + 0x2380], xmm0
+  0x6fdc: movups    xmmword ptr [rdi + 0x2390], xmm0
+  0x6fe3: movups    xmmword ptr [rdi + 0x23a0], xmm0
+  0x6fea: movups    xmmword ptr [rdi + 0x23b0], xmm0
+  0x6ff1: movups    xmmword ptr [rdi + 0x23c0], xmm0
+  0x6ff8: movups    xmmword ptr [rdi + 0x23d0], xmm0
+  0x6fff: mov       qword ptr [rdi + 0x23e0], rax
+  0x7006: mov       qword ptr [rdi + 0x23f8], rbp
+  0x700d: mov       qword ptr [rdi + 0x2400], rbp
+  0x7014: mov       qword ptr [rdi + 0x2408], rbp
+  0x701b: mov       qword ptr [rdi + 0x2410], rbp
+  0x7022: mov       qword ptr [rdi + 0x2418], rbp
+  0x7029: mov       qword ptr [rdi + 0x2420], rbp
+  0x7030: mov       qword ptr [rdi + 0x2428], rbp
+  0x7037: mov       qword ptr [rdi + 0x2450], rbp
+  0x703e: lea       rcx, [rdi + 0x2458]
+  0x7045: call      0x47620
+  0x704a: nop       
+  0x704b: mov       qword ptr [rdi + 0x24d8], rbp
+  0x7052: mov       qword ptr [rdi + 0x24e0], rbp
+  0x7059: mov       dword ptr [rdi + 0x24e8], ebp
+  0x705f: xorps     xmm0, xmm0
+  0x7062: xor       eax, eax
+  0x7064: movups    xmmword ptr [rdi + 0x24f0], xmm0
+  0x706b: mov       qword ptr [rdi + 0x2500], rax
+  0x7072: lea       rcx, [rdi + 0x2508]
+  0x7079: call      0x28780
+  0x707e: nop       
+  0x707f: mov       qword ptr [rdi + 0x25a4], rbp
+  0x7086: mov       qword ptr [rdi + 0x25ac], rbp
+  0x708d: xorps     xmm0, xmm0
+  0x7090: movups    xmmword ptr [rdi + 0x25b4], xmm0
+  0x7097: movups    xmmword ptr [rdi + 0x25c4], xmm0
+  0x709e: movups    xmmword ptr [rdi + 0x25d4], xmm0
+  0x70a5: mov       qword ptr [rdi + 0x25e4], rbp
+  0x70ac: mov       qword ptr [rdi + 0x25ec], rbp
+  0x70b3: mov       qword ptr [rdi + 0x2620], rbp
+  0x70ba: mov       qword ptr [rdi + 0x2628], rbp
+  0x70c1: mov       qword ptr [rdi + 0x2630], rbp
+  0x70c8: mov       qword ptr [rdi + 0x2638], rbp
+  0x70cf: xor       eax, eax
+  0x70d1: movups    xmmword ptr [rdi + 0x2640], xmm0
+  0x70d8: movups    xmmword ptr [rdi + 0x2650], xmm0
+  0x70df: movups    xmmword ptr [rdi + 0x2660], xmm0
+  0x70e6: movups    xmmword ptr [rdi + 0x2670], xmm0
+  0x70ed: movups    xmmword ptr [rdi + 0x2680], xmm0
+  0x70f4: movups    xmmword ptr [rdi + 0x2690], xmm0
+  0x70fb: mov       qword ptr [rdi + 0x26a0], rax
+  0x7102: movups    xmmword ptr [rdi + 0x26a8], xmm0
+  0x7109: mov       dword ptr [rdi + 0x26b8], eax
+  0x710f: movups    xmmword ptr [rdi + 0x26bc], xmm0
+  0x7116: mov       qword ptr [rdi + 0x26cc], rax
+  0x711d: mov       dword ptr [rdi + 0x26d4], ebp
+  0x7123: mov       qword ptr [rdi + 0x26d8], rbp
+  0x712a: mov       qword ptr [rdi + 0x26e8], rbp
+  0x7131: mov       qword ptr [rdi + 0x26f0], rbp
+  0x7138: mov       qword ptr [rdi + 0x26f8], rbp
+  0x713f: mov       qword ptr [rdi + 0x2700], rbp
+  0x7146: mov       qword ptr [rdi + 0x2708], rbp
+  0x714d: mov       qword ptr [rdi + 0x2710], rbp
+  0x7154: mov       qword ptr [rdi + 0x2718], rbp
+  0x715b: mov       qword ptr [rdi + 0x2720], rbp
+  0x7162: mov       qword ptr [rdi + 0x2728], rbp
+  0x7169: mov       qword ptr [rdi + 0x2730], rbp
+  0x7170: mov       qword ptr [rdi + 0x27b0], rbp
+  0x7177: mov       qword ptr [rdi + 0x27b8], rbp
+  0x717e: mov       qword ptr [rdi + 0x27f0], rbp
+  0x7185: movups    xmmword ptr [rdi + 0x2800], xmm0
+  0x718c: mov       qword ptr [rdi + 0x280e], rax
+  0x7193: mov       qword ptr [rdi + 0x2828], rbp
+  0x719a: mov       qword ptr [rdi + 0x2830], rbp
+  0x71a1: mov       qword ptr [rdi + 0x2838], rbp
+  0x71a8: mov       qword ptr [rdi + 0x2840], rbp
+  0x71af: mov       dword ptr [rdi + 0x2848], ebp
+  0x71b5: mov       qword ptr [rdi + 0x286c], rbp
+  0x71bc: mov       qword ptr [rdi + 0x2874], rbp
+  0x71c3: mov       dword ptr [rdi + 0x287c], eax
+  0x71c9: mov       dword ptr [rdi + 0x2880], 0x10100
+  0x71d3: mov       byte ptr [rdi + 0x2884], al
+  0x71d9: mov       qword ptr [rdi + 0x2888], 0xffffffffffffffff
+  0x71e4: mov       dword ptr [rdi + 0x2890], 0xffffffff
+  0x71ee: mov       dword ptr [rdi + 0x2894], ebp
+  0x71f4: mov       byte ptr [rdi + 0x2898], 1
+  0x71fb: movups    xmmword ptr [rdi + 0x28a0], xmm0
+  0x7202: movups    xmmword ptr [rdi + 0x28b0], xmm0
+  0x7209: movups    xmmword ptr [rdi + 0x28c0], xmm0
+  0x7210: mov       qword ptr [rdi + 0x28d0], rax
+  0x7217: mov       qword ptr [rdi + 0x28d8], rax
+  0x721e: mov       dword ptr [rdi + 0x28dc], 0xffffffff
+  0x7228: mov       byte ptr [rdi + 0x28d8], 1
+  0x722f: mov       dword ptr [rdi + 0x28e0], 0xff7fffff
+  0x7239: movups    xmmword ptr [rdi + 0x28e4], xmm0
+  0x7240: movups    xmmword ptr [rdi + 0x28f4], xmm0
+  0x7247: movups    xmmword ptr [rdi + 0x2904], xmm0
+  0x724e: movups    xmmword ptr [rdi + 0x2910], xmm0
+  0x7255: mov       qword ptr [rdi + 0x2a28], rbp
+  0x725c: mov       qword ptr [rdi + 0x2a30], rbp
+  0x7263: mov       qword ptr [rdi + 0xf8], rdi
+  0x726a: mov       qword ptr [rdi + 0x2458], rdi
+  0x7271: mov       qword ptr [rdi], rax
+  0x7274: mov       qword ptr [rdi + 8], 0xffffffffffffffff
+  0x727c: mov       qword ptr [rdi + 0x10], rbp
+  0x7280: movups    xmmword ptr [rdi + 0x18], xmm0
+  0x7284: mov       qword ptr [rdi + 0x1188], rbp
+  0x728b: mov       qword ptr [rdi + 0x1190], rbp
+  0x7292: mov       qword ptr [rdi + 0x11a4], 0x3f800000
+  0x729d: mov       qword ptr [rdi + 0x119c], rbp
+  0x72a4: mov       dword ptr [rdi + 0x1198], ebp
+  0x72aa: test      rsi, rsi
+  0x72ad: je        0x72b5
+  0x72af: mov       qword ptr [rdi + 0x60], rsi
+  0x72b3: jmp       0x72f0
+  0x72b5: mov       ecx, 0x2f8
+  0x72ba: call      0x16810
+  0x72bf: mov       qword ptr [rsp + 0x70], rax
+  0x72c4: lea       rcx, [rsp + 0x68]
+  0x72c9: mov       qword ptr [rsp + 0x78], rcx
+  0x72ce: mov       qword ptr [rsp + 0x20], rax
+  0x72d3: test      rax, rax
+  0x72d6: je        0x72e2
+  0x72d8: mov       rcx, rax
+  0x72db: call      0x286a0
+  0x72e0: jmp       0x72e5
+  0x72e2: mov       rax, rbp
+  0x72e5: mov       qword ptr [rdi + 0x60], rax
+  0x72e9: mov       qword ptr [rax + 0x2d8], rdi
+  0x72f0: mov       dword ptr [rdi + 0x13e8], ebp
+  0x72f6: mov       qword ptr [rdi + 0x13f0], rbp
+  0x72fd: mov       dword ptr [rdi + 0x1418], ebp
+  0x7303: mov       dword ptr [rdi + 0x141c], 1
+  0x730d: mov       qword ptr [rdi + 0x1470], rbp
+  0x7314: mov       qword ptr [rdi + 0x1480], rbp
+  0x731b: mov       qword ptr [rdi + 0x1488], rbp
+  0x7322: mov       qword ptr [rdi + 0x1490], rbp
+  0x7329: mov       qword ptr [rdi + 0x1498], rbp
+  0x7330: mov       qword ptr [rdi + 0x14a0], rbp
+  0x7337: mov       qword ptr [rdi + 0x14a8], rbp
+  0x733e: mov       qword ptr [rdi + 0x14b8], 0xffffffffffffffff
+  0x7349: mov       dword ptr [rdi + 0x14c0], ebp
+  0x734f: mov       qword ptr [rdi + 0x14d4], rbp
+  0x7356: mov       qword ptr [rdi + 0x14dc], rbp
+  0x735d: mov       qword ptr [rdi + 0x14e4], rbp
+  0x7364: mov       word ptr [rdi + 0x14f0], 0
+  0x736d: mov       dword ptr [rdi + 0x14ec], ebp
+  0x7373: mov       byte ptr [rdi + 0x14f2], 0
+  0x737a: mov       qword ptr [rdi + 0x14f4], rbp
+  0x7381: mov       qword ptr [rdi + 0x14fc], rbp
+  0x7388: mov       dword ptr [rdi + 0x1504], 0xff000000
+  0x7392: mov       dword ptr [rdi + 0x150c], 0xbf800000
+  0x739c: mov       dword ptr [rdi + 0x1510], 0xbf800000
+  0x73a6: mov       dword ptr [rdi + 0x1514], ebp
+  0x73ac: mov       qword ptr [rdi + 0x1518], rbp
+  0x73b3: mov       dword ptr [rdi + 0x1508], ebp
+  0x73b9: mov       dword ptr [rdi + 0x1520], ebp
+  0x73bf: xor       eax, eax
+  0x73c1: mov       qword ptr [rdi + 0x1524], rax
+  0x73c8: mov       dword ptr [rdi + 0x152c], eax
+  0x73ce: mov       qword ptr [rdi + 0x1530], rax
+  0x73d5: mov       qword ptr [rdi + 0x1538], rbp
+  0x73dc: movabs    rax, 0xbff0000000000000
+  0x73e6: mov       qword ptr [rdi + 0x1548], rax
+  0x73ed: mov       qword ptr [rdi + 0x1540], rax
+  0x73f4: mov       qword ptr [rdi + 0x1550], rax
+  0x73fb: mov       dword ptr [rdi + 0x1e08], ebp
+  0x7401: mov       byte ptr [rdi + 0x1e0c], 0
+  0x7408: mov       qword ptr [rdi + 0x1e14], rbp
+  0x740f: mov       word ptr [rdi + 0x1f20], 0
+  0x7418: mov       qword ptr [rdi + 0x1fc8], 0
+  0x7423: mov       qword ptr [rdi + 0x1fd0], rbp
+  0x742a: mov       qword ptr [rdi + 0x1fe8], rbp
+  0x7431: mov       qword ptr [rdi + 0x1fe0], rbp
+  0x7438: mov       qword ptr [rdi + 0x1fd8], rbp
+  0x743f: mov       qword ptr [rdi + 0x2010], rbp
+  0x7446: mov       qword ptr [rdi + 0x2018], rbp
+  0x744d: mov       dword ptr [rdi + 0x1ff0], ebp
+  0x7453: mov       qword ptr [rdi + 0x2008], rbp
+  0x745a: mov       dword ptr [rdi + 0x2020], 2
+  0x7464: mov       qword ptr [rdi + 0x2028], 0xffffffffffffffff
+  0x746f: mov       dword ptr [rdi + 0x2030], 0
+  0x7479: mov       word ptr [rdi + 0x2070], 0
+  0x7482: mov       byte ptr [rdi + 0x2072], 0
+  0x7489: mov       qword ptr [rdi + 0x2074], rbp
+  0x7490: mov       dword ptr [rdi + 0x207c], ebp
+  0x7496: mov       qword ptr [rdi + 0x2084], 0xffffffffffffffff
+  0x74a1: mov       dword ptr [rdi + 0x2080], 0xffffffff
+  0x74ab: mov       qword ptr [rdi + 0x20ac], rbp
+  0x74b2: mov       dword ptr [rdi + 0x20b4], ebp
+  0x74b8: mov       qword ptr [rdi + 0x219c], rbp
+  0x74bf: mov       dword ptr [rdi + 0x2198], ebp
+  0x74c5: mov       dword ptr [rdi + 0x21a4], ebp
+  0x74cb: mov       dword ptr [rdi + 0x21a8], 0x1010000
+  0x74d5: movzx     ecx, byte ptr [rdi + 0x79]
+  0x74d9: mov       eax, 0x1200
+  0x74de: mov       edx, 0x8200
+  0x74e3: test      cl, cl
+  0x74e5: cmovne    eax, edx
+  0x74e8: mov       dword ptr [rdi + 0x21ac], eax
+  0x74ee: mov       eax, 0x3200
+  0x74f3: mov       edx, 0xa200
+  0x74f8: cmovne    eax, edx
+  0x74fb: mov       dword ptr [rdi + 0x21b0], eax
+  0x7501: mov       qword ptr [rdi + 0x21c8], rbp
+  0x7508: mov       qword ptr [rdi + 0x21c0], rbp
+  0x750f: mov       qword ptr [rdi + 0x21b8], rbp
+  0x7516: mov       qword ptr [rdi + 0x21d4], rbp
+  0x751d: mov       dword ptr [rdi + 0x21d0], ebp
+  0x7523: mov       byte ptr [rdi + 0x21dc], 0
+  0x752a: mov       dword ptr [rdi + 0x21e0], ebp
+  0x7530: mov       dword ptr [rdi + 0x21f4], ebp
+  0x7536: mov       word ptr [rdi + 0x21f9], 0
+  0x753f: mov       byte ptr [rdi + 0x21f8], 0
+  0x7546: mov       dword ptr [rdi + 0x21fc], ebp
+  0x754c: mov       qword ptr [rdi + 0x2200], 0xffffffffffffffff
+  0x7557: mov       qword ptr [rdi + 0x2268], rbp
+  0x755e: mov       qword ptr [rdi + 0x2270], rbp
+  0x7565: mov       qword ptr [rdi + 0x2278], rbp
+  0x756c: mov       dword ptr [rdi + 0x2280], ebp
+  0x7572: mov       dword ptr [rdi + 0x2284], 0xffffffff
+  0x757c: mov       dword ptr [rdi + 0x2288], ebp
+  0x7582: xorps     xmm0, xmm0
+  0x7585: movups    xmmword ptr [rdi + 0x22a0], xmm0
+  0x758c: mov       dword ptr [rdi + 0x22b0], ebp
+  0x7592: mov       qword ptr [rdi + 0x22c8], rbp
+  0x7599: mov       dword ptr [rdi + 0x22d4], ebp
+  0x759f: mov       qword ptr [rdi + 0x2330], rbp
+  0x75a6: mov       qword ptr [rdi + 0x23e8], rbp
+  0x75ad: mov       dword ptr [rdi + 0x23f0], ebp
+  0x75b3: mov       qword ptr [rdi + 0x2440], rbp
+  0x75ba: mov       qword ptr [rdi + 0x2430], rbp
+  0x75c1: mov       qword ptr [rdi + 0x2438], rbp
+  0x75c8: mov       qword ptr [rdi + 0x2448], rbp
+  0x75cf: mov       qword ptr [rdi + 0x2570], rbp
+  0x75d6: mov       dword ptr [rdi + 0x2578], ebp
+  0x75dc: xor       eax, eax
+  0x75de: mov       qword ptr [rdi + 0x257c], rax
+  0x75e5: mov       qword ptr [rdi + 0x2584], rbp
+  0x75ec: mov       qword ptr [rdi + 0x258c], 0xa900000
+  0x75f7: mov       qword ptr [rdi + 0x2594], rbp
+  0x75fe: mov       qword ptr [rdi + 0x259c], rbp
+  0x7605: mov       byte ptr [rdi + 0x25f4], al
+  0x760b: mov       word ptr [rdi + 0x25f6], bp
+  0x7612: mov       qword ptr [rdi + 0x25f8], rbp
+  0x7619: mov       dword ptr [rdi + 0x2600], ebp
+  0x761f: mov       word ptr [rdi + 0x2604], ax
+  0x7626: mov       dword ptr [rdi + 0x2608], ebp
+  0x762c: mov       qword ptr [rdi + 0x260c], 0x3c23d70a
+  0x7637: mov       dword ptr [rdi + 0x2614], ebp
+  0x763d: mov       qword ptr [rdi + 0x2618], rbp
+  0x7644: mov       qword ptr [rdi + 0x26ac], rbp
+  0x764b: mov       dword ptr [rdi + 0x26c0], 0xbf800000
+  0x7655: mov       dword ptr [rdi + 0x26c4], 0xbf800000
+  0x765f: mov       byte ptr [rdi + 0x26e0], al
+  0x7665: mov       dword ptr [rdi + 0x26e4], ebp
+  0x766b: mov       dword ptr [rdi + 0x2738], ebp
+  0x7671: mov       qword ptr [rdi + 0x2740], rbp
+  0x7678: movups    xmmword ptr [rdi + 0x2748], xmm0
+  0x767f: movups    xmmword ptr [rdi + 0x2758], xmm0
+  0x7686: movups    xmmword ptr [rdi + 0x2768], xmm0
+  0x768d: movups    xmmword ptr [rdi + 0x2778], xmm0
+  0x7694: movups    xmmword ptr [rdi + 0x2788], xmm0
+  0x769b: mov       word ptr [rdi + 0x2798], ax
+  0x76a2: mov       dword ptr [rdi + 0x279c], ebp
+  0x76a8: mov       qword ptr [rdi + 0x27a0], rbp
+  0x76af: mov       qword ptr [rdi + 0x27c8], rbp
+  0x76b6: mov       qword ptr [rdi + 0x27c0], rbp
+  0x76bd: mov       qword ptr [rdi + 0x27a8], rbp
+  0x76c4: mov       qword ptr [rdi + 0x27d0], 0x7f7fffff
+  0x76cf: mov       dword ptr [rdi + 0x27dc], 2
+  0x76d9: mov       dword ptr [rdi + 0x27d8], 2
+  0x76e3: mov       qword ptr [rdi + 0x27e0], rbp
+  0x76ea: mov       qword ptr [rdi + 0x27e8], rbp
+  0x76f1: mov       byte ptr [rdi + 0x27f8], 1
+  0x76f8: mov       dword ptr [rdi + 0x27fc], ebp
+  0x76fe: mov       qword ptr [rdi + 0x2818], rbp
+  0x7705: mov       dword ptr [rdi + 0x2820], ebp
+  0x770b: mov       dword ptr [rdi + 0x2824], 0x100001
+  0x7715: mov       dword ptr [rdi + 0x1e1c], ebp
+  0x771b: mov       qword ptr [rdi + 0x2850], rbp
+  0x7722: mov       word ptr [rdi + 0x2858], ax
+  0x7729: mov       word ptr [rdi + 0x2860], 0xff
+  0x7732: mov       byte ptr [rdi + 0x2862], al
+  0x7738: mov       qword ptr [rdi + 0x2864], rbp
+  0x773f: mov       dword ptr [rdi + 0x1f24], 0x3c
+  0x7749: mov       dword ptr [rdi + 0x1478], ebp
+  0x774f: mov       dword ptr [rdi + 0x22d0], ebp
+  0x7755: mov       byte ptr [rdi + 0x285a], al
+  0x775b: mov       dword ptr [rdi + 0x285c], 0x263
+  0x7765: mov       dword ptr [rdi + 0x1e10], ebp
+  0x776b: lea       rcx, [rdi + 0x2920]
+  0x7772: xor       edx, edx
+  0x7774: mov       r8d, 0xf0
+  0x777a: call      0x85240
+  0x777f: mov       qword ptr [rdi + 0x2a10], rbp
+  0x7786: mov       dword ptr [rdi + 0x2a18], ebp
+  0x778c: mov       qword ptr [rdi + 0x2a20], 0xffffffffffffffff
+  0x7797: mov       dword ptr [rdi + 0x2a1c], 0xffffffff
+  0x77a1: xorps     xmm0, xmm0
+  0x77a4: movups    xmmword ptr [rdi + 0x2a38], xmm0
+  0x77ab: movups    xmmword ptr [rdi + 0x2a48], xmm0
+  0x77b2: movups    xmmword ptr [rdi + 0x2a58], xmm0
+  0x77b9: movups    xmmword ptr [rdi + 0x2a68], xmm0
+  0x77c0: mov       rax, rdi
+  0x77c3: add       rsp, 0x38
+  0x77c7: pop       rdi
+  0x77c8: pop       rsi
+  0x77c9: pop       rbp
+  0x77ca: pop       rbx
+  0x77cb: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_00006aa0 @ 0x6aa0  size=3372 */
+/* xrefs: called by fun_0000e810 (1 site) */
+/* confidence: HIGH */
+#include <stdbool.h>
+#include <stddef.h>
+struct s_fun_00006aa0_a1;
+struct s_fun_00006aa0_s1;
+struct s_fun_00006aa0_v1;
+#pragma pack(push, 1)
+struct s_fun_00006aa0_a1 {
+    int64_t field_0;
+    int64_t field_8;
+    int64_t field_10;
+    int64_t field_18;
+    int64_t field_20;
+    char _pad_28[56];
+    int64_t field_60;
+    char _pad_68[17];
+    uint8_t field_79;
+    char _pad_7a[126];
+    int64_t field_f8;
+    char _pad_100[2816];
+    int64_t field_c00;
+    int64_t field_c08;
+    int64_t field_c10;
+    int64_t field_c18;
+    int64_t field_c20;
+    int64_t field_c28;
+    int64_t field_c30;
+    char _pad_c38[8];
+    int64_t field_c40;
+    int64_t field_c48;
+    int64_t field_c50;
+    int64_t field_c58;
+    char _pad_c60[1304];
+    int64_t field_1178;
+    int64_t field_1180;
+    int64_t field_1188;
+    int64_t field_1190;
+    int32_t field_1198;
+    int64_t field_119c;
+    int64_t field_11a4;
+    char _pad_11ac[572];
+    int32_t field_13e8;
+    char _pad_13ec[4];
+    int64_t field_13f0;
+    int64_t field_13f8;
+    int64_t field_1400;
+    int64_t field_1408;
+    int64_t field_1410;
+    int32_t field_1418;
+    int32_t field_141c;
+    int64_t field_1420;
+    int64_t field_1428;
+    int64_t field_1430;
+    int64_t field_1438;
+    int64_t field_1440;
+    int64_t field_1448;
+    int64_t field_1450;
+    int64_t field_1458;
+    int64_t field_1460;
+    int64_t field_1468;
+    int64_t field_1470;
+    int32_t field_1478;
+    char _pad_147c[4];
+    int64_t field_1480;
+    int64_t field_1488;
+    int64_t field_1490;
+    int64_t field_1498;
+    int64_t field_14a0;
+    int64_t field_14a8;
+    int64_t field_14b0;
+    int64_t field_14b8;
+    int32_t field_14c0;
+    int64_t field_14c4;
+    int64_t field_14cc;
+    int64_t field_14d4;
+    int64_t field_14dc;
+    int64_t field_14e4;
+    int32_t field_14ec;
+    int16_t field_14f0;
+    int8_t field_14f2;
+    char _pad_14f3[1];
+    int64_t field_14f4;
+    int64_t field_14fc;
+    int32_t field_1504;
+    int32_t field_1508;
+    char _pad_150c[4];
+    int32_t field_1510;
+    int32_t field_1514;
+    int64_t field_1518;
+    int32_t field_1520;
+    int64_t field_1524;
+    int32_t field_152c;
+    int64_t field_1530;
+    int64_t field_1538;
+    int64_t field_1540;
+    int64_t field_1548;
+    int64_t field_1550;
+    int64_t field_1558;
+    int64_t field_1560;
+    int32_t field_1568;
+    char _pad_156c[2172];
+    int64_t field_1de8;
+    int64_t field_1df0;
+    int64_t field_1df8;
+    int64_t field_1e00;
+    int32_t field_1e08;
+    int8_t field_1e0c;
+    char _pad_1e0d[3];
+    int32_t field_1e10;
+    int64_t field_1e14;
+    int32_t field_1e1c;
+    int64_t field_1e20;
+    int64_t field_1e28;
+    int64_t field_1e30;
+    int64_t field_1e38;
+    int64_t field_1e40;
+    int64_t field_1e48;
+    int64_t field_1e50;
+    int64_t field_1e58;
+    int64_t field_1e60;
+    int64_t field_1e68;
+    int64_t field_1e70;
+    int64_t field_1e78;
+    int64_t field_1e80;
+    int64_t field_1e88;
+    int64_t field_1e90;
+    int64_t field_1e98;
+    int64_t field_1ea0;
+    int64_t field_1ea8;
+    int64_t field_1eb0;
+    int64_t field_1eb8;
+    int64_t field_1ec0;
+    int64_t field_1ec8;
+    int64_t field_1ed0;
+    int64_t field_1ed8;
+    int64_t field_1ee0;
+    int64_t field_1ee8;
+    int64_t field_1ef0;
+    int64_t field_1ef8;
+    int64_t field_1f00;
+    int64_t field_1f08;
+    int64_t field_1f10;
+    int64_t field_1f18;
+    int16_t field_1f20;
+    char _pad_1f22[2];
+    int32_t field_1f24;
+    int64_t field_1f28;
+    int64_t field_1f30;
+    int64_t field_1f38;
+    int64_t field_1f40;
+    int64_t field_1f48;
+    int64_t field_1f50;
+    int64_t field_1f58;
+    int64_t field_1f60;
+    int64_t field_1f68;
+    int64_t field_1f70;
+    int64_t field_1f78;
+    int64_t field_1f80;
+    int64_t field_1f88;
+    int64_t field_1f90;
+    int64_t field_1f98;
+    int64_t field_1fa0;
+    int64_t field_1fa8;
+    int64_t field_1fb0;
+    int64_t field_1fb8;
+    int64_t field_1fc0;
+    int64_t field_1fc8;
+    int64_t field_1fd0;
+    int64_t field_1fd8;
+    int64_t field_1fe0;
+    int64_t field_1fe8;
+    int32_t field_1ff0;
+    char _pad_1ff4[4];
+    int64_t field_1ff8;
+    int64_t field_2000;
+    int64_t field_2008;
+    int64_t field_2010;
+    int64_t field_2018;
+    int32_t field_2020;
+    char _pad_2024[4];
+    int64_t field_2028;
+    int32_t field_2030;
+    char _pad_2034[4];
+    int64_t field_2038;
+    int64_t field_2040;
+    int64_t field_2048;
+    int64_t field_2050;
+    int32_t field_2058;
+    int32_t field_205c;
+    int32_t field_2060;
+    int32_t field_2064;
+    int64_t field_2068;
+    int16_t field_2070;
+    int8_t field_2072;
+    char _pad_2073[1];
+    int64_t field_2074;
+    int32_t field_207c;
+    int32_t field_2080;
+    int64_t field_2084;
+    int64_t field_208c;
+    int64_t field_2094;
+    int64_t field_209c;
+    int64_t field_20a4;
+    int64_t field_20ac;
+    int32_t field_20b4;
+    int64_t field_20b8;
+    int64_t field_20c0;
+    int64_t field_20c8;
+    int64_t field_20d0;
+    int32_t field_20d8;
+    int32_t field_20dc;
+    int32_t field_20e0;
+    int32_t field_20e4;
+    int64_t field_20e8;
+    int64_t field_20f0;
+    int64_t field_20f8;
+    int64_t field_2100;
+    int64_t field_2108;
+    int32_t field_2110;
+    int32_t field_2114;
+    int32_t field_2118;
+    int32_t field_211c;
+    int64_t field_2120;
+    int64_t field_2128;
+    int64_t field_2130;
+    int64_t field_2138;
+    int64_t field_2140;
+    int32_t field_2148;
+    int32_t field_214c;
+    int32_t field_2150;
+    int32_t field_2154;
+    int64_t field_2158;
+    int64_t field_2160;
+    int64_t field_2168;
+    int64_t field_2170;
+    int64_t field_2178;
+    int32_t field_2180;
+    int32_t field_2184;
+    int32_t field_2188;
+    int32_t field_218c;
+    int64_t field_2190;
+    int32_t field_2198;
+    int64_t field_219c;
+    int32_t field_21a4;
+    int32_t field_21a8;
+    int32_t field_21ac;
+    int32_t field_21b0;
+    char _pad_21b4[4];
+    int64_t field_21b8;
+    int64_t field_21c0;
+    int64_t field_21c8;
+    int32_t field_21d0;
+    int64_t field_21d4;
+    int8_t field_21dc;
+    char _pad_21dd[3];
+    int32_t field_21e0;
+    int64_t field_21e4;
+    int64_t field_21ec;
+    int32_t field_21f4;
+    int8_t field_21f8;
+    int16_t field_21f9;
+    char _pad_21fb[1];
+    int32_t field_21fc;
+    int64_t field_2200;
+    int64_t field_2208;
+    int32_t field_2210;
+    int64_t field_2214;
+    int32_t field_221c;
+    int64_t field_2220;
+    int64_t field_2228;
+    int64_t field_2230;
+    int64_t field_2238;
+    int16_t field_2240;
+    int8_t field_2242;
+    char _pad_2243[5];
+    int64_t field_2248;
+    int64_t field_2250;
+    int64_t field_2258;
+    int64_t field_2260;
+    int64_t field_2268;
+    int64_t field_2270;
+    int64_t field_2278;
+    int32_t field_2280;
+    int32_t field_2284;
+    int32_t field_2288;
+    char _pad_228c[4];
+    int64_t field_2290;
+    int64_t field_2298;
+    int64_t field_22a0;
+    int64_t field_22a8;
+    int32_t field_22b0;
+    char _pad_22b4[4];
+    int64_t field_22b8;
+    int64_t field_22c0;
+    int64_t field_22c8;
+    int32_t field_22d0;
+    int32_t field_22d4;
+    int64_t field_22d8;
+    int64_t field_22e0;
+    int64_t field_22e8;
+    int64_t field_22f0;
+    int64_t field_22f8;
+    int64_t field_2300;
+    int64_t field_2308;
+    int64_t field_2310;
+    int64_t field_2318;
+    int64_t field_2320;
+    int64_t field_2328;
+    int64_t field_2330;
+    int64_t field_2338;
+    int64_t field_2340;
+    int64_t field_2348;
+    int64_t field_2350;
+    int64_t field_2358;
+    int64_t field_2360;
+    int64_t field_2368;
+    int64_t field_2370;
+    int64_t field_2378;
+    int64_t field_2380;
+    int64_t field_2388;
+    int64_t field_2390;
+    int64_t field_2398;
+    int64_t field_23a0;
+    int64_t field_23a8;
+    int64_t field_23b0;
+    int64_t field_23b8;
+    int64_t field_23c0;
+    int64_t field_23c8;
+    int64_t field_23d0;
+    int64_t field_23d8;
+    int64_t field_23e0;
+    int64_t field_23e8;
+    int32_t field_23f0;
+    char _pad_23f4[4];
+    int64_t field_23f8;
+    int64_t field_2400;
+    int64_t field_2408;
+    int64_t field_2410;
+    int64_t field_2418;
+    int64_t field_2420;
+    int64_t field_2428;
+    int64_t field_2430;
+    int64_t field_2438;
+    int64_t field_2440;
+    int64_t field_2448;
+    int64_t field_2450;
+    int64_t field_2458;
+    char _pad_2460[120];
+    int64_t field_24d8;
+    int64_t field_24e0;
+    int32_t field_24e8;
+    char _pad_24ec[4];
+    int64_t field_24f0;
+    int64_t field_24f8;
+    int64_t field_2500;
+    char _pad_2508[104];
+    int64_t field_2570;
+    int32_t field_2578;
+    int64_t field_257c;
+    int64_t field_2584;
+    int64_t field_258c;
+    int64_t field_2594;
+    int64_t field_259c;
+    int64_t field_25a4;
+    int64_t field_25ac;
+    int64_t field_25b4;
+    int64_t field_25bc;
+    int64_t field_25c4;
+    int64_t field_25cc;
+    int64_t field_25d4;
+    int64_t field_25dc;
+    int64_t field_25e4;
+    int64_t field_25ec;
+    int8_t field_25f4;
+    char _pad_25f5[1];
+    int16_t field_25f6;
+    int64_t field_25f8;
+    int32_t field_2600;
+    int16_t field_2604;
+    char _pad_2606[2];
+    int32_t field_2608;
+    int64_t field_260c;
+    int32_t field_2614;
+    int64_t field_2618;
+    int64_t field_2620;
+    int64_t field_2628;
+    int64_t field_2630;
+    int64_t field_2638;
+    int64_t field_2640;
+    int64_t field_2648;
+    int64_t field_2650;
+    int64_t field_2658;
+    int64_t field_2660;
+    int64_t field_2668;
+    int64_t field_2670;
+    int64_t field_2678;
+    int64_t field_2680;
+    int64_t field_2688;
+    int64_t field_2690;
+    int64_t field_2698;
+    int64_t field_26a0;
+    int64_t field_26a8;
+    int64_t field_26b0;
+    int32_t field_26b8;
+    int64_t field_26bc;
+    char _pad_26c4[8];
+    int64_t field_26cc;
+    int32_t field_26d4;
+    int64_t field_26d8;
+    int8_t field_26e0;
+    char _pad_26e1[3];
+    int32_t field_26e4;
+    int64_t field_26e8;
+    int64_t field_26f0;
+    int64_t field_26f8;
+    int64_t field_2700;
+    int64_t field_2708;
+    int64_t field_2710;
+    int64_t field_2718;
+    int64_t field_2720;
+    int64_t field_2728;
+    int64_t field_2730;
+    int32_t field_2738;
+    char _pad_273c[4];
+    int64_t field_2740;
+    int64_t field_2748;
+    int64_t field_2750;
+    int64_t field_2758;
+    int64_t field_2760;
+    int64_t field_2768;
+    int64_t field_2770;
+    int64_t field_2778;
+    int64_t field_2780;
+    int64_t field_2788;
+    int64_t field_2790;
+    int16_t field_2798;
+    char _pad_279a[2];
+    int32_t field_279c;
+    int64_t field_27a0;
+    int64_t field_27a8;
+    int64_t field_27b0;
+    int64_t field_27b8;
+    int64_t field_27c0;
+    int64_t field_27c8;
+    int64_t field_27d0;
+    int32_t field_27d8;
+    int32_t field_27dc;
+    int64_t field_27e0;
+    int64_t field_27e8;
+    int64_t field_27f0;
+    int8_t field_27f8;
+    char _pad_27f9[3];
+    int32_t field_27fc;
+    int64_t field_2800;
+    int64_t field_2808;
+    char _pad_2810[8];
+    int64_t field_2818;
+    int32_t field_2820;
+    int32_t field_2824;
+    int64_t field_2828;
+    int64_t field_2830;
+    int64_t field_2838;
+    int64_t field_2840;
+    int32_t field_2848;
+    char _pad_284c[4];
+    int64_t field_2850;
+    int16_t field_2858;
+    int8_t field_285a;
+    char _pad_285b[1];
+    int32_t field_285c;
+    int16_t field_2860;
+    int8_t field_2862;
+    char _pad_2863[1];
+    int64_t field_2864;
+    int64_t field_286c;
+    int64_t field_2874;
+    int32_t field_287c;
+    int32_t field_2880;
+    int8_t field_2884;
+    char _pad_2885[3];
+    int64_t field_2888;
+    int32_t field_2890;
+    int32_t field_2894;
+    int8_t field_2898;
+    char _pad_2899[7];
+    int64_t field_28a0;
+    int64_t field_28a8;
+    int64_t field_28b0;
+    int64_t field_28b8;
+    int64_t field_28c0;
+    int64_t field_28c8;
+    int64_t field_28d0;
+    char _pad_28d8[4];
+    int32_t field_28dc;
+    int32_t field_28e0;
+    int64_t field_28e4;
+    int64_t field_28ec;
+    int64_t field_28f4;
+    int64_t field_28fc;
+    int64_t field_2904;
+    int64_t field_290c;
+    char _pad_2914[4];
+    int64_t field_2918;
+    char _pad_2920[240];
+    int64_t field_2a10;
+    int32_t field_2a18;
+    int32_t field_2a1c;
+    int64_t field_2a20;
+    int64_t field_2a28;
+    int64_t field_2a30;
+    int64_t field_2a38;
+    int64_t field_2a40;
+    int64_t field_2a48;
+    int64_t field_2a50;
+    int64_t field_2a58;
+    int64_t field_2a60;
+    int64_t field_2a68;
+    int64_t field_2a70;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_00006aa0_s1 {
+    int64_t field_0;
+    int64_t field_8;
+    int64_t field_10;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_00006aa0_v1 {
+    int64_t field_0;
+    int16_t field_8;
+};
+#pragma pack(pop)
+int64_t fun_000077d0();
+int64_t fun_00007a00();
+void fun_0000dc70();
+int64_t fun_00016810();
+int64_t fun_00028580();
+int64_t fun_000286a0();
+int64_t fun_00028780();
+int64_t fun_00047620();
+float fun_00085240();
+struct s_fun_00006aa0_a1* fun_00006aa0(struct s_fun_00006aa0_a1*a1, int64_t a2) {
+    char s1[256];
+    struct s_fun_00006aa0_v1*v1;
+    int64_t v2;
+    int64_t*v4;
+    int64_t v3;
+
+    fun_000077d0((char*)a1 + 0x28);
+    a1->field_c00 = 0;
+    a1->field_c08 = 0;
+    a1->field_c10 = 0;
+    a1->field_c18 = 0;
+    a1->field_c20 = 0;
+    a1->field_c28 = 0;
+    a1->field_c30 = 0;
+    *(int64_t*)((char*)a1 + 0xc38) = 0;
+    a1->field_c40 = 0;
+    a1->field_c48 = 0;
+    a1->field_c50 = 0;
+    a1->field_c58 = 0;
+    *(int16_t*)((char*)a1 + 0xc38) = 0x2e;
+    fun_00007a00((char*)a1 + 0xc60);
+    a1->field_1178 = 0;
+    a1->field_1180 = 0;
+    fun_00028580((char*)a1 + 0x11b0);
+    a1->field_13f8 = 0;
+    a1->field_1400 = 0;
+    a1->field_1408 = 0;
+    a1->field_1410 = 0;
+    a1->field_1420 = 0;
+    a1->field_1428 = 0;
+    a1->field_1430 = 0;
+    a1->field_1438 = 0;
+    a1->field_1440 = 0;
+    a1->field_1448 = 0;
+    a1->field_1450 = 0;
+    a1->field_1458 = 0;
+    a1->field_1460 = 0;
+    a1->field_1468 = 0;
+    a1->field_14b0 = 0;
+    a1->field_14c4 = 0;
+    a1->field_14cc = 0;
+    *(int64_t*)((char*)a1 + 0x150c) = 0;
+    a1->field_1558 = 0;
+    a1->field_1560 = 0;
+    a1->field_1568 = 0;
+    v1 = (struct s_fun_00006aa0_v1*)((char*)a1 + 0x156c);
+    v2 = 0x9b;
+    while (true) {
+        v1->field_0 = -1;
+        v1->field_8 = 0;
+        v1 = (struct s_fun_00006aa0_v1*)((char*)v1 + 0xc);
+        --v2;
+        if (!v2) break;
+    }
+    ((struct s_fun_00006aa0_s1*)s1)->field_0 = (int64_t)((char*)a1 + 0x1cb0);
+    a1->field_1de8 = 0;
+    a1->field_1df0 = 0;
+    a1->field_1df8 = 0;
+    a1->field_1e00 = 0;
+    fun_0000dc70((char*)a1 + 0x1cb0);
+    a1->field_1e20 = 0;
+    a1->field_1e28 = 0;
+    a1->field_1e38 = 0;
+    a1->field_1e40 = 0;
+    a1->field_1e48 = 0;
+    a1->field_1e50 = 0;
+    a1->field_1e30 = -1;
+    a1->field_1e58 = 0;
+    a1->field_1e60 = 0;
+    a1->field_1e68 = 0;
+    a1->field_1e70 = 0;
+    a1->field_1e78 = 0;
+    a1->field_1e80 = 0;
+    a1->field_1e88 = 0;
+    a1->field_1e90 = 0;
+    a1->field_1e98 = 0;
+    a1->field_1ea0 = 0;
+    a1->field_1ea8 = 0;
+    a1->field_1eb0 = 0;
+    a1->field_1eb8 = 0;
+    a1->field_1ec0 = 0;
+    a1->field_1ec8 = 0;
+    a1->field_1ed0 = 0;
+    a1->field_1ed8 = 0;
+    a1->field_1ee0 = 0;
+    a1->field_1ee8 = 0;
+    a1->field_1ef0 = 0;
+    a1->field_1ef8 = 0;
+    a1->field_1f00 = 0;
+    a1->field_1f08 = 0;
+    a1->field_1f10 = 0;
+    a1->field_1f18 = 0;
+    a1->field_1f28 = 0;
+    a1->field_1f30 = 0;
+    a1->field_1f38 = 0;
+    a1->field_1f40 = 0;
+    a1->field_1f48 = 0;
+    a1->field_1f50 = 0;
+    a1->field_1f58 = 0;
+    a1->field_1f60 = 0;
+    a1->field_1f68 = 0;
+    a1->field_1f70 = 0;
+    a1->field_1f78 = 0;
+    a1->field_1f80 = 0;
+    a1->field_1f88 = 0;
+    a1->field_1f90 = 0;
+    a1->field_1f98 = 0;
+    a1->field_1fa0 = 0;
+    a1->field_1fa8 = 0;
+    a1->field_1fb0 = 0;
+    a1->field_1fb8 = 0;
+    a1->field_1fc0 = 0;
+    a1->field_1ff8 = 0;
+    a1->field_2000 = 0;
+    a1->field_2048 = 0;
+    a1->field_2050 = 0;
+    a1->field_2038 = 0;
+    a1->field_2040 = 0;
+    a1->field_2058 = 0;
+    a1->field_2068 = -1;
+    a1->field_2064 = 0x7f7fffff;
+    a1->field_2060 = 0x7f7fffff;
+    a1->field_205c = 0x7f7fffff;
+    a1->field_208c = 0;
+    a1->field_2094 = 0;
+    a1->field_209c = 0;
+    a1->field_20a4 = 0;
+    a1->field_20c8 = 0;
+    a1->field_20d0 = 0;
+    a1->field_20b8 = 0;
+    a1->field_20c0 = 0;
+    a1->field_20d8 = 0;
+    a1->field_20e8 = -1;
+    a1->field_20e4 = 0x7f7fffff;
+    a1->field_20e0 = 0x7f7fffff;
+    a1->field_20dc = 0x7f7fffff;
+    a1->field_2100 = 0;
+    a1->field_2108 = 0;
+    a1->field_20f0 = 0;
+    a1->field_20f8 = 0;
+    a1->field_2110 = 0;
+    a1->field_2120 = -1;
+    a1->field_211c = 0x7f7fffff;
+    a1->field_2118 = 0x7f7fffff;
+    a1->field_2114 = 0x7f7fffff;
+    a1->field_2138 = 0;
+    a1->field_2140 = 0;
+    a1->field_2128 = 0;
+    a1->field_2130 = 0;
+    a1->field_2148 = 0;
+    a1->field_2158 = -1;
+    a1->field_2154 = 0x7f7fffff;
+    a1->field_2150 = 0x7f7fffff;
+    a1->field_214c = 0x7f7fffff;
+    a1->field_2170 = 0;
+    a1->field_2178 = 0;
+    a1->field_2160 = 0;
+    a1->field_2168 = 0;
+    a1->field_2180 = 0;
+    a1->field_2190 = -1;
+    a1->field_218c = 0x7f7fffff;
+    a1->field_2188 = 0x7f7fffff;
+    a1->field_2184 = 0x7f7fffff;
+    a1->field_21e4 = 0;
+    a1->field_21ec = 0;
+    a1->field_2214 = 0;
+    a1->field_2208 = 0;
+    a1->field_2210 = 0;
+    a1->field_2220 = 0;
+    a1->field_2228 = 0;
+    a1->field_2230 = 0;
+    a1->field_2238 = 0;
+    a1->field_2240 = 0;
+    a1->field_221c = -1;
+    a1->field_2242 = 0;
+    a1->field_2248 = 0;
+    a1->field_2250 = 0;
+    a1->field_2258 = 0;
+    a1->field_2260 = 0;
+    a1->field_2290 = 0;
+    a1->field_2298 = 0;
+    a1->field_22b8 = 0;
+    a1->field_22c0 = 0;
+    a1->field_22d8 = 0;
+    a1->field_22e0 = 0;
+    a1->field_22e8 = 0;
+    a1->field_22f0 = 0;
+    a1->field_22f8 = 0;
+    a1->field_2300 = 0;
+    a1->field_2308 = 0;
+    a1->field_2310 = 0;
+    a1->field_2318 = 0;
+    a1->field_2320 = 0;
+    a1->field_2328 = 0;
+    a1->field_2338 = 0;
+    a1->field_2340 = 0;
+    a1->field_2348 = 0;
+    a1->field_2350 = 0;
+    a1->field_2358 = 0;
+    a1->field_2360 = 0;
+    a1->field_2368 = 0;
+    a1->field_2370 = 0;
+    a1->field_2378 = 0;
+    a1->field_2380 = 0;
+    a1->field_2388 = 0;
+    a1->field_2390 = 0;
+    a1->field_2398 = 0;
+    a1->field_23a0 = 0;
+    a1->field_23a8 = 0;
+    a1->field_23b0 = 0;
+    a1->field_23b8 = 0;
+    a1->field_23c0 = 0;
+    a1->field_23c8 = 0;
+    a1->field_23d0 = 0;
+    a1->field_23d8 = 0;
+    a1->field_23e0 = 0;
+    a1->field_23f8 = 0;
+    a1->field_2400 = 0;
+    a1->field_2408 = 0;
+    a1->field_2410 = 0;
+    a1->field_2418 = 0;
+    a1->field_2420 = 0;
+    a1->field_2428 = 0;
+    a1->field_2450 = 0;
+    fun_00047620(&a1->field_2458);
+    a1->field_24d8 = 0;
+    a1->field_24e0 = 0;
+    a1->field_24e8 = 0;
+    a1->field_24f0 = 0;
+    a1->field_24f8 = 0;
+    a1->field_2500 = 0;
+    fun_00028780((char*)a1 + 0x2508);
+    a1->field_25a4 = 0;
+    a1->field_25ac = 0;
+    a1->field_25b4 = 0;
+    a1->field_25bc = 0;
+    a1->field_25c4 = 0;
+    a1->field_25cc = 0;
+    a1->field_25d4 = 0;
+    a1->field_25dc = 0;
+    a1->field_25e4 = 0;
+    a1->field_25ec = 0;
+    a1->field_2620 = 0;
+    a1->field_2628 = 0;
+    a1->field_2630 = 0;
+    a1->field_2638 = 0;
+    a1->field_2640 = 0;
+    a1->field_2648 = 0;
+    a1->field_2650 = 0;
+    a1->field_2658 = 0;
+    a1->field_2660 = 0;
+    a1->field_2668 = 0;
+    a1->field_2670 = 0;
+    a1->field_2678 = 0;
+    a1->field_2680 = 0;
+    a1->field_2688 = 0;
+    a1->field_2690 = 0;
+    a1->field_2698 = 0;
+    a1->field_26a0 = 0;
+    a1->field_26a8 = 0;
+    a1->field_26b0 = 0;
+    a1->field_26b8 = 0;
+    a1->field_26bc = 0;
+    *(int64_t*)((char*)a1 + 0x26c4) = 0;
+    a1->field_26cc = 0;
+    a1->field_26d4 = 0;
+    a1->field_26d8 = 0;
+    a1->field_26e8 = 0;
+    a1->field_26f0 = 0;
+    a1->field_26f8 = 0;
+    a1->field_2700 = 0;
+    a1->field_2708 = 0;
+    a1->field_2710 = 0;
+    a1->field_2718 = 0;
+    a1->field_2720 = 0;
+    a1->field_2728 = 0;
+    a1->field_2730 = 0;
+    a1->field_27b0 = 0;
+    a1->field_27b8 = 0;
+    a1->field_27f0 = 0;
+    a1->field_2800 = 0;
+    a1->field_2808 = 0;
+    *(int64_t*)((char*)a1 + 0x280e) = 0;
+    a1->field_2828 = 0;
+    a1->field_2830 = 0;
+    a1->field_2838 = 0;
+    a1->field_2840 = 0;
+    a1->field_2848 = 0;
+    a1->field_286c = 0;
+    a1->field_2874 = 0;
+    a1->field_287c = 0;
+    a1->field_2880 = 0x10100;
+    a1->field_2884 = 0;
+    a1->field_2888 = -1;
+    a1->field_2890 = -1;
+    a1->field_2894 = 0;
+    a1->field_2898 = 1;
+    a1->field_28a0 = 0;
+    a1->field_28a8 = 0;
+    a1->field_28b0 = 0;
+    a1->field_28b8 = 0;
+    a1->field_28c0 = 0;
+    a1->field_28c8 = 0;
+    a1->field_28d0 = 0;
+    *(int64_t*)((char*)a1 + 0x28d8) = 0;
+    a1->field_28dc = -1;
+    *(int8_t*)((char*)a1 + 0x28d8) = 1;
+    a1->field_28e0 = -8388609;
+    a1->field_28e4 = 0;
+    a1->field_28ec = 0;
+    a1->field_28f4 = 0;
+    a1->field_28fc = 0;
+    a1->field_2904 = 0;
+    a1->field_290c = 0;
+    *(int64_t*)((char*)a1 + 0x2910) = 0;
+    a1->field_2918 = 0;
+    a1->field_2a28 = 0;
+    a1->field_2a30 = 0;
+    a1->field_f8 = (int64_t)a1;
+    a1->field_2458 = (int64_t)a1;
+    a1->field_0 = 0;
+    a1->field_8 = -1;
+    a1->field_10 = 0;
+    a1->field_18 = 0;
+    a1->field_20 = 0;
+    a1->field_1188 = 0;
+    a1->field_1190 = 0;
+    a1->field_11a4 = 0x3f800000;
+    a1->field_119c = 0;
+    a1->field_1198 = 0;
+    if (a2) {
+        a1->field_60 = a2;
+        a1->field_13e8 = 0;
+        a1->field_13f0 = 0;
+        a1->field_1418 = 0;
+        a1->field_141c = 1;
+        a1->field_1470 = 0;
+        a1->field_1480 = 0;
+        a1->field_1488 = 0;
+        a1->field_1490 = 0;
+        a1->field_1498 = 0;
+        a1->field_14a0 = 0;
+        a1->field_14a8 = 0;
+        a1->field_14b8 = -1;
+        a1->field_14c0 = 0;
+        a1->field_14d4 = 0;
+        a1->field_14dc = 0;
+        a1->field_14e4 = 0;
+        a1->field_14f0 = 0;
+        a1->field_14ec = 0;
+        a1->field_14f2 = 0;
+        a1->field_14f4 = 0;
+        a1->field_14fc = 0;
+        a1->field_1504 = -16777216;
+        *(int32_t*)((char*)a1 + 0x150c) = -1082130432;
+        a1->field_1510 = -1082130432;
+        a1->field_1514 = 0;
+        a1->field_1518 = 0;
+        a1->field_1508 = 0;
+        a1->field_1520 = 0;
+        a1->field_1524 = 0;
+        a1->field_152c = 0;
+        a1->field_1530 = 0;
+        a1->field_1538 = 0;
+        a1->field_1548 = -4616189618054758400LL;
+        a1->field_1540 = -4616189618054758400LL;
+        a1->field_1550 = -4616189618054758400LL;
+        a1->field_1e08 = 0;
+        a1->field_1e0c = 0;
+        a1->field_1e14 = 0;
+        a1->field_1f20 = 0;
+        a1->field_1fc8 = 0;
+        a1->field_1fd0 = 0;
+        a1->field_1fe8 = 0;
+        a1->field_1fe0 = 0;
+        a1->field_1fd8 = 0;
+        a1->field_2010 = 0;
+        a1->field_2018 = 0;
+        a1->field_1ff0 = 0;
+        a1->field_2008 = 0;
+        a1->field_2020 = 2;
+        a1->field_2028 = -1;
+        a1->field_2030 = 0;
+        a1->field_2070 = 0;
+        a1->field_2072 = 0;
+        a1->field_2074 = 0;
+        a1->field_207c = 0;
+        a1->field_2084 = -1;
+        a1->field_2080 = -1;
+        a1->field_20ac = 0;
+        a1->field_20b4 = 0;
+        a1->field_219c = 0;
+        a1->field_2198 = 0;
+        a1->field_21a4 = 0;
+        a1->field_21a8 = 0x1010000;
+        a1->field_21ac = a1->field_79 != 0 ? 0x8200 : 0x1200;
+        a1->field_21b0 = a1->field_79 != 0 ? 0xa200 : 0x3200;
+        a1->field_21c8 = 0;
+        a1->field_21c0 = 0;
+        a1->field_21b8 = 0;
+        a1->field_21d4 = 0;
+        a1->field_21d0 = 0;
+        a1->field_21dc = 0;
+        a1->field_21e0 = 0;
+        a1->field_21f4 = 0;
+        a1->field_21f9 = 0;
+        a1->field_21f8 = 0;
+        a1->field_21fc = 0;
+        a1->field_2200 = -1;
+        a1->field_2268 = 0;
+        a1->field_2270 = 0;
+        a1->field_2278 = 0;
+        a1->field_2280 = 0;
+        a1->field_2284 = -1;
+        a1->field_2288 = 0;
+        a1->field_22a0 = 0;
+        a1->field_22a8 = 0;
+        a1->field_22b0 = 0;
+        a1->field_22c8 = 0;
+        a1->field_22d4 = 0;
+        a1->field_2330 = 0;
+        a1->field_23e8 = 0;
+        a1->field_23f0 = 0;
+        a1->field_2440 = 0;
+        a1->field_2430 = 0;
+        a1->field_2438 = 0;
+        a1->field_2448 = 0;
+        a1->field_2570 = 0;
+        a1->field_2578 = 0;
+        a1->field_257c = 0;
+        a1->field_2584 = 0;
+        a1->field_258c = 0xa900000;
+        a1->field_2594 = 0;
+        a1->field_259c = 0;
+        a1->field_25f4 = 0;
+        a1->field_25f6 = 0;
+        a1->field_25f8 = 0;
+        a1->field_2600 = 0;
+        a1->field_2604 = 0;
+        a1->field_2608 = 0;
+        a1->field_260c = 0x3c23d70a;
+        a1->field_2614 = 0;
+        a1->field_2618 = 0;
+        *(int64_t*)((char*)a1 + 0x26ac) = 0;
+        *(int32_t*)((char*)a1 + 0x26c0) = -1082130432;
+        *(int32_t*)((char*)a1 + 0x26c4) = -1082130432;
+        a1->field_26e0 = 0;
+        a1->field_26e4 = 0;
+        a1->field_2738 = 0;
+        a1->field_2740 = 0;
+        a1->field_2748 = 0;
+        a1->field_2750 = 0;
+        a1->field_2758 = 0;
+        a1->field_2760 = 0;
+        a1->field_2768 = 0;
+        a1->field_2770 = 0;
+        a1->field_2778 = 0;
+        a1->field_2780 = 0;
+        a1->field_2788 = 0;
+        a1->field_2790 = 0;
+        a1->field_2798 = 0;
+        a1->field_279c = 0;
+        a1->field_27a0 = 0;
+        a1->field_27c8 = 0;
+        a1->field_27c0 = 0;
+        a1->field_27a8 = 0;
+        a1->field_27d0 = 0x7f7fffff;
+        a1->field_27dc = 2;
+        a1->field_27d8 = 2;
+        a1->field_27e0 = 0;
+        a1->field_27e8 = 0;
+        a1->field_27f8 = 1;
+        a1->field_27fc = 0;
+        a1->field_2818 = 0;
+        a1->field_2820 = 0;
+        a1->field_2824 = 0x100001;
+        a1->field_1e1c = 0;
+        a1->field_2850 = 0;
+        a1->field_2858 = 0;
+        a1->field_2860 = 0xff;
+        a1->field_2862 = 0;
+        a1->field_2864 = 0;
+        a1->field_1f24 = 0x3c;
+        a1->field_1478 = 0;
+        a1->field_22d0 = 0;
+        a1->field_285a = 0;
+        a1->field_285c = 0x263;
+        a1->field_1e10 = 0;
+        fun_00085240((char*)a1 + 0x2920, 0, 0xf0);
+        a1->field_2a10 = 0;
+        a1->field_2a18 = 0;
+        a1->field_2a20 = -1;
+        a1->field_2a1c = -1;
+        a1->field_2a38 = 0;
+        a1->field_2a40 = 0;
+        a1->field_2a48 = 0;
+        a1->field_2a50 = 0;
+        a1->field_2a58 = 0;
+        a1->field_2a60 = 0;
+        a1->field_2a68 = 0;
+        a1->field_2a70 = 0;
+        return a1;
+    }
+    v3 = fun_00016810(0x2f8);
+    ((struct s_fun_00006aa0_s1*)s1)->field_8 = v3;
+    ((struct s_fun_00006aa0_s1*)s1)->field_10 = (int64_t)s1;
+    if (!v3) {
+        v4 = NULL;
+        a1->field_60 = (int64_t)v4;
+        v4[0x5b] = (int64_t)a1;
+        a1->field_13e8 = 0;
+        a1->field_13f0 = 0;
+        a1->field_1418 = 0;
+        a1->field_141c = 1;
+        a1->field_1470 = 0;
+        a1->field_1480 = 0;
+        a1->field_1488 = 0;
+        a1->field_1490 = 0;
+        a1->field_1498 = 0;
+        a1->field_14a0 = 0;
+        a1->field_14a8 = 0;
+        a1->field_14b8 = -1;
+        a1->field_14c0 = 0;
+        a1->field_14d4 = 0;
+        a1->field_14dc = 0;
+        a1->field_14e4 = 0;
+        a1->field_14f0 = 0;
+        a1->field_14ec = 0;
+        a1->field_14f2 = 0;
+        a1->field_14f4 = 0;
+        a1->field_14fc = 0;
+        a1->field_1504 = -16777216;
+        *(int32_t*)((char*)a1 + 0x150c) = -1082130432;
+        a1->field_1510 = -1082130432;
+        a1->field_1514 = 0;
+        a1->field_1518 = 0;
+        a1->field_1508 = 0;
+        a1->field_1520 = 0;
+        a1->field_1524 = 0;
+        a1->field_152c = 0;
+        a1->field_1530 = 0;
+        a1->field_1538 = 0;
+        a1->field_1548 = -4616189618054758400LL;
+        a1->field_1540 = -4616189618054758400LL;
+        a1->field_1550 = -4616189618054758400LL;
+        a1->field_1e08 = 0;
+        a1->field_1e0c = 0;
+        a1->field_1e14 = 0;
+        a1->field_1f20 = 0;
+        a1->field_1fc8 = 0;
+        a1->field_1fd0 = 0;
+        a1->field_1fe8 = 0;
+        a1->field_1fe0 = 0;
+        a1->field_1fd8 = 0;
+        a1->field_2010 = 0;
+        a1->field_2018 = 0;
+        a1->field_1ff0 = 0;
+        a1->field_2008 = 0;
+        a1->field_2020 = 2;
+        a1->field_2028 = -1;
+        a1->field_2030 = 0;
+        a1->field_2070 = 0;
+        a1->field_2072 = 0;
+        a1->field_2074 = 0;
+        a1->field_207c = 0;
+        a1->field_2084 = -1;
+        a1->field_2080 = -1;
+        a1->field_20ac = 0;
+        a1->field_20b4 = 0;
+        a1->field_219c = 0;
+        a1->field_2198 = 0;
+        a1->field_21a4 = 0;
+        a1->field_21a8 = 0x1010000;
+        a1->field_21ac = a1->field_79 != 0 ? 0x8200 : 0x1200;
+        a1->field_21b0 = a1->field_79 != 0 ? 0xa200 : 0x3200;
+        a1->field_21c8 = 0;
+        a1->field_21c0 = 0;
+        a1->field_21b8 = 0;
+        a1->field_21d4 = 0;
+        a1->field_21d0 = 0;
+        a1->field_21dc = 0;
+        a1->field_21e0 = 0;
+        a1->field_21f4 = 0;
+        a1->field_21f9 = 0;
+        a1->field_21f8 = 0;
+        a1->field_21fc = 0;
+        a1->field_2200 = -1;
+        a1->field_2268 = 0;
+        a1->field_2270 = 0;
+        a1->field_2278 = 0;
+        a1->field_2280 = 0;
+        a1->field_2284 = -1;
+        a1->field_2288 = 0;
+        a1->field_22a0 = 0;
+        a1->field_22a8 = 0;
+        a1->field_22b0 = 0;
+        a1->field_22c8 = 0;
+        a1->field_22d4 = 0;
+        a1->field_2330 = 0;
+        a1->field_23e8 = 0;
+        a1->field_23f0 = 0;
+        a1->field_2440 = 0;
+        a1->field_2430 = 0;
+        a1->field_2438 = 0;
+        a1->field_2448 = 0;
+        a1->field_2570 = 0;
+        a1->field_2578 = 0;
+        a1->field_257c = 0;
+        a1->field_2584 = 0;
+        a1->field_258c = 0xa900000;
+        a1->field_2594 = 0;
+        a1->field_259c = 0;
+        a1->field_25f4 = 0;
+        a1->field_25f6 = 0;
+        a1->field_25f8 = 0;
+        a1->field_2600 = 0;
+        a1->field_2604 = 0;
+        a1->field_2608 = 0;
+        a1->field_260c = 0x3c23d70a;
+        a1->field_2614 = 0;
+        a1->field_2618 = 0;
+        *(int64_t*)((char*)a1 + 0x26ac) = 0;
+        *(int32_t*)((char*)a1 + 0x26c0) = -1082130432;
+        *(int32_t*)((char*)a1 + 0x26c4) = -1082130432;
+        a1->field_26e0 = 0;
+        a1->field_26e4 = 0;
+        a1->field_2738 = 0;
+        a1->field_2740 = 0;
+        a1->field_2748 = 0;
+        a1->field_2750 = 0;
+        a1->field_2758 = 0;
+        a1->field_2760 = 0;
+        a1->field_2768 = 0;
+        a1->field_2770 = 0;
+        a1->field_2778 = 0;
+        a1->field_2780 = 0;
+        a1->field_2788 = 0;
+        a1->field_2790 = 0;
+        a1->field_2798 = 0;
+        a1->field_279c = 0;
+        a1->field_27a0 = 0;
+        a1->field_27c8 = 0;
+        a1->field_27c0 = 0;
+        a1->field_27a8 = 0;
+        a1->field_27d0 = 0x7f7fffff;
+        a1->field_27dc = 2;
+        a1->field_27d8 = 2;
+        a1->field_27e0 = 0;
+        a1->field_27e8 = 0;
+        a1->field_27f8 = 1;
+        a1->field_27fc = 0;
+        a1->field_2818 = 0;
+        a1->field_2820 = 0;
+        a1->field_2824 = 0x100001;
+        a1->field_1e1c = 0;
+        a1->field_2850 = 0;
+        a1->field_2858 = 0;
+        a1->field_2860 = 0xff;
+        a1->field_2862 = 0;
+        a1->field_2864 = 0;
+        a1->field_1f24 = 0x3c;
+        a1->field_1478 = 0;
+        a1->field_22d0 = 0;
+        a1->field_285a = 0;
+        a1->field_285c = 0x263;
+        a1->field_1e10 = 0;
+        fun_00085240((char*)a1 + 0x2920, 0, 0xf0);
+        a1->field_2a10 = 0;
+        a1->field_2a18 = 0;
+        a1->field_2a20 = -1;
+        a1->field_2a1c = -1;
+        a1->field_2a38 = 0;
+        a1->field_2a40 = 0;
+        a1->field_2a48 = 0;
+        a1->field_2a50 = 0;
+        a1->field_2a58 = 0;
+        a1->field_2a60 = 0;
+        a1->field_2a68 = 0;
+        a1->field_2a70 = 0;
+        return a1;
+    }
+    v4 = (int64_t*)fun_000286a0(v3);
+    a1->field_60 = (int64_t)v4;
+    v4[0x5b] = (int64_t)a1;
+    a1->field_13e8 = 0;
+    a1->field_13f0 = 0;
+    a1->field_1418 = 0;
+    a1->field_141c = 1;
+    a1->field_1470 = 0;
+    a1->field_1480 = 0;
+    a1->field_1488 = 0;
+    a1->field_1490 = 0;
+    a1->field_1498 = 0;
+    a1->field_14a0 = 0;
+    a1->field_14a8 = 0;
+    a1->field_14b8 = -1;
+    a1->field_14c0 = 0;
+    a1->field_14d4 = 0;
+    a1->field_14dc = 0;
+    a1->field_14e4 = 0;
+    a1->field_14f0 = 0;
+    a1->field_14ec = 0;
+    a1->field_14f2 = 0;
+    a1->field_14f4 = 0;
+    a1->field_14fc = 0;
+    a1->field_1504 = -16777216;
+    *(int32_t*)((char*)a1 + 0x150c) = -1082130432;
+    a1->field_1510 = -1082130432;
+    a1->field_1514 = 0;
+    a1->field_1518 = 0;
+    a1->field_1508 = 0;
+    a1->field_1520 = 0;
+    a1->field_1524 = 0;
+    a1->field_152c = 0;
+    a1->field_1530 = 0;
+    a1->field_1538 = 0;
+    a1->field_1548 = -4616189618054758400LL;
+    a1->field_1540 = -4616189618054758400LL;
+    a1->field_1550 = -4616189618054758400LL;
+    a1->field_1e08 = 0;
+    a1->field_1e0c = 0;
+    a1->field_1e14 = 0;
+    a1->field_1f20 = 0;
+    a1->field_1fc8 = 0;
+    a1->field_1fd0 = 0;
+    a1->field_1fe8 = 0;
+    a1->field_1fe0 = 0;
+    a1->field_1fd8 = 0;
+    a1->field_2010 = 0;
+    a1->field_2018 = 0;
+    a1->field_1ff0 = 0;
+    a1->field_2008 = 0;
+    a1->field_2020 = 2;
+    a1->field_2028 = -1;
+    a1->field_2030 = 0;
+    a1->field_2070 = 0;
+    a1->field_2072 = 0;
+    a1->field_2074 = 0;
+    a1->field_207c = 0;
+    a1->field_2084 = -1;
+    a1->field_2080 = -1;
+    a1->field_20ac = 0;
+    a1->field_20b4 = 0;
+    a1->field_219c = 0;
+    a1->field_2198 = 0;
+    a1->field_21a4 = 0;
+    a1->field_21a8 = 0x1010000;
+    a1->field_21ac = a1->field_79 != 0 ? 0x8200 : 0x1200;
+    a1->field_21b0 = a1->field_79 != 0 ? 0xa200 : 0x3200;
+    a1->field_21c8 = 0;
+    a1->field_21c0 = 0;
+    a1->field_21b8 = 0;
+    a1->field_21d4 = 0;
+    a1->field_21d0 = 0;
+    a1->field_21dc = 0;
+    a1->field_21e0 = 0;
+    a1->field_21f4 = 0;
+    a1->field_21f9 = 0;
+    a1->field_21f8 = 0;
+    a1->field_21fc = 0;
+    a1->field_2200 = -1;
+    a1->field_2268 = 0;
+    a1->field_2270 = 0;
+    a1->field_2278 = 0;
+    a1->field_2280 = 0;
+    a1->field_2284 = -1;
+    a1->field_2288 = 0;
+    a1->field_22a0 = 0;
+    a1->field_22a8 = 0;
+    a1->field_22b0 = 0;
+    a1->field_22c8 = 0;
+    a1->field_22d4 = 0;
+    a1->field_2330 = 0;
+    a1->field_23e8 = 0;
+    a1->field_23f0 = 0;
+    a1->field_2440 = 0;
+    a1->field_2430 = 0;
+    a1->field_2438 = 0;
+    a1->field_2448 = 0;
+    a1->field_2570 = 0;
+    a1->field_2578 = 0;
+    a1->field_257c = 0;
+    a1->field_2584 = 0;
+    a1->field_258c = 0xa900000;
+    a1->field_2594 = 0;
+    a1->field_259c = 0;
+    a1->field_25f4 = 0;
+    a1->field_25f6 = 0;
+    a1->field_25f8 = 0;
+    a1->field_2600 = 0;
+    a1->field_2604 = 0;
+    a1->field_2608 = 0;
+    a1->field_260c = 0x3c23d70a;
+    a1->field_2614 = 0;
+    a1->field_2618 = 0;
+    *(int64_t*)((char*)a1 + 0x26ac) = 0;
+    *(int32_t*)((char*)a1 + 0x26c0) = -1082130432;
+    *(int32_t*)((char*)a1 + 0x26c4) = -1082130432;
+    a1->field_26e0 = 0;
+    a1->field_26e4 = 0;
+    a1->field_2738 = 0;
+    a1->field_2740 = 0;
+    a1->field_2748 = 0;
+    a1->field_2750 = 0;
+    a1->field_2758 = 0;
+    a1->field_2760 = 0;
+    a1->field_2768 = 0;
+    a1->field_2770 = 0;
+    a1->field_2778 = 0;
+    a1->field_2780 = 0;
+    a1->field_2788 = 0;
+    a1->field_2790 = 0;
+    a1->field_2798 = 0;
+    a1->field_279c = 0;
+    a1->field_27a0 = 0;
+    a1->field_27c8 = 0;
+    a1->field_27c0 = 0;
+    a1->field_27a8 = 0;
+    a1->field_27d0 = 0x7f7fffff;
+    a1->field_27dc = 2;
+    a1->field_27d8 = 2;
+    a1->field_27e0 = 0;
+    a1->field_27e8 = 0;
+    a1->field_27f8 = 1;
+    a1->field_27fc = 0;
+    a1->field_2818 = 0;
+    a1->field_2820 = 0;
+    a1->field_2824 = 0x100001;
+    a1->field_1e1c = 0;
+    a1->field_2850 = 0;
+    a1->field_2858 = 0;
+    a1->field_2860 = 0xff;
+    a1->field_2862 = 0;
+    a1->field_2864 = 0;
+    a1->field_1f24 = 0x3c;
+    a1->field_1478 = 0;
+    a1->field_22d0 = 0;
+    a1->field_285a = 0;
+    a1->field_285c = 0x263;
+    a1->field_1e10 = 0;
+    fun_00085240((char*)a1 + 0x2920, 0, 0xf0);
+    a1->field_2a10 = 0;
+    a1->field_2a18 = 0;
+    a1->field_2a20 = -1;
+    a1->field_2a1c = -1;
+    a1->field_2a38 = 0;
+    a1->field_2a40 = 0;
+    a1->field_2a48 = 0;
+    a1->field_2a50 = 0;
+    a1->field_2a58 = 0;
+    a1->field_2a60 = 0;
+    a1->field_2a68 = 0;
+    a1->field_2a70 = 0;
+    return a1;
+}
+

@@ -1,0 +1,137 @@
+=== fun_0003afb0 @ 0x3afb0 size=505 blocks=8 calls=2 ===
+--- DISASM ---
+  0x3afb0: mov       rax, rsp
+  0x3afb3: mov       qword ptr [rax + 8], rbx
+  0x3afb7: mov       qword ptr [rax + 0x10], rsi
+  0x3afbb: push      rdi
+  0x3afbc: sub       rsp, 0xd0
+  0x3afc3: mov       ebx, dword ptr [rsp + 0x128]
+  0x3afca: mov       rdi, rdx
+  0x3afcd: mov       rsi, rcx
+  0x3afd0: cmp       ebx, 0x10
+  0x3afd3: jg        0x3b18f
+  0x3afd9: movaps    xmmword ptr [rax - 0x18], xmm6
+  0x3afdd: movaps    xmm1, xmm2
+  0x3afe0: movss     xmm6, dword ptr [rsp + 0x110]
+  0x3afe9: movaps    xmm0, xmm3
+  0x3afec: movaps    xmmword ptr [rax - 0x28], xmm7
+  0x3aff0: addss     xmm1, xmm6
+  0x3aff4: movss     xmm7, dword ptr [rsp + 0x118]
+  0x3affd: movaps    xmmword ptr [rax - 0x38], xmm8
+  0x3b002: addss     xmm0, xmm7
+  0x3b006: movaps    xmmword ptr [rax - 0x48], xmm9
+  0x3b00b: movaps    xmmword ptr [rax - 0x58], xmm10
+  0x3b010: movss     xmm10, dword ptr [rsp + 0x100]
+  0x3b01a: movaps    xmmword ptr [rax - 0x68], xmm11
+  0x3b01f: movaps    xmm8, xmm10
+  0x3b023: movss     xmm11, dword ptr [rsp + 0x108]
+  0x3b02d: addss     xmm8, xmm10
+  0x3b032: movaps    xmmword ptr [rax - 0x78], xmm12
+  0x3b037: movaps    xmm9, xmm11
+  0x3b03b: movss     xmm12, dword ptr [0x88530]
+  0x3b044: addss     xmm9, xmm11
+  0x3b049: mulss     xmm0, xmm12
+  0x3b04e: addss     xmm8, xmm2
+  0x3b053: mulss     xmm1, xmm12
+  0x3b058: addss     xmm9, xmm3
+  0x3b05d: movaps    xmmword ptr [rsp + 0x50], xmm13
+  0x3b063: movss     xmm13, dword ptr [rsp + 0x120]
+  0x3b06d: addss     xmm8, xmm6
+  0x3b072: addss     xmm9, xmm7
+  0x3b077: mulss     xmm8, dword ptr [0x88524]
+  0x3b080: mulss     xmm9, dword ptr [0x88524]
+  0x3b089: subss     xmm1, xmm8
+  0x3b08e: subss     xmm0, xmm9
+  0x3b093: mulss     xmm1, xmm1
+  0x3b097: mulss     xmm0, xmm0
+  0x3b09b: addss     xmm0, xmm1
+  0x3b09f: comiss    xmm0, xmm13
+  0x3b0a3: jbe       0x3b13d
+  0x3b0a9: movaps    xmm1, xmm3
+  0x3b0ac: movaps    xmm0, xmm2
+  0x3b0af: addss     xmm1, xmm11
+  0x3b0b4: inc       ebx
+  0x3b0b6: mov       dword ptr [rsp + 0x48], ebx
+  0x3b0ba: addss     xmm0, xmm10
+  0x3b0bf: movss     dword ptr [rsp + 0x40], xmm13
+  0x3b0c6: movss     dword ptr [rsp + 0x38], xmm9
+  0x3b0cd: movss     dword ptr [rsp + 0x30], xmm8
+  0x3b0d4: mulss     xmm1, xmm12
+  0x3b0d9: mulss     xmm0, xmm12
+  0x3b0de: movss     dword ptr [rsp + 0x28], xmm1
+  0x3b0e4: movss     dword ptr [rsp + 0x20], xmm0
+  0x3b0ea: call      0x3afb0
+  0x3b0ef: mov       dword ptr [rsp + 0x48], ebx
+  0x3b0f3: addss     xmm11, xmm7
+  0x3b0f8: movss     dword ptr [rsp + 0x40], xmm13
+  0x3b0ff: addss     xmm10, xmm6
+  0x3b104: movss     dword ptr [rsp + 0x38], xmm7
+  0x3b10a: movaps    xmm3, xmm9
+  0x3b10e: movss     dword ptr [rsp + 0x30], xmm6
+  0x3b114: movaps    xmm2, xmm8
+  0x3b118: mov       rdx, rdi
+  0x3b11b: mov       rcx, rsi
+  0x3b11e: mulss     xmm11, xmm12
+  0x3b123: mulss     xmm10, xmm12
+  0x3b128: movss     dword ptr [rsp + 0x28], xmm11
+  0x3b12f: movss     dword ptr [rsp + 0x20], xmm10
+  0x3b136: call      0x3afb0
+  0x3b13b: jmp       0x3b152
+  0x3b13d: test      rsi, rsi
+  0x3b140: je        0x3b150
+  0x3b142: movsxd    rax, dword ptr [rdx]
+  0x3b145: movss     dword ptr [rcx + rax*8], xmm6
+  0x3b14a: movss     dword ptr [rcx + rax*8 + 4], xmm7
+  0x3b150: inc       dword ptr [rdx]
+  0x3b152: movaps    xmm12, xmmword ptr [rsp + 0x60]
+  0x3b158: movaps    xmm11, xmmword ptr [rsp + 0x70]
+  0x3b15e: movaps    xmm10, xmmword ptr [rsp + 0x80]
+  0x3b167: movaps    xmm9, xmmword ptr [rsp + 0x90]
+  0x3b170: movaps    xmm8, xmmword ptr [rsp + 0xa0]
+  0x3b179: movaps    xmm7, xmmword ptr [rsp + 0xb0]
+  0x3b181: movaps    xmm6, xmmword ptr [rsp + 0xc0]
+  0x3b189: movaps    xmm13, xmmword ptr [rsp + 0x50]
+  0x3b18f: lea       r11, [rsp + 0xd0]
+  0x3b197: mov       eax, 1
+  0x3b19c: mov       rbx, qword ptr [r11 + 0x10]
+  0x3b1a0: mov       rsi, qword ptr [r11 + 0x18]
+  0x3b1a4: mov       rsp, r11
+  0x3b1a7: pop       rdi
+  0x3b1a8: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_0003afb0 @ 0x3afb0  size=505 */
+/* xrefs: called by fun_000364f0 (1 site) */
+/* confidence: HIGH */
+struct s_fun_0003afb0_v1;
+#ifndef __DS_TY_s_fun_0003afb0_v1
+#define __DS_TY_s_fun_0003afb0_v1
+#pragma pack(push, 1)
+struct s_fun_0003afb0_v1 {
+    float x;
+    float y;
+};
+#pragma pack(pop)
+#endif
+int32_t fun_0003afb0(float*a1, int32_t*a2, float a3, float a4, float a5, float a6, float a7, float a8, float a9, int32_t a10) {
+    struct s_fun_0003afb0_v1*v1;
+
+    if (a10 > 0x10) {
+        return 1;
+    }
+    if (((a4 + a8) * 0.5f - (2.0f * a6 + a4 + a8) * 0.25f) * ((a4 + a8) * 0.5f - (2.0f * a6 + a4 + a8) * 0.25f) + ((a3 + a7) * 0.5f - (2.0f * a5 + a3 + a7) * 0.25f) * ((a3 + a7) * 0.5f - (2.0f * a5 + a3 + a7) * 0.25f) > a9) {
+        fun_0003afb0(a1, a2, a3, a4, (a3 + a5) * 0.5f, (a4 + a6) * 0.5f, (2.0f * a5 + a3 + a7) * 0.25f, (2.0f * a6 + a4 + a8) * 0.25f, a9, a10 + 1);
+        fun_0003afb0(a1, a2, (2.0f * a5 + a3 + a7) * 0.25f, (2.0f * a6 + a4 + a8) * 0.25f, (a5 + a7) * 0.5f, (a6 + a8) * 0.5f, a7, a8, a9, a10 + 1);
+        return 1;
+    }
+    if (!a1) {
+        ++*a2;
+        return 1;
+    }
+    v1 = (struct s_fun_0003afb0_v1*)((char*)a1 + (int64_t)*a2 * 8);
+    v1->x = a7;
+    v1->y = a8;
+    ++*a2;
+    return 1;
+}
+

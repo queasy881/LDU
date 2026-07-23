@@ -1,0 +1,97 @@
+=== fun_000156d0 @ 0x156d0 size=98 blocks=13 calls=0 ===
+--- DISASM ---
+  0x156d0: mov       r9, rcx
+  0x156d3: mov       rax, rcx
+  0x156d6: test      r8b, r8b
+  0x156d9: jne       0x156f1
+  0x156db: test      rcx, rcx
+  0x156de: je        0x1570c
+  0x156e0: mov       r8, rax
+  0x156e3: mov       rax, qword ptr [rax + 0x3c0]
+  0x156ea: cmp       r8, rax
+  0x156ed: jne       0x156e0
+  0x156ef: jmp       0x1570c
+  0x156f1: test      r9, r9
+  0x156f4: je        0x1570c
+  0x156f6: mov       rcx, rax
+  0x156f9: mov       rax, qword ptr [rax + 0x3c0]
+  0x15700: mov       rax, qword ptr [rax + 0x3c8]
+  0x15707: cmp       rcx, rax
+  0x1570a: jne       0x156f6
+  0x1570c: cmp       rax, rdx
+  0x1570f: je        0x1572f
+  0x15711: test      r9, r9
+  0x15714: je        0x1572c
+  0x15716: cmp       r9, rdx
+  0x15719: je        0x1572f
+  0x1571b: cmp       r9, rax
+  0x1571e: je        0x1572c
+  0x15720: mov       r9, qword ptr [r9 + 0x3b0]
+  0x15727: test      r9, r9
+  0x1572a: jne       0x15716
+  0x1572c: xor       al, al
+  0x1572e: ret       
+  0x1572f: mov       al, 1
+  0x15731: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_000156d0 @ 0x156d0  size=98 */
+/* xrefs: called by fun_0004ee60 (1 site) */
+/* confidence: HIGH */
+#include <stdbool.h>
+int32_t fun_000156d0(int64_t a1, int64_t a2, int32_t a3) {
+    int64_t*v2;
+    int64_t*v5;
+    int64_t*v7;
+    int64_t v3;
+    int64_t*v4;
+    int64_t*v6;
+    bool v1;
+
+    v1 = 0;
+    if ((uint8_t)a3) {
+        v5 = (int64_t*)a1;
+        v3 = a1;
+        if (a1) {
+            while (true) {
+                v3 = *(int64_t*)(v5[0x78] + 0x3c8);
+                v6 = v5;
+                v5 = (int64_t*)*(int64_t*)(v5[0x78] + 0x3c8);
+                if ((int64_t)(v6) == (int64_t)(*(int64_t*)(v6[0x78] + 0x3c8))) break;
+            }
+        }
+    } else {
+        v2 = (int64_t*)a1;
+        v3 = a1;
+        if (a1) {
+            while (true) {
+                v4 = v2;
+                v2 = (int64_t*)v2[0x78];
+                if ((int64_t)(v4) == (int64_t)(v4[0x78])) break;
+            }
+            v3 = v2[0x78];
+        }
+    }
+    if (v3 != a2) {
+        v7 = (int64_t*)a1;
+        if (!a1) {
+            v1 = 1;
+        } else {
+            while ((int64_t)(v7) != (int64_t)(a2)) {
+                if ((int64_t)(v7) == (int64_t)(v3)) {
+                    v1 = 1;
+                } else {
+                    v7 = (int64_t*)v7[0x76];
+                    if (v7) continue;
+                    v1 = 1;
+                }
+                break;
+            }
+        }
+    }
+    if (v1) {
+        return 0;
+    }
+    return 1;
+}
+

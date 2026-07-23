@@ -1,0 +1,71 @@
+=== fun_00017260 @ 0x17260 size=100 blocks=5 calls=0 ===
+--- DISASM ---
+  0x17260: mov       rax, qword ptr [0x174148]
+  0x17267: mov       r11d, r9d
+  0x1726a: mov       word ptr [rax + 0x2070], 0
+  0x17273: mov       r10, qword ptr [0x174148]
+  0x1727a: cmp       byte ptr [r10 + 0x2071], 0
+  0x17282: jne       0x17293
+  0x17284: cmp       byte ptr [r10 + 0x2032], 0
+  0x1728c: jne       0x17293
+  0x1728e: xor       r9b, r9b
+  0x17291: jmp       0x17296
+  0x17293: mov       r9b, 1
+  0x17296: mov       byte ptr [r10 + 0x2031], r9b
+  0x1729d: bts       r8d, 7
+  0x172a2: mov       dword ptr [rax + 0x2074], r8d
+  0x172a9: mov       byte ptr [rax + 0x2072], 1
+  0x172b0: mov       dword ptr [rax + 0x2080], ecx
+  0x172b6: mov       dword ptr [rax + 0x2088], edx
+  0x172bc: mov       dword ptr [rax + 0x2078], r11d
+  0x172c3: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_00017260 @ 0x17260  size=100 */
+/* xrefs: called by fun_0004a910 (1 site) */
+/* confidence: HIGH */
+#include <stdbool.h>
+struct s_fun_00017260_qword_174148;
+#pragma pack(push, 1)
+struct s_fun_00017260_qword_174148 {
+    char _pad_0[8241];
+    int8_t field_2031;
+    int8_t field_2032;
+    char _pad_2033[61];
+    int16_t field_2070;
+    int8_t field_2072;
+    char _pad_2073[1];
+    int32_t field_2074;
+    int32_t field_2078;
+    char _pad_207c[4];
+    int32_t field_2080;
+    char _pad_2084[4];
+    int32_t field_2088;
+};
+#pragma pack(pop)
+#define qword_174148 (*(int64_t*)0x174148)
+void fun_00017260(int32_t a1, int32_t a2, int32_t a3, int32_t a4) {
+    struct s_fun_00017260_qword_174148* gs_174148 = (struct s_fun_00017260_qword_174148*)qword_174148;
+    bool v1;
+
+    gs_174148->field_2070 = 0;
+    if (*(int8_t*)(qword_174148 + 0x2071) || gs_174148->field_2032) {
+        v1 = 1;
+        gs_174148->field_2031 = (int8_t)v1;
+        gs_174148->field_2074 = a3 | 0x80;
+        gs_174148->field_2072 = 1;
+        gs_174148->field_2080 = a1;
+        gs_174148->field_2088 = a2;
+        gs_174148->field_2078 = a4;
+        return;
+    }
+    v1 = 0;
+    gs_174148->field_2031 = (int8_t)v1;
+    gs_174148->field_2074 = a3 | 0x80;
+    gs_174148->field_2072 = 1;
+    gs_174148->field_2080 = a1;
+    gs_174148->field_2088 = a2;
+    gs_174148->field_2078 = a4;
+    return;
+}
+

@@ -1,0 +1,203 @@
+=== fun_00035a30 @ 0x35a30 size=308 blocks=21 calls=3 ===
+--- DISASM ---
+  0x35a30: push      rbx
+  0x35a32: push      rsi
+  0x35a33: push      rdi
+  0x35a34: push      r14
+  0x35a36: sub       rsp, 0x28
+  0x35a3a: mov       rbx, rcx
+  0x35a3d: mov       r14, r8
+  0x35a40: mov       ecx, dword ptr [rcx + 4]
+  0x35a43: mov       esi, edx
+  0x35a45: cmp       edx, ecx
+  0x35a47: jle       0x35aa7
+  0x35a49: test      ecx, ecx
+  0x35a4b: je        0x35a58
+  0x35a4d: mov       eax, ecx
+  0x35a4f: cdq       
+  0x35a50: sub       eax, edx
+  0x35a52: sar       eax, 1
+  0x35a54: add       eax, ecx
+  0x35a56: jmp       0x35a5d
+  0x35a58: mov       eax, 8
+  0x35a5d: cmp       eax, esi
+  0x35a5f: mov       edi, esi
+  0x35a61: cmovg     edi, eax
+  0x35a64: cmp       edi, ecx
+  0x35a66: jle       0x35aa7
+  0x35a68: movsxd    rcx, edi
+  0x35a6b: add       rcx, rcx
+  0x35a6e: mov       qword ptr [rsp + 0x50], rbp
+  0x35a73: call      0x16810
+  0x35a78: mov       rdx, qword ptr [rbx + 8]
+  0x35a7c: mov       rbp, rax
+  0x35a7f: test      rdx, rdx
+  0x35a82: je        0x35a9b
+  0x35a84: movsxd    r8, dword ptr [rbx]
+  0x35a87: mov       rcx, rax
+  0x35a8a: add       r8, r8
+  0x35a8d: call      0x84b90
+  0x35a92: mov       rcx, qword ptr [rbx + 8]
+  0x35a96: call      0x168c0
+  0x35a9b: mov       qword ptr [rbx + 8], rbp
+  0x35a9f: mov       rbp, qword ptr [rsp + 0x50]
+  0x35aa4: mov       dword ptr [rbx + 4], edi
+  0x35aa7: movsxd    rcx, dword ptr [rbx]
+  0x35aaa: cmp       esi, ecx
+  0x35aac: jle       0x35b58
+  0x35ab2: mov       r8d, esi
+  0x35ab5: sub       r8d, ecx
+  0x35ab8: cmp       r8d, 8
+  0x35abc: jb        0x35b43
+  0x35ac2: mov       rdi, qword ptr [rbx + 8]
+  0x35ac6: lea       r9, [rbx + 8]
+  0x35aca: lea       eax, [rsi - 1]
+  0x35acd: movsxd    rdx, eax
+  0x35ad0: lea       r10, [rdi + rcx*2]
+  0x35ad4: lea       rax, [rdi + rdx*2]
+  0x35ad8: cmp       r10, r9
+  0x35adb: ja        0x35ae2
+  0x35add: cmp       rax, r9
+  0x35ae0: jae       0x35b43
+  0x35ae2: cmp       r10, r14
+  0x35ae5: ja        0x35aec
+  0x35ae7: cmp       rax, r14
+  0x35aea: jae       0x35b43
+  0x35aec: movzx     edi, word ptr [r14]
+  0x35af0: and       r8d, 0x80000007
+  0x35af7: jge       0x35b03
+  0x35af9: dec       r8d
+  0x35afc: or        r8d, 0xfffffff8
+  0x35b00: inc       r8d
+  0x35b03: mov       eax, esi
+  0x35b05: mov       edx, ecx
+  0x35b07: sub       eax, r8d
+  0x35b0a: nop       word ptr [rax + rax]
+  0x35b10: add       ecx, 8
+  0x35b13: mov       r8d, ecx
+  0x35b16: cmp       ecx, eax
+  0x35b18: jl        0x35b10
+  0x35b1a: sub       eax, edx
+  0x35b1c: add       eax, 7
+  0x35b1f: cdq       
+  0x35b20: and       edx, 7
+  0x35b23: add       eax, edx
+  0x35b25: sar       eax, 3
+  0x35b28: movsxd    rcx, eax
+  0x35b2b: mov       rax, rdi
+  0x35b2e: shl       rcx, 4
+  0x35b32: mov       rdi, r10
+  0x35b35: shr       rcx, 1
+  0x35b38: rep stosw word ptr [rdi], ax
+  0x35b3b: mov       ecx, r8d
+  0x35b3e: cmp       r8d, esi
+  0x35b41: jge       0x35b58
+  0x35b43: mov       rdx, qword ptr [rbx + 8]
+  0x35b47: movzx     eax, word ptr [r14]
+  0x35b4b: movsxd    rdi, ecx
+  0x35b4e: inc       ecx
+  0x35b50: mov       word ptr [rdx + rdi*2], ax
+  0x35b54: cmp       ecx, esi
+  0x35b56: jl        0x35b43
+  0x35b58: mov       dword ptr [rbx], esi
+  0x35b5a: add       rsp, 0x28
+  0x35b5e: pop       r14
+  0x35b60: pop       rdi
+  0x35b61: pop       rsi
+  0x35b62: pop       rbx
+  0x35b63: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_00035a30 @ 0x35a30  size=308 */
+/* xrefs: called by fun_00030320 (2 sites), fun_0002bf60 (1 site) */
+/* confidence: LOW - 5 residual gotos */
+#include <stdbool.h>
+struct s_fun_00035a30_a1;
+#pragma pack(push, 1)
+struct s_fun_00035a30_a1 {
+    int32_t field_0;
+    int32_t field_4;
+    void* field_8;
+};
+#pragma pack(pop)
+#ifndef __max
+#define __max(a,b) ((a)>(b)?(a):(b))
+#endif
+void __stosb(uint8_t*, uint8_t, uint64_t);
+void __stosw(uint16_t*, uint16_t, uint64_t);
+void __stosd(unsigned long*, unsigned long, uint64_t);
+void __stosq(uint64_t*, uint64_t, uint64_t);
+int64_t fun_00016810();
+void fun_000168c0();
+int64_t fun_00084b90();
+void fun_00035a30(struct s_fun_00035a30_a1*a1, int32_t a2, uint16_t*a3) {
+    int32_t v4;
+    int32_t v1;
+    int32_t v5;
+    int64_t v3;
+    int32_t v2;
+
+    if (a2 > a1->field_4) {
+        if (!a1->field_4) {
+            v1 = 8;
+        } else {
+            v1 = a1->field_4 / 2 + a1->field_4;
+        }
+        v2 = __max(v1, a2);
+        if (v2 > a1->field_4) {
+            v3 = fun_00016810((int64_t)v2 * 2);
+            if (a1->field_8) {
+                fun_00084b90(v3, a1->field_8, (int64_t)a1->field_0 * 2);
+                fun_000168c0(a1->field_8);
+            }
+            a1->field_8 = v3;
+            a1->field_4 = v2;
+        }
+    }
+    if (a2 > a1->field_0) {
+        v4 = (int64_t)a1->field_0;
+        if ((uint32_t)(a2 - a1->field_0) < 8) {
+L_35b43:;
+            while (true) {
+                ((int16_t*)a1->field_8)[v4] = (int16_t)*a3;
+                ++v4;
+                if (v4 >= a2) break;
+            }
+        } else if ((uint64_t)((char*)a1->field_8 + (int64_t)a1->field_0 * 2) > (uint64_t)(&a1->field_8)) {
+L_35ae2:;
+            if ((uint64_t)((char*)a1->field_8 + (int64_t)a1->field_0 * 2) > (uint64_t)(a3)) {
+L_35aec:;
+                v5 = (a2 - a1->field_0) & 0x80000007;
+                if (v5 < 0) {
+                    v5 = ((((a2 - a1->field_0) & 0x80000007) - 1) | 0xfffffff8) + 1;
+                }
+                v4 = (int64_t)a1->field_0;
+                while (true) {
+                    v4 += 8;
+                    if (v4 >= a2 - v5) break;
+                }
+                __stosw((uint16_t*)((char*)a1->field_8 + (int64_t)a1->field_0 * 2), *a3, (uint64_t)((uint64_t)((int64_t)((a2 - v5 - a1->field_0 + 7 + (((a2 - v5 - a1->field_0 + 7) >> 0x1f) & 7)) >> 3) << 4) >> 1));
+                if (v4 < a2) {
+                    goto L_35b43;
+                }
+            } else {
+                v4 = (int64_t)a1->field_0;
+                if ((uint64_t)((char*)a1->field_8 + (int64_t)((int32_t)(a2 - 1)) * 2) >= (uint64_t)(a3)) {
+                    goto L_35b43;
+                } else {
+                    goto L_35aec;
+                }
+            }
+        } else {
+            v4 = (int64_t)a1->field_0;
+            if ((uint64_t)((char*)a1->field_8 + (int64_t)((int32_t)(a2 - 1)) * 2) >= (uint64_t)(&a1->field_8)) {
+                goto L_35b43;
+            } else {
+                goto L_35ae2;
+            }
+        }
+    }
+    a1->field_0 = a2;
+    return;
+}
+

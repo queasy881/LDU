@@ -1,0 +1,66 @@
+=== fun_00027df0 @ 0x27df0 size=102 blocks=5 calls=3 ===
+--- DISASM ---
+  0x27df0: mov       qword ptr [rsp + 0x10], rbx
+  0x27df5: push      rdi
+  0x27df6: sub       rsp, 0x20
+  0x27dfa: movsxd    rdi, edx
+  0x27dfd: mov       rbx, rcx
+  0x27e00: cmp       edi, dword ptr [rcx + 4]
+  0x27e03: jle       0x27e4b
+  0x27e05: lea       rcx, [rdi + rdi*2]
+  0x27e09: mov       qword ptr [rsp + 0x30], rsi
+  0x27e0e: shl       rcx, 2
+  0x27e12: call      0x16810
+  0x27e17: mov       rdx, qword ptr [rbx + 8]
+  0x27e1b: mov       rsi, rax
+  0x27e1e: test      rdx, rdx
+  0x27e21: je        0x27e3f
+  0x27e23: movsxd    rcx, dword ptr [rbx]
+  0x27e26: lea       r8, [rcx + rcx*2]
+  0x27e2a: mov       rcx, rax
+  0x27e2d: shl       r8, 2
+  0x27e31: call      0x84b90
+  0x27e36: mov       rcx, qword ptr [rbx + 8]
+  0x27e3a: call      0x168c0
+  0x27e3f: mov       qword ptr [rbx + 8], rsi
+  0x27e43: mov       rsi, qword ptr [rsp + 0x30]
+  0x27e48: mov       dword ptr [rbx + 4], edi
+  0x27e4b: mov       rbx, qword ptr [rsp + 0x38]
+  0x27e50: add       rsp, 0x20
+  0x27e54: pop       rdi
+  0x27e55: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_00027df0 @ 0x27df0  size=102 */
+/* xrefs: called by fun_00013750 (2 sites), fun_0000bc40 (1 site), fun_0000ebe0 (1 site), fun_0000ee20 (1 site), fun_00014360 (1 site), fun_00027940 (1 site) */
+/* confidence: HIGH */
+struct s_fun_00027df0_a1;
+#pragma pack(push, 1)
+struct s_fun_00027df0_a1 {
+    int32_t field_0;
+    int32_t field_4;
+    int64_t field_8;
+};
+#pragma pack(pop)
+int64_t fun_00016810();
+void fun_000168c0();
+int64_t fun_00084b90();
+void fun_00027df0(struct s_fun_00027df0_a1*a1, int32_t a2) {
+    int64_t v1;
+
+    if (a2 <= a1->field_4) {
+        return;
+    }
+    v1 = fun_00016810((int64_t)a2 * 0xc);
+    if (!a1->field_8) {
+        a1->field_8 = v1;
+        a1->field_4 = a2;
+        return;
+    }
+    fun_00084b90(v1, a1->field_8, (int64_t)a1->field_0 * 0xc);
+    fun_000168c0(a1->field_8);
+    a1->field_8 = v1;
+    a1->field_4 = a2;
+    return;
+}
+

@@ -1,0 +1,95 @@
+=== fun_0003bc40 @ 0x3bc40 size=209 blocks=10 calls=1 ===
+--- DISASM ---
+  0x3bc40: sub       rsp, 0x28
+  0x3bc44: mov       r8, rcx
+  0x3bc47: call      0x392e0
+  0x3bc4c: test      eax, eax
+  0x3bc4e: je        0x3bc59
+  0x3bc50: neg       edx
+  0x3bc52: sbb       eax, eax
+  0x3bc54: add       rsp, 0x28
+  0x3bc58: ret       
+  0x3bc59: cmp       byte ptr [rcx], 0x74
+  0x3bc5c: jne       0x3bd07
+  0x3bc62: cmp       byte ptr [rcx + 1], 0x74
+  0x3bc66: jne       0x3bd07
+  0x3bc6c: cmp       byte ptr [rcx + 2], 0x63
+  0x3bc70: jne       0x3bd07
+  0x3bc76: cmp       byte ptr [rcx + 3], 0x66
+  0x3bc7a: jne       0x3bd07
+  0x3bc80: movzx     ecx, byte ptr [rcx + 5]
+  0x3bc84: movzx     eax, byte ptr [r8 + 6]
+  0x3bc89: shl       eax, 8
+  0x3bc8c: shl       ecx, 0x10
+  0x3bc8f: add       ecx, eax
+  0x3bc91: movzx     eax, byte ptr [r8 + 4]
+  0x3bc96: shl       eax, 0x18
+  0x3bc99: add       ecx, eax
+  0x3bc9b: movzx     eax, byte ptr [r8 + 7]
+  0x3bca0: add       eax, 0xffff0000
+  0x3bca5: add       ecx, eax
+  0x3bca7: test      ecx, 0xfffeffff
+  0x3bcad: jne       0x3bd07
+  0x3bcaf: movzx     eax, byte ptr [r8 + 8]
+  0x3bcb4: movzx     ecx, byte ptr [r8 + 9]
+  0x3bcb9: shl       eax, 8
+  0x3bcbc: add       ecx, eax
+  0x3bcbe: movzx     eax, byte ptr [r8 + 0xa]
+  0x3bcc3: shl       ecx, 8
+  0x3bcc6: add       ecx, eax
+  0x3bcc8: movzx     eax, byte ptr [r8 + 0xb]
+  0x3bccd: shl       ecx, 8
+  0x3bcd0: add       ecx, eax
+  0x3bcd2: cmp       edx, ecx
+  0x3bcd4: jge       0x3bd07
+  0x3bcd6: lea       eax, [rdx*4]
+  0x3bcdd: movsxd    rdx, eax
+  0x3bce0: add       rdx, r8
+  0x3bce3: movzx     eax, byte ptr [rdx + 0xd]
+  0x3bce7: movzx     ecx, byte ptr [rdx + 0xe]
+  0x3bceb: shl       ecx, 8
+  0x3bcee: shl       eax, 0x10
+  0x3bcf1: add       eax, ecx
+  0x3bcf3: movzx     ecx, byte ptr [rdx + 0xc]
+  0x3bcf7: shl       ecx, 0x18
+  0x3bcfa: add       eax, ecx
+  0x3bcfc: movzx     ecx, byte ptr [rdx + 0xf]
+  0x3bd00: add       eax, ecx
+  0x3bd02: add       rsp, 0x28
+  0x3bd06: ret       
+  0x3bd07: mov       eax, 0xffffffff
+  0x3bd0c: add       rsp, 0x28
+  0x3bd10: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_0003bc40 @ 0x3bc40  size=209 */
+/* xrefs: called by fun_000315f0 (1 site) */
+/* confidence: HIGH */
+struct s_fun_0003bc40_a1;
+#pragma pack(push, 1)
+struct s_fun_0003bc40_a1 {
+    int8_t field_0;
+    int8_t field_1;
+    int8_t field_2;
+    int8_t field_3;
+    uint8_t field_4;
+    uint8_t field_5;
+    uint8_t field_6;
+    uint8_t field_7;
+    uint8_t field_8;
+    uint8_t field_9;
+    uint8_t field_a;
+    uint8_t field_b;
+};
+#pragma pack(pop)
+int32_t fun_000392e0();
+uint32_t fun_0003bc40(struct s_fun_0003bc40_a1*a1, int32_t a2) {
+    if (fun_000392e0(a1)) {
+        return -(0 < (uint32_t)(a2));
+    }
+    if (a1->field_0 != 't' || a1->field_1 != 't' || a1->field_2 != 'c' || a1->field_3 != 'f' || (((uint32_t)a1->field_5 << 0x10) + ((uint32_t)a1->field_6 << 8) + ((uint32_t)a1->field_4 << 0x18) + ((uint32_t)a1->field_7 + 0xffff0000)) & 0xfffeffff || a2 >= (int32_t)((((((uint32_t)a1->field_9 + ((uint32_t)a1->field_8 << 8)) << 8) + (uint32_t)a1->field_a) << 8) + (uint32_t)a1->field_b)) {
+        return -1;
+    }
+    return ((uint32_t)*(uint8_t*)((char*)((char*)a1 + (int64_t)((int32_t)(a2 * 4))) + 0xd) << 0x10) + ((uint32_t)*(uint8_t*)((char*)((char*)a1 + (int64_t)((int32_t)(a2 * 4))) + 0xe) << 8) + ((uint32_t)*(uint8_t*)((char*)((char*)a1 + (int64_t)((int32_t)(a2 * 4))) + 0xc) << 0x18) + (uint32_t)*(uint8_t*)((char*)((char*)a1 + (int64_t)((int32_t)(a2 * 4))) + 0xf);
+}
+

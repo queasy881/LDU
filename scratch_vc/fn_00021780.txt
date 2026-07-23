@@ -1,0 +1,37 @@
+=== fun_00021780 @ 0x21780 size=46 blocks=1 calls=0 ===
+--- DISASM ---
+  0x21780: mov       r8, qword ptr [0x174148]
+  0x21787: mov       eax, 1
+  0x2178c: or        dword ptr [r8 + 0x1ea8], 2
+  0x21794: movsd     xmm0, qword ptr [rcx]
+  0x21798: test      edx, edx
+  0x2179a: movsd     qword ptr [r8 + 0x1ec8], xmm0
+  0x217a3: cmovne    eax, edx
+  0x217a6: mov       dword ptr [r8 + 0x1eb0], eax
+  0x217ad: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_00021780 @ 0x21780  size=46 */
+/* xrefs: called by fun_00006720 (1 site) */
+/* confidence: HIGH */
+struct s_fun_00021780_qword_174148;
+#pragma pack(push, 1)
+struct s_fun_00021780_qword_174148 {
+    char _pad_0[7848];
+    int32_t field_1ea8;
+    char _pad_1eac[4];
+    int32_t field_1eb0;
+    char _pad_1eb4[20];
+    double field_1ec8;
+};
+#pragma pack(pop)
+#define qword_174148 (*(int64_t*)0x174148)
+void fun_00021780(double*a1, int32_t a2) {
+    struct s_fun_00021780_qword_174148* gs_174148 = (struct s_fun_00021780_qword_174148*)qword_174148;
+
+    gs_174148->field_1ea8 |= 2;
+    gs_174148->field_1ec8 = *a1;
+    gs_174148->field_1eb0 = a2 != 0 ? a2 : 1;
+    return;
+}
+

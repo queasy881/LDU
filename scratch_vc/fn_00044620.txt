@@ -1,0 +1,458 @@
+=== fun_00044620 @ 0x44620 size=1014 blocks=74 calls=4 ===
+--- DISASM ---
+  0x44620: sub       rsp, 0x78
+  0x44624: movaps    xmm3, xmm1
+  0x44627: xorps     xmm2, xmm2
+  0x4462a: comiss    xmm2, xmm3
+  0x4462d: jae       0x44a0e
+  0x44633: cmp       r8, r9
+  0x44636: je        0x44a0e
+  0x4463c: movss     xmm5, dword ptr [0x88544]
+  0x44644: comiss    xmm3, xmm5
+  0x44647: jb        0x44651
+  0x44649: mov       rax, r9
+  0x4464c: add       rsp, 0x78
+  0x44650: ret       
+  0x44651: movss     xmm1, dword ptr [rsp + 0xa0]
+  0x4465a: comiss    xmm1, xmm2
+  0x4465d: movaps    xmmword ptr [rsp + 0x60], xmm6
+  0x44662: movaps    xmmword ptr [rsp + 0x50], xmm7
+  0x44667: movaps    xmmword ptr [rsp + 0x40], xmm8
+  0x4466d: movaps    xmmword ptr [rsp + 0x20], xmm11
+  0x44673: jbe       0x4492a
+  0x44679: movaps    xmmword ptr [rsp + 0x30], xmm9
+  0x4467f: xorps     xmm8, xmm8
+  0x44683: cvtps2pd  xmm11, xmm1
+  0x44687: test      r8, r8
+  0x4468a: js        0x44693
+  0x4468c: cvtsi2sd  xmm8, r8
+  0x44691: jmp       0x446ac
+  0x44693: mov       rax, r8
+  0x44696: mov       rcx, r8
+  0x44699: shr       rcx, 1
+  0x4469c: and       eax, 1
+  0x4469f: or        rcx, rax
+  0x446a2: cvtsi2sd  xmm8, rcx
+  0x446a7: addsd     xmm8, xmm8
+  0x446ac: movaps    xmm9, xmm1
+  0x446b0: xorps     xmm6, xmm6
+  0x446b3: xorps     xmm9, xmmword ptr [0x8aef0]
+  0x446bb: test      r8, r8
+  0x446be: js        0x446c7
+  0x446c0: cvtsi2ss  xmm6, r8
+  0x446c5: jmp       0x446df
+  0x446c7: mov       rax, r8
+  0x446ca: mov       rcx, r8
+  0x446cd: shr       rcx, 1
+  0x446d0: and       eax, 1
+  0x446d3: or        rcx, rax
+  0x446d6: cvtsi2ss  xmm6, rcx
+  0x446db: addss     xmm6, xmm6
+  0x446df: movaps    xmm0, xmm8
+  0x446e3: andps     xmm0, xmmword ptr [0x87d70]
+  0x446ea: comisd    xmm11, xmm0
+  0x446ef: jbe       0x44708
+  0x446f1: comiss    xmm2, xmm6
+  0x446f4: jbe       0x446fc
+  0x446f6: movaps    xmm0, xmm9
+  0x446fa: jmp       0x446ff
+  0x446fc: movaps    xmm0, xmm1
+  0x446ff: xorps     xmm8, xmm8
+  0x44703: cvtss2sd  xmm8, xmm0
+  0x44708: xorps     xmm7, xmm7
+  0x4470b: test      r9, r9
+  0x4470e: js        0x44717
+  0x44710: cvtsi2sd  xmm7, r9
+  0x44715: jmp       0x4472f
+  0x44717: mov       rax, r9
+  0x4471a: mov       rcx, r9
+  0x4471d: shr       rcx, 1
+  0x44720: and       eax, 1
+  0x44723: or        rcx, rax
+  0x44726: cvtsi2sd  xmm7, rcx
+  0x4472b: addsd     xmm7, xmm7
+  0x4472f: xorps     xmm4, xmm4
+  0x44732: test      r9, r9
+  0x44735: js        0x4473e
+  0x44737: cvtsi2ss  xmm4, r9
+  0x4473c: jmp       0x44756
+  0x4473e: mov       rax, r9
+  0x44741: mov       rcx, r9
+  0x44744: shr       rcx, 1
+  0x44747: and       eax, 1
+  0x4474a: or        rcx, rax
+  0x4474d: cvtsi2ss  xmm4, rcx
+  0x44752: addss     xmm4, xmm4
+  0x44756: movaps    xmm0, xmm7
+  0x44759: andps     xmm0, xmmword ptr [0x87d70]
+  0x44760: comisd    xmm11, xmm0
+  0x44765: jbe       0x44777
+  0x44767: comiss    xmm2, xmm4
+  0x4476a: jbe       0x44770
+  0x4476c: movaps    xmm1, xmm9
+  0x44770: xorps     xmm7, xmm7
+  0x44773: cvtss2sd  xmm7, xmm1
+  0x44777: cmp       r9, r8
+  0x4477a: jae       0x44787
+  0x4477c: movaps    xmm0, xmm8
+  0x44780: movaps    xmm8, xmm7
+  0x44784: movaps    xmm7, xmm0
+  0x44787: ucomiss   xmm4, xmm2
+  0x4478a: jp        0x4479b
+  0x4478c: jne       0x4479b
+  0x4478e: comiss    xmm2, xmm6
+  0x44791: jbe       0x4479b
+  0x44793: xorps     xmm7, xmm7
+  0x44796: cvtss2sd  xmm7, xmm9
+  0x4479b: movaps    xmm9, xmmword ptr [rsp + 0x30]
+  0x447a1: cmp       r9, r8
+  0x447a4: jae       0x447af
+  0x447a6: movaps    xmm1, xmm5
+  0x447a9: subss     xmm1, xmm3
+  0x447ad: jmp       0x447b2
+  0x447af: movaps    xmm1, xmm3
+  0x447b2: mov       rcx, r8
+  0x447b5: xorps     xmm0, xmm0
+  0x447b8: imul      rcx, r9
+  0x447bc: test      rcx, rcx
+  0x447bf: js        0x447c8
+  0x447c1: cvtsi2ss  xmm0, rcx
+  0x447c6: jmp       0x447dd
+  0x447c8: mov       rax, rcx
+  0x447cb: and       ecx, 1
+  0x447ce: shr       rax, 1
+  0x447d1: or        rax, rcx
+  0x447d4: cvtsi2ss  xmm0, rax
+  0x447d9: addss     xmm0, xmm0
+  0x447dd: comiss    xmm2, xmm0
+  0x447e0: jbe       0x448a9
+  0x447e6: cmp       r8, r9
+  0x447e9: xorps     xmm2, xmm2
+  0x447ec: cmovb     r9, r8
+  0x447f0: test      r9, r9
+  0x447f3: js        0x447fc
+  0x447f5: cvtsi2ss  xmm2, r9
+  0x447fa: jmp       0x44812
+  0x447fc: mov       rax, r9
+  0x447ff: and       r9d, 1
+  0x44803: shr       rax, 1
+  0x44806: or        rax, r9
+  0x44809: cvtsi2ss  xmm2, rax
+  0x4480e: addss     xmm2, xmm2
+  0x44812: xorps     xmm2, xmmword ptr [0x8aef0]
+  0x44819: subss     xmm4, xmm6
+  0x4481d: andps     xmm4, xmmword ptr [0x88610]
+  0x44824: divss     xmm2, xmm4
+  0x44828: movaps    xmm4, xmm2
+  0x4482b: movaps    xmm3, xmm2
+  0x4482e: subss     xmm4, dword ptr [rsp + 0xa8]
+  0x44837: addss     xmm3, dword ptr [rsp + 0xa8]
+  0x44840: comiss    xmm1, xmm4
+  0x44843: jb        0x44851
+  0x44845: comiss    xmm3, xmm1
+  0x44848: jb        0x44851
+  0x4484a: xor       eax, eax
+  0x4484c: jmp       0x449f3
+  0x44851: comiss    xmm2, xmm1
+  0x44854: jbe       0x44885
+  0x44856: xorps     xmm8, xmmword ptr [0x927e0]
+  0x4485e: divss     xmm1, xmm4
+  0x44862: divsd     xmm8, xmm11
+  0x44867: subss     xmm5, xmm1
+  0x4486b: movaps    xmm0, xmm8
+  0x4486f: cvtps2pd  xmm1, xmm5
+  0x44872: call      0x71f30
+  0x44877: mulsd     xmm0, xmm11
+  0x4487c: xorps     xmm0, xmmword ptr [0x927e0]
+  0x44883: jmp       0x448f6
+  0x44885: subss     xmm1, xmm3
+  0x44889: divsd     xmm7, xmm11
+  0x4488e: subss     xmm5, xmm3
+  0x44892: movaps    xmm0, xmm7
+  0x44895: divss     xmm1, xmm5
+  0x44899: cvtss2sd  xmm1, xmm1
+  0x4489d: call      0x71f30
+  0x448a2: mulsd     xmm0, xmm11
+  0x448a7: jmp       0x448f6
+  0x448a9: comiss    xmm2, xmm6
+  0x448ac: ja        0x448cb
+  0x448ae: comiss    xmm2, xmm4
+  0x448b1: ja        0x448cb
+  0x448b3: divsd     xmm7, xmm8
+  0x448b8: cvtss2sd  xmm1, xmm1
+  0x448bc: movaps    xmm0, xmm7
+  0x448bf: call      0x71f30
+  0x448c4: mulsd     xmm0, xmm8
+  0x448c9: jmp       0x448f6
+  0x448cb: movsd     xmm6, qword ptr [0x927e0]
+  0x448d3: subss     xmm5, xmm1
+  0x448d7: xorps     xmm8, xmm6
+  0x448db: xorps     xmm7, xmm6
+  0x448de: divsd     xmm8, xmm7
+  0x448e3: cvtps2pd  xmm1, xmm5
+  0x448e6: movaps    xmm0, xmm8
+  0x448ea: call      0x71f30
+  0x448ef: mulsd     xmm0, xmm7
+  0x448f3: xorps     xmm0, xmm6
+  0x448f6: movsd     xmm1, qword ptr [0x927a8]
+  0x448fe: xor       ecx, ecx
+  0x44900: comisd    xmm0, xmm1
+  0x44904: jb        0x4491d
+  0x44906: subsd     xmm0, xmm1
+  0x4490a: comisd    xmm0, xmm1
+  0x4490e: jae       0x4491d
+  0x44910: movabs    rax, 0x8000000000000000
+  0x4491a: mov       rcx, rax
+  0x4491d: cvttsd2si rax, xmm0
+  0x44922: add       rax, rcx
+  0x44925: jmp       0x449f3
+  0x4492a: lea       eax, [rcx - 8]
+  0x4492d: cmp       eax, 1
+  0x44930: ja        0x449b7
+  0x44936: sub       r9, r8
+  0x44939: xorps     xmm0, xmm0
+  0x4493c: js        0x44945
+  0x4493e: cvtsi2ss  xmm0, r9
+  0x44943: jmp       0x4495b
+  0x44945: mov       rax, r9
+  0x44948: and       r9d, 1
+  0x4494c: shr       rax, 1
+  0x4494f: or        rax, r9
+  0x44952: cvtsi2ss  xmm0, rax
+  0x44957: addss     xmm0, xmm0
+  0x4495b: mulss     xmm0, xmm3
+  0x4495f: xorps     xmm1, xmm1
+  0x44962: test      r8, r8
+  0x44965: js        0x4496e
+  0x44967: cvtsi2ss  xmm1, r8
+  0x4496c: jmp       0x44984
+  0x4496e: mov       rax, r8
+  0x44971: and       r8d, 1
+  0x44975: shr       rax, 1
+  0x44978: or        rax, r8
+  0x4497b: cvtsi2ss  xmm1, rax
+  0x44980: addss     xmm1, xmm1
+  0x44984: addss     xmm0, xmm1
+  0x44988: xor       ecx, ecx
+  0x4498a: movss     xmm1, dword ptr [0x927b0]
+  0x44992: comiss    xmm0, xmm1
+  0x44995: jb        0x449ad
+  0x44997: subss     xmm0, xmm1
+  0x4499b: comiss    xmm0, xmm1
+  0x4499e: jae       0x449ad
+  0x449a0: movabs    rax, 0x8000000000000000
+  0x449aa: mov       rcx, rax
+  0x449ad: cvttss2si rax, xmm0
+  0x449b2: add       rax, rcx
+  0x449b5: jmp       0x449f3
+  0x449b7: xor       eax, eax
+  0x449b9: comiss    xmm5, xmm3
+  0x449bc: jbe       0x449f3
+  0x449be: cmp       r8, r9
+  0x449c1: jbe       0x449cd
+  0x449c3: movsd     xmm2, qword ptr [0x927b8]
+  0x449cb: jmp       0x449d5
+  0x449cd: movsd     xmm2, qword ptr [0x88550]
+  0x449d5: xorps     xmm0, xmm0
+  0x449d8: sub       r9, r8
+  0x449db: cvtsi2ss  xmm0, r9
+  0x449e0: mulss     xmm0, xmm3
+  0x449e4: cvtps2pd  xmm1, xmm0
+  0x449e7: addsd     xmm1, xmm2
+  0x449eb: cvttsd2si rax, xmm1
+  0x449f0: add       rax, r8
+  0x449f3: movaps    xmm11, xmmword ptr [rsp + 0x20]
+  0x449f9: movaps    xmm8, xmmword ptr [rsp + 0x40]
+  0x449ff: movaps    xmm7, xmmword ptr [rsp + 0x50]
+  0x44a04: movaps    xmm6, xmmword ptr [rsp + 0x60]
+  0x44a09: add       rsp, 0x78
+  0x44a0d: ret       
+  0x44a0e: mov       rax, r8
+  0x44a11: add       rsp, 0x78
+  0x44a15: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_00044620 @ 0x44620  size=1014 */
+/* xrefs: called by fun_00046ea0 (2 sites) */
+/* confidence: HIGH */
+#include <stdbool.h>
+#ifndef __DS_FABS_DEFINED
+#define __DS_FABS_DEFINED
+static double __fabs(double x){ return x<0.0?-x:x; }
+static float __fabsf(float x){ return x<0.0f?-x:x; }
+#endif
+#ifndef __min
+#define __min(a,b) ((a)<(b)?(a):(b))
+#endif
+double fun_00071f30(double, double, int64_t, int64_t, int64_t, int64_t);
+uint64_t fun_00044620(int64_t a1, float a2, int64_t a3, int64_t a4, float a5, float a6) {
+    double v6;
+    float v3 = 0;
+    float v8;
+    double v9;
+    float v1 = 0;
+    float v10;
+    double v11;
+    float v4 = 0;
+    float v12;
+    int64_t v13;
+    float v2 = 0;
+    double v14 = 0;
+    int64_t v16;
+    double v17;
+    float v18;
+    int64_t v19;
+    float v21;
+    double v22;
+    uint64_t v15;
+    float v20;
+    bool v7;
+    bool v5;
+
+    v5 = 0;
+    if (a2 <= 0.0f || a3 == a4) {
+        return a3;
+    }
+    if (a2 >= 1.0f) {
+        return a4;
+    }
+    v3 = 2.0f * (float)(((uint64_t)(a3) >> 1) | (a3 & 1));
+    if (!(a5 > 0.0f)) {
+        v18 = (float)(a4 - a3);
+        if ((uint32_t)((int32_t)(a1 - 8)) > 1) {
+            v15 = 0;
+            if (a2 < 1.0f) {
+                if ((uint64_t)(a3) <= (uint64_t)(a4)) {
+                    v22 = 0.5;
+                    v15 = (int64_t)((double)(v18 * a2) + v22) + a3;
+                    return v15;
+                }
+                v22 = -0.5;
+                v15 = (int64_t)((double)(v18 * a2) + v22) + a3;
+                return v15;
+            }
+            return v15;
+        } else {
+            if (a4 - a3 < 0) {
+                v18 = 2.0f * (float)(((uint64_t)(a4 - a3) >> 1) | ((a4 - a3) & 1));
+            }
+            if (a3 >= 0) {
+                v3 = (float)a3;
+            }
+            v19 = 0;
+            v20 = v18 * a2 + v3;
+            v21 = v20;
+            if ((int32_t)(v21) >= 9.223372e+18f) {
+                v19 = 0;
+                v21 = *(float*)&v20 - 9.223372e+18f;
+                if (!((int32_t)(v21) >= 9.223372e+18f)) {
+                    v19 = -9223372036854775808LL;
+                    v21 = *(float*)&v20 - 9.223372e+18f;
+                    v15 = (int64_t)v21 + v19;
+                    return v15;
+                }
+            }
+            v15 = (int64_t)v21 + v19;
+            return v15;
+        }
+        return v15;
+    } else {
+        if (a3 < 0) {
+            v6 = 2.0 * (double)(((uint64_t)(a3) >> 1) | (a3 & 1));
+        } else {
+            v6 = (double)a3;
+        }
+        if (a3 >= 0) {
+            v3 = (float)a3;
+        }
+        v7 = !(v3 < 0.0f);
+        if ((double)a5 > __fabs(v6)) {
+            if (v7) {
+                v8 = a5;
+            } else {
+                v8 = -a5;
+            }
+            v6 = (double)v8;
+        }
+        if (a4 < 0) {
+            v9 = 2.0 * (double)(((uint64_t)(a4) >> 1) | (a4 & 1));
+        } else {
+            v9 = (double)a4;
+        }
+        if (a4 < 0) {
+            v1 = 2.0f * (float)(((uint64_t)(a4) >> 1) | (a4 & 1));
+        } else {
+            v1 = (float)a4;
+        }
+        if ((double)a5 > __fabs(v9)) {
+            v10 = a5;
+            if (v1 < 0.0f) {
+                v10 = -a5;
+            }
+            v9 = (double)v10;
+        }
+        v11 = v9;
+        if ((uint64_t)(a4) < (uint64_t)(a3)) {
+            v11 = v6;
+            v6 = v9;
+        }
+        if (v1 == 0.0f && !v7) {
+            v11 = (double)(-a5);
+        }
+        if ((uint64_t)(a4) >= (uint64_t)(a3)) {
+            v4 = a2;
+        } else {
+            v4 = 1.0f - a2;
+        }
+        if (a3 * a4 < 0) {
+            v12 = 2.0f * (float)(((uint64_t)(a3 * a4) >> 1) | (a3 * a4 & 1));
+        } else {
+            v12 = (float)(a3 * a4);
+        }
+        if (!(v12 < 0.0f)) {
+            if (v3 < 0.0f || v1 < 0.0f) {
+                v14 = -(fun_00071f30(-v6 / -v11, (double)(1.0f - v4), a3, a4, 0, 0) * -v11);
+                v5 = 1;
+            } else {
+                v14 = fun_00071f30(v11 / v6, (double)v4, a3, a4, 0, 0) * v6;
+                v5 = 1;
+            }
+        } else {
+            v13 = __min(a3, a4);
+            if (v13 < 0) {
+                v13 &= 1;
+                v2 = 2.0f * (float)(((uint64_t)(__min(a3, a4)) >> 1) | (__min(a3, a4) & 1));
+            } else {
+                v2 = (float)v13;
+            }
+            if (!(v4 >= -v2 / __fabsf(v1 - v3) - a6) || !(-v2 / __fabsf(v1 - v3) + a6 >= v4)) {
+                if (!(-v2 / __fabsf(v1 - v3) > v4)) {
+                    v14 = fun_00071f30(v11 / (double)a5, (double)((v4 - (-v2 / __fabsf(v1 - v3) + a6)) / (1.0f - (-v2 / __fabsf(v1 - v3) + a6))), a3, v13, 0, 0) * (double)a5;
+                    v5 = 1;
+                } else {
+                    v14 = -(fun_00071f30(-v6 / (double)a5, (double)(1.0f - v4 / (-v2 / __fabsf(v1 - v3) - a6)), a3, v13, 0, 0) * (double)a5);
+                    v5 = 1;
+                }
+            }
+        }
+        if (!v5) {
+            v15 = 0;
+            return v15;
+        }
+        v16 = 0;
+        v17 = v14;
+        if ((int64_t)(v14) >= 9.223372036854776e+18) {
+            v16 = 0;
+            v17 = *(float*)&v14 - 9.223372036854776e+18;
+            if (!((int64_t)(v17) >= 9.223372036854776e+18)) {
+                v16 = -9223372036854775808LL;
+                v17 = *(float*)&v14 - 9.223372036854776e+18;
+                v15 = (int64_t)v17 + v16;
+                return v15;
+            }
+        }
+        v15 = (int64_t)v17 + v16;
+        return v15;
+    }
+}
+

@@ -1,0 +1,107 @@
+=== fun_00013f60 @ 0x13f60 size=135 blocks=15 calls=1 ===
+--- DISASM ---
+  0x13f60: mov       qword ptr [rsp + 8], rbx
+  0x13f65: mov       qword ptr [rsp + 0x10], rsi
+  0x13f6a: push      rdi
+  0x13f6b: sub       rsp, 0x20
+  0x13f6f: mov       rsi, rcx
+  0x13f72: mov       rbx, rcx
+  0x13f75: movzx     eax, byte ptr [rbx]
+  0x13f78: cmp       al, 0x20
+  0x13f7a: je        0x13f80
+  0x13f7c: cmp       al, 9
+  0x13f7e: jne       0x13f85
+  0x13f80: inc       rbx
+  0x13f83: jmp       0x13f75
+  0x13f85: mov       rdi, rbx
+  0x13f88: test      al, al
+  0x13f8a: je        0x13fba
+  0x13f8c: nop       dword ptr [rax]
+  0x13f90: inc       rbx
+  0x13f93: cmp       byte ptr [rbx], 0
+  0x13f96: jne       0x13f90
+  0x13f98: cmp       rbx, rdi
+  0x13f9b: jbe       0x13fba
+  0x13f9d: nop       dword ptr [rax]
+  0x13fa0: movzx     ecx, byte ptr [rbx - 1]
+  0x13fa4: lea       rax, [rbx - 1]
+  0x13fa8: cmp       cl, 0x20
+  0x13fab: je        0x13fb2
+  0x13fad: cmp       cl, 9
+  0x13fb0: jne       0x13fba
+  0x13fb2: mov       rbx, rax
+  0x13fb5: cmp       rax, rdi
+  0x13fb8: ja        0x13fa0
+  0x13fba: cmp       rdi, rsi
+  0x13fbd: je        0x13fd0
+  0x13fbf: mov       r8, rbx
+  0x13fc2: mov       rdx, rdi
+  0x13fc5: sub       r8, rdi
+  0x13fc8: mov       rcx, rsi
+  0x13fcb: call      0x84b90
+  0x13fd0: sub       rbx, rdi
+  0x13fd3: mov       byte ptr [rbx + rsi], 0
+  0x13fd7: mov       rbx, qword ptr [rsp + 0x30]
+  0x13fdc: mov       rsi, qword ptr [rsp + 0x38]
+  0x13fe1: add       rsp, 0x20
+  0x13fe5: pop       rdi
+  0x13fe6: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_00013f60 @ 0x13f60  size=135 */
+/* xrefs: called by fun_00055600 (1 site) */
+/* confidence: HIGH */
+#include <stdbool.h>
+int64_t fun_00084b90();
+uint8_t* fun_00013f60(int8_t*a1) {
+    uint8_t*i = 0;
+    int8_t*v2;
+    uint8_t*v3;
+    uint8_t*result;
+    uint8_t*v1;
+
+    for (i = (uint8_t*)a1; *i == ' ' || *i == '\t'; i++) {
+    }
+    result = (uint8_t*)(uint32_t)*i;
+    v1 = i;
+    if (*i) {
+        v2 = (int8_t*)i;
+        while (true) {
+            ++v2;
+            if (!*v2) break;
+        }
+        result = (uint8_t*)(uint32_t)*i;
+        v1 = (uint8_t*)v2;
+        if ((uint64_t)(v2) > (uint64_t)(i)) {
+            v3 = (uint8_t*)v2;
+            while (true) {
+                if (*(uint8_t*)((char*)v3 - 1) == ' ') {
+                    result = v3 - 1;
+                    v1 = v3 - 1;
+                    --v3;
+                    if ((uint64_t)(v3) > (uint64_t)(i)) continue;
+                } else {
+                    result = v3 - 1;
+                    v1 = v3;
+                    if (*(uint8_t*)((char*)v3 - 1) == '\t') {
+                        result = v3 - 1;
+                        v1 = v3 - 1;
+                        --v3;
+                        if ((uint64_t)(v3) > (uint64_t)(i)) {
+                            continue;
+                        }
+                    }
+                }
+                break;
+            }
+        }
+    }
+    if ((int64_t)(i) == (int64_t)(a1)) {
+        a1[(int64_t)(v1 - (int64_t)i)] = 0;
+        return result;
+    }
+    result = (uint8_t*)fun_00084b90(a1, i, v1 - (int64_t)i);
+    a1[(int64_t)(v1 - (int64_t)i)] = 0;
+    return result;
+}
+

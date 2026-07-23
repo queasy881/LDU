@@ -1,0 +1,112 @@
+=== fun_000129f0 @ 0x129f0 size=244 blocks=10 calls=4 ===
+--- DISASM ---
+  0x129f0: mov       qword ptr [rsp + 8], rbx
+  0x129f5: push      rdi
+  0x129f6: sub       rsp, 0x50
+  0x129fa: mov       rax, qword ptr [0x174148]
+  0x12a01: movaps    xmmword ptr [rsp + 0x40], xmm6
+  0x12a06: movaps    xmmword ptr [rsp + 0x30], xmm7
+  0x12a0b: movaps    xmmword ptr [rsp + 0x20], xmm8
+  0x12a11: cmp       dword ptr [rax + 0x2020], 3
+  0x12a18: movss     xmm7, dword ptr [rax + 0x94]
+  0x12a20: movss     xmm8, dword ptr [rax + 0x98]
+  0x12a29: mulss     xmm7, dword ptr [0x8ae24]
+  0x12a31: mulss     xmm8, dword ptr [0x88528]
+  0x12a3a: jne       0x12a57
+  0x12a3c: mov       eax, 0x27e
+  0x12a41: test      ecx, ecx
+  0x12a43: mov       edi, 0x280
+  0x12a48: mov       ebx, 0x281
+  0x12a4d: cmove     edi, eax
+  0x12a50: mov       eax, 0x27f
+  0x12a55: jmp       0x12a70
+  0x12a57: mov       eax, 0x201
+  0x12a5c: test      ecx, ecx
+  0x12a5e: mov       edi, 0x203
+  0x12a63: mov       ebx, 0x204
+  0x12a68: cmove     edi, eax
+  0x12a6b: mov       eax, 0x202
+  0x12a70: cmove     ebx, eax
+  0x12a73: movaps    xmm2, xmm8
+  0x12a77: mov       ecx, ebx
+  0x12a79: movaps    xmm1, xmm7
+  0x12a7c: call      0x128f0
+  0x12a81: movaps    xmm2, xmm8
+  0x12a85: movaps    xmm1, xmm7
+  0x12a88: mov       ecx, edi
+  0x12a8a: movd      xmm6, eax
+  0x12a8e: cvtdq2ps  xmm6, xmm6
+  0x12a91: call      0x128f0
+  0x12a96: movd      xmm1, eax
+  0x12a9a: xorps     xmm7, xmm7
+  0x12a9d: cvtdq2ps  xmm1, xmm1
+  0x12aa0: subss     xmm6, xmm1
+  0x12aa4: ucomiss   xmm6, xmm7
+  0x12aa7: jp        0x12aab
+  0x12aa9: je        0x12ac6
+  0x12aab: mov       ecx, edi
+  0x12aad: call      0x14f10
+  0x12ab2: test      al, al
+  0x12ab4: je        0x12ac6
+  0x12ab6: mov       ecx, ebx
+  0x12ab8: call      0x14f10
+  0x12abd: test      al, al
+  0x12abf: je        0x12ac6
+  0x12ac1: xorps     xmm0, xmm0
+  0x12ac4: jmp       0x12ac9
+  0x12ac6: movaps    xmm0, xmm6
+  0x12ac9: mov       rbx, qword ptr [rsp + 0x60]
+  0x12ace: movaps    xmm6, xmmword ptr [rsp + 0x40]
+  0x12ad3: movaps    xmm7, xmmword ptr [rsp + 0x30]
+  0x12ad8: movaps    xmm8, xmmword ptr [rsp + 0x20]
+  0x12ade: add       rsp, 0x50
+  0x12ae2: pop       rdi
+  0x12ae3: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_000129f0 @ 0x129f0  size=244 */
+/* xrefs: called by fun_00044a20 (2 sites), fun_00045150 (2 sites), fun_00046760 (2 sites), fun_00046ea0 (2 sites), fun_00045890 (1 site), fun_00045ff0 (1 site) */
+/* confidence: HIGH */
+struct s_fun_000129f0_qword_174148;
+#pragma pack(push, 1)
+struct s_fun_000129f0_qword_174148 {
+    char _pad_0[148];
+    float field_94;
+    float field_98;
+    char _pad_9c[8068];
+    int32_t field_2020;
+};
+#pragma pack(pop)
+#define qword_174148 (*(int64_t*)0x174148)
+int32_t fun_000128f0();
+int32_t fun_00014f10();
+float fun_000129f0(int32_t a1) {
+    struct s_fun_000129f0_qword_174148* gs_174148 = (struct s_fun_000129f0_qword_174148*)qword_174148;
+    int32_t v3;
+    int32_t v4;
+    int32_t v1 = 0;
+    float result;
+    int32_t v5;
+    int32_t v6;
+    int32_t v2 = 0;
+
+    if (gs_174148->field_2020 != 3) {
+        v3 = 0x202;
+        v4 = 0x204;
+        v1 = a1 == 0 ? 0x201 : 0x203;
+    } else {
+        v3 = 0x27f;
+        v4 = 0x281;
+        v1 = a1 == 0 ? 0x27e : 0x280;
+    }
+    v2 = a1 == 0 ? v3 : v4;
+    v5 = fun_000128f0(v2, gs_174148->field_94 * 0.72f, gs_174148->field_98 * 0.3f);
+    v6 = fun_000128f0(v1, gs_174148->field_94 * 0.72f, gs_174148->field_98 * 0.3f);
+    if ((float)v5 - (float)v6 == 0.0f || !((uint8_t)fun_00014f10(v1)) || !((uint8_t)fun_00014f10(v2))) {
+        result = (float)v5 - (float)v6;
+        return result;
+    }
+    result = 0.0f;
+    return result;
+}
+

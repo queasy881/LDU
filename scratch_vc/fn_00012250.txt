@@ -1,0 +1,65 @@
+=== fun_00012250 @ 0x12250 size=84 blocks=4 calls=0 ===
+--- DISASM ---
+  0x12250: mov       rdx, qword ptr [0x174148]
+  0x12257: mov       rax, qword ptr [rdx + 0x1480]
+  0x1225e: cmp       qword ptr [rax + 0x1c8], 0
+  0x12266: jne       0x12277
+  0x12268: cmp       qword ptr [rdx + 0x22c8], 0
+  0x12270: mov       edx, 0x280
+  0x12275: je        0x1227c
+  0x12277: mov       edx, 0x250
+  0x1227c: movss     xmm0, dword ptr [rax + rdx]
+  0x12281: movss     xmm1, dword ptr [rax + rdx + 4]
+  0x12287: subss     xmm0, dword ptr [rax + 0x118]
+  0x1228f: subss     xmm1, dword ptr [rax + 0x11c]
+  0x12297: mov       rax, rcx
+  0x1229a: movss     dword ptr [rcx], xmm0
+  0x1229e: movss     dword ptr [rcx + 4], xmm1
+  0x122a3: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_00012250 @ 0x12250  size=84 */
+/* xrefs: called by fun_0003d6b0 (1 site), fun_0004b530 (1 site), fun_0004ef60 (1 site) */
+/* confidence: HIGH */
+struct Vec2;
+struct s_fun_00012250_qword_174148;
+#ifndef __DS_TY_Vec2
+#define __DS_TY_Vec2
+#pragma pack(push, 1)
+struct Vec2 {
+    float x;
+    float y;
+};
+#pragma pack(pop)
+#endif
+#pragma pack(push, 1)
+struct s_fun_00012250_qword_174148 {
+    char _pad_0[5248];
+    void* field_1480;
+    char _pad_1488[3648];
+    int64_t field_22c8;
+};
+#pragma pack(pop)
+#define qword_174148 (*(int64_t*)0x174148)
+struct Vec2* fun_00012250(struct Vec2*a1) {
+    struct s_fun_00012250_qword_174148* gs_174148 = (struct s_fun_00012250_qword_174148*)qword_174148;
+    float*v1;
+
+    if (((int64_t*)gs_174148->field_1480)[0x39]) {
+        v1 = (float*)0x250;
+        a1->x = *(float*)((char*)gs_174148->field_1480 + (int64_t)v1) - ((float*)gs_174148->field_1480)[0x46];
+        a1->y = *(float*)((char*)((char*)gs_174148->field_1480 + (int64_t)v1) + 4) - ((float*)gs_174148->field_1480)[0x47];
+        return a1;
+    }
+    v1 = (float*)0x280;
+    if (!gs_174148->field_22c8) {
+        a1->x = *(float*)((char*)gs_174148->field_1480 + (int64_t)v1) - ((float*)gs_174148->field_1480)[0x46];
+        a1->y = *(float*)((char*)((char*)gs_174148->field_1480 + (int64_t)v1) + 4) - ((float*)gs_174148->field_1480)[0x47];
+        return a1;
+    }
+    v1 = (float*)0x250;
+    a1->x = *(float*)((char*)gs_174148->field_1480 + (int64_t)v1) - ((float*)gs_174148->field_1480)[0x46];
+    a1->y = *(float*)((char*)((char*)gs_174148->field_1480 + (int64_t)v1) + 4) - ((float*)gs_174148->field_1480)[0x47];
+    return a1;
+}
+

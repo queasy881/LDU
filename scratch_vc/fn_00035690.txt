@@ -1,0 +1,47 @@
+=== fun_00035690 @ 0x35690 size=51 blocks=6 calls=0 ===
+--- DISASM ---
+  0x35690: mov       eax, dword ptr [rcx]
+  0x35692: test      eax, eax
+  0x35694: jle       0x356c2
+  0x35696: nop       word ptr [rax + rax]
+  0x356a0: mov       edx, eax
+  0x356a2: lea       r8, [rdx + rdx*8]
+  0x356a6: mov       rdx, qword ptr [rcx + 8]
+  0x356aa: cmp       dword ptr [rdx + r8*8 - 0x20], 0
+  0x356b0: jne       0x356c2
+  0x356b2: cmp       qword ptr [rdx + r8*8 - 0x18], 0
+  0x356b8: jne       0x356c2
+  0x356ba: dec       eax
+  0x356bc: mov       dword ptr [rcx], eax
+  0x356be: test      eax, eax
+  0x356c0: jg        0x356a0
+  0x356c2: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_00035690 @ 0x35690  size=51 */
+/* xrefs: called by fun_0001ce80 (1 site) */
+/* confidence: HIGH */
+struct s_fun_00035690_a1;
+#pragma pack(push, 1)
+struct s_fun_00035690_a1 {
+    int32_t field_0;
+    char _pad_4[4];
+    void* field_8;
+};
+#pragma pack(pop)
+void fun_00035690(struct s_fun_00035690_a1*a1) {
+    int32_t v1 = 0;
+
+    if (a1->field_0 > 0) {
+        v1 = a1->field_0;
+        while (!*(int32_t*)((char*)((char*)a1->field_8 + v1 * 0x48) - 0x20) && !*(int64_t*)((char*)((char*)a1->field_8 + v1 * 0x48) - 0x18)) {
+            a1->field_0 = v1 - 1;
+            --v1;
+            if (v1 <= 0) {
+                return;
+            }
+        }
+    }
+    return;
+}
+

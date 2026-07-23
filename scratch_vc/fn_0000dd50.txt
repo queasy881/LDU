@@ -1,0 +1,120 @@
+=== fun_0000dd50 @ 0xdd50 size=165 blocks=7 calls=1 ===
+--- DISASM ---
+  0xdd50: push      rbx
+  0xdd52: sub       rsp, 0x20
+  0xdd56: mov       r9, qword ptr [rcx + 8]
+  0xdd5a: mov       rbx, rcx
+  0xdd5d: test      r9, r9
+  0xdd60: je        0xddef
+  0xdd66: mov       qword ptr [rcx], 0
+  0xdd6d: mov       r8, qword ptr [0x174148]
+  0xdd74: test      r8, r8
+  0xdd77: je        0xddd7
+  0xdd79: movsx     rdx, word ptr [r8 + 0x28ec]
+  0xdd81: lea       rcx, [r8 + 0x28f0]
+  0xdd88: mov       r10d, dword ptr [r8 + 4]
+  0xdd8c: lea       rcx, [rcx + rdx*8]
+  0xdd90: cmp       dword ptr [rcx], r10d
+  0xdd93: je        0xddcc
+  0xdd95: lea       ecx, [rdx + 1]
+  0xdd98: mov       eax, 0x2aaaaaab
+  0xdd9d: imul      ecx
+  0xdd9f: mov       eax, edx
+  0xdda1: shr       eax, 0x1f
+  0xdda4: add       edx, eax
+  0xdda6: lea       eax, [rdx + rdx*2]
+  0xdda9: add       eax, eax
+  0xddab: sub       ecx, eax
+  0xddad: mov       word ptr [r8 + 0x28ec], cx
+  0xddb5: movsx     rcx, cx
+  0xddb9: add       rcx, 0x51e
+  0xddc0: lea       rcx, [r8 + rcx*8]
+  0xddc4: xor       eax, eax
+  0xddc6: mov       dword ptr [rcx], r10d
+  0xddc9: mov       dword ptr [rcx + 4], eax
+  0xddcc: inc       word ptr [rcx + 6]
+  0xddd0: inc       dword ptr [r8 + 0x28e8]
+  0xddd7: mov       rdx, qword ptr [0x174150]
+  0xddde: mov       rcx, r9
+  0xdde1: call      qword ptr [0x173040]
+  0xdde7: mov       qword ptr [rbx + 8], 0
+  0xddef: add       rsp, 0x20
+  0xddf3: pop       rbx
+  0xddf4: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_0000dd50 @ 0xdd50  size=165 */
+/* xrefs: called by fun_00021fa0 (16 sites), fun_0001ab40 (6 sites), fun_0000d940 (1 site), fun_0000d9f0 (1 site), fun_0000db80 (1 site), fun_0000f670 (1 site), fun_0001bf40 (1 site) */
+/* confidence: HIGH */
+struct s_fun_0000dd50_a1;
+struct s_fun_0000dd50_qword_174148;
+struct s_fun_0000dd50_v1;
+struct s_fun_0000dd50_v3;
+#pragma pack(push, 1)
+struct s_fun_0000dd50_a1 {
+    int64_t field_0;
+    int64_t field_8;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_0000dd50_qword_174148 {
+    char _pad_0[4];
+    int32_t field_4;
+    char _pad_8[10464];
+    int32_t field_28e8;
+    int16_t field_28ec;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_0000dd50_v1 {
+    int32_t field_0;
+    char _pad_4[2];
+    int16_t field_6;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_0000dd50_v3 {
+    int32_t field_0;
+    int32_t field_4;
+};
+#pragma pack(pop)
+#define qword_173040 (*(int64_t*)0x173040)
+#define qword_174148 (*(int64_t*)0x174148)
+#define qword_174150 (*(int64_t*)0x174150)
+int64_t fun_0000dd50(struct s_fun_0000dd50_a1*a1) {
+    struct s_fun_0000dd50_qword_174148* gs_174148 = (struct s_fun_0000dd50_qword_174148*)qword_174148;
+    struct s_fun_0000dd50_v1*v1;
+    int64_t result = 0;
+    int64_t v2;
+    struct s_fun_0000dd50_v3*v3;
+
+    if (!a1->field_8) {
+        return result;
+    }
+    a1->field_0 = 0;
+    if (!qword_174148) {
+        result = ((int64_t(*)())(qword_173040))(a1->field_8, qword_174150, qword_174148, a1->field_8);
+        a1->field_8 = 0;
+        return result;
+    }
+    v1 = (struct s_fun_0000dd50_v1*)(qword_174148 + 0x28f0 + (int64_t)gs_174148->field_28ec * 8);
+    if (v1->field_0 == gs_174148->field_4) {
+        ++v1->field_6;
+        ++gs_174148->field_28e8;
+        result = ((int64_t(*)())(qword_173040))(a1->field_8, qword_174150, qword_174148, a1->field_8);
+        a1->field_8 = 0;
+        return result;
+    }
+    v2 = (int64_t)gs_174148->field_28ec + 1;
+    gs_174148->field_28ec = (int16_t)((int32_t)((int64_t)gs_174148->field_28ec + 1) - (int32_t)((int32_t)((int64_t)gs_174148->field_28ec + 1) / 6 * 3) * 2);
+    v3 = (struct s_fun_0000dd50_v3*)(qword_174148 + ((int64_t)((int16_t)((int32_t)v2 - (int32_t)((int32_t)v2 / 6 * 3) * 2)) + 0x51e) * 8);
+    v3->field_0 = gs_174148->field_4;
+    v3->field_4 = 0;
+    v1 = (struct s_fun_0000dd50_v1*)v3;
+    ++v1->field_6;
+    ++gs_174148->field_28e8;
+    result = ((int64_t(*)())(qword_173040))(a1->field_8, qword_174150, qword_174148, a1->field_8);
+    a1->field_8 = 0;
+    return result;
+}
+

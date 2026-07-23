@@ -1,0 +1,171 @@
+=== fun_000173c0 @ 0x173c0 size=406 blocks=6 calls=0 ===
+--- DISASM ---
+  0x173c0: mov       r11, qword ptr [0x174148]
+  0x173c7: mov       r10d, r8d
+  0x173ca: or        r10d, 0x10
+  0x173ce: bt        r8d, 0xa
+  0x173d3: cmovae    r10d, r8d
+  0x173d7: mov       dword ptr [r11 + 0x2080], ecx
+  0x173de: mov       dword ptr [r11 + 0x2084], ecx
+  0x173e5: xor       ecx, ecx
+  0x173e7: mov       word ptr [r11 + 0x2070], 0x101
+  0x173f1: mov       eax, ecx
+  0x173f3: mov       dword ptr [r11 + 0x2088], edx
+  0x173fa: mov       dword ptr [r11 + 0x2074], r10d
+  0x17401: mov       dword ptr [r11 + 0x2078], r9d
+  0x17408: mov       byte ptr [r11 + 0x2072], 0
+  0x17410: bt        r10d, 9
+  0x17415: jb        0x1741e
+  0x17417: mov       eax, dword ptr [r11 + 0x120]
+  0x1741e: mov       dword ptr [r11 + 0x207c], eax
+  0x17425: mov       qword ptr [r11 + 0x20b8], rcx
+  0x1742c: mov       qword ptr [r11 + 0x20c0], rcx
+  0x17433: mov       dword ptr [r11 + 0x20d8], ecx
+  0x1743a: mov       qword ptr [r11 + 0x20e8], 0xffffffffffffffff
+  0x17445: mov       dword ptr [r11 + 0x20e4], 0x7f7fffff
+  0x17450: mov       dword ptr [r11 + 0x20e0], 0x7f7fffff
+  0x1745b: mov       dword ptr [r11 + 0x20dc], 0x7f7fffff
+  0x17466: mov       qword ptr [r11 + 0x20f0], rcx
+  0x1746d: mov       qword ptr [r11 + 0x20f8], rcx
+  0x17474: mov       dword ptr [r11 + 0x2110], ecx
+  0x1747b: mov       qword ptr [r11 + 0x2120], 0xffffffffffffffff
+  0x17486: mov       dword ptr [r11 + 0x211c], 0x7f7fffff
+  0x17491: mov       dword ptr [r11 + 0x2118], 0x7f7fffff
+  0x1749c: mov       dword ptr [r11 + 0x2114], 0x7f7fffff
+  0x174a7: mov       qword ptr [r11 + 0x2128], rcx
+  0x174ae: mov       qword ptr [r11 + 0x2130], rcx
+  0x174b5: mov       dword ptr [r11 + 0x2148], ecx
+  0x174bc: mov       qword ptr [r11 + 0x2158], 0xffffffffffffffff
+  0x174c7: mov       dword ptr [r11 + 0x2154], 0x7f7fffff
+  0x174d2: mov       dword ptr [r11 + 0x2150], 0x7f7fffff
+  0x174dd: mov       dword ptr [r11 + 0x214c], 0x7f7fffff
+  0x174e8: mov       dword ptr [r11 + 0x20b4], ecx
+  0x174ef: mov       qword ptr [r11 + 0x2160], rcx
+  0x174f6: mov       qword ptr [r11 + 0x2168], rcx
+  0x174fd: mov       dword ptr [r11 + 0x2180], ecx
+  0x17504: mov       qword ptr [r11 + 0x2190], 0xffffffffffffffff
+  0x1750f: mov       dword ptr [r11 + 0x218c], 0x7f7fffff
+  0x1751a: mov       dword ptr [r11 + 0x2188], 0x7f7fffff
+  0x17525: mov       dword ptr [r11 + 0x2184], 0x7f7fffff
+  0x17530: mov       rax, qword ptr [0x174148]
+  0x17537: cmp       byte ptr [rax + 0x2071], cl
+  0x1753d: jne       0x1754e
+  0x1753f: cmp       byte ptr [rax + 0x2032], cl
+  0x17545: jne       0x1754e
+  0x17547: mov       byte ptr [rax + 0x2031], cl
+  0x1754d: ret       
+  0x1754e: mov       byte ptr [rax + 0x2031], 1
+  0x17555: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_000173c0 @ 0x173c0  size=406 */
+/* xrefs: called by fun_00017ee0 (1 site), fun_00018db0 (1 site) */
+/* confidence: HIGH */
+struct s_fun_000173c0_qword_174148;
+#pragma pack(push, 1)
+struct s_fun_000173c0_qword_174148 {
+    char _pad_0[288];
+    int32_t field_120;
+    char _pad_124[7949];
+    int8_t field_2031;
+    int8_t field_2032;
+    char _pad_2033[61];
+    int16_t field_2070;
+    int8_t field_2072;
+    char _pad_2073[1];
+    int32_t field_2074;
+    int32_t field_2078;
+    int32_t field_207c;
+    int32_t field_2080;
+    int32_t field_2084;
+    int32_t field_2088;
+    char _pad_208c[40];
+    int32_t field_20b4;
+    int64_t field_20b8;
+    int64_t field_20c0;
+    char _pad_20c8[16];
+    int32_t field_20d8;
+    int32_t field_20dc;
+    int32_t field_20e0;
+    int32_t field_20e4;
+    int64_t field_20e8;
+    int64_t field_20f0;
+    int64_t field_20f8;
+    char _pad_2100[16];
+    int32_t field_2110;
+    int32_t field_2114;
+    int32_t field_2118;
+    int32_t field_211c;
+    int64_t field_2120;
+    int64_t field_2128;
+    int64_t field_2130;
+    char _pad_2138[16];
+    int32_t field_2148;
+    int32_t field_214c;
+    int32_t field_2150;
+    int32_t field_2154;
+    int64_t field_2158;
+    int64_t field_2160;
+    int64_t field_2168;
+    char _pad_2170[16];
+    int32_t field_2180;
+    int32_t field_2184;
+    int32_t field_2188;
+    int32_t field_218c;
+    int64_t field_2190;
+};
+#pragma pack(pop)
+#define qword_174148 (*(int64_t*)0x174148)
+void fun_000173c0(int32_t a1, int32_t a2, int32_t a3, int32_t a4) {
+    struct s_fun_000173c0_qword_174148* gs_174148 = (struct s_fun_000173c0_qword_174148*)qword_174148;
+    int32_t v1;
+
+    gs_174148->field_2080 = a1;
+    gs_174148->field_2084 = a1;
+    gs_174148->field_2070 = 0x101;
+    gs_174148->field_2088 = a2;
+    gs_174148->field_2074 = ((a3 >> 0xa) & 1) == 0 ? a3 : a3 | 0x10;
+    gs_174148->field_2078 = a4;
+    gs_174148->field_2072 = 0;
+    v1 = 0;
+    if (!(((((a3 >> 0xa) & 1) == 0 ? a3 : a3 | 0x10) >> 9) & 1)) {
+        v1 = gs_174148->field_120;
+    }
+    gs_174148->field_207c = v1;
+    gs_174148->field_20b8 = 0;
+    gs_174148->field_20c0 = 0;
+    gs_174148->field_20d8 = 0;
+    gs_174148->field_20e8 = -1;
+    gs_174148->field_20e4 = 0x7f7fffff;
+    gs_174148->field_20e0 = 0x7f7fffff;
+    gs_174148->field_20dc = 0x7f7fffff;
+    gs_174148->field_20f0 = 0;
+    gs_174148->field_20f8 = 0;
+    gs_174148->field_2110 = 0;
+    gs_174148->field_2120 = -1;
+    gs_174148->field_211c = 0x7f7fffff;
+    gs_174148->field_2118 = 0x7f7fffff;
+    gs_174148->field_2114 = 0x7f7fffff;
+    gs_174148->field_2128 = 0;
+    gs_174148->field_2130 = 0;
+    gs_174148->field_2148 = 0;
+    gs_174148->field_2158 = -1;
+    gs_174148->field_2154 = 0x7f7fffff;
+    gs_174148->field_2150 = 0x7f7fffff;
+    gs_174148->field_214c = 0x7f7fffff;
+    gs_174148->field_20b4 = 0;
+    gs_174148->field_2160 = 0;
+    gs_174148->field_2168 = 0;
+    gs_174148->field_2180 = 0;
+    gs_174148->field_2190 = -1;
+    gs_174148->field_218c = 0x7f7fffff;
+    gs_174148->field_2188 = 0x7f7fffff;
+    gs_174148->field_2184 = 0x7f7fffff;
+    if (*(int8_t*)(qword_174148 + 0x2071) || gs_174148->field_2032) {
+        gs_174148->field_2031 = 1;
+        return;
+    }
+    gs_174148->field_2031 = 0;
+    return;
+}
+

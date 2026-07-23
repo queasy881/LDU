@@ -1,0 +1,77 @@
+=== fun_0000ca70 @ 0xca70 size=138 blocks=6 calls=0 ===
+--- DISASM ---
+  0xca70: push      rdi
+  0xca72: mov       r8, qword ptr [0x174148]
+  0xca79: mov       r10, rcx
+  0xca7c: movsxd    rdi, dword ptr [r8 + 0x1430]
+  0xca83: mov       rax, qword ptr [r8 + 0x1438]
+  0xca8a: cmp       qword ptr [rax + rdi*8 - 8], rcx
+  0xca8f: je        0xcaf8
+  0xca91: movsx     r9, word ptr [rcx + 0xe2]
+  0xca99: mov       qword ptr [rsp + 0x10], rbx
+  0xca9e: lea       ebx, [rdi - 1]
+  0xcaa1: cmp       r9d, ebx
+  0xcaa4: jge       0xcadf
+  0xcaa6: mov       r11, r9
+  0xcaa9: nop       dword ptr [rax]
+  0xcab0: mov       rcx, qword ptr [r8 + 0x1438]
+  0xcab7: lea       r11, [r11 + 1]
+  0xcabb: inc       r9d
+  0xcabe: mov       rax, qword ptr [rcx + r11*8]
+  0xcac2: mov       qword ptr [rcx + r11*8 - 8], rax
+  0xcac7: mov       rax, qword ptr [r8 + 0x1438]
+  0xcace: mov       rcx, qword ptr [rax + r11*8 - 8]
+  0xcad3: dec       word ptr [rcx + 0xe2]
+  0xcada: cmp       r9d, ebx
+  0xcadd: jl        0xcab0
+  0xcadf: mov       rax, qword ptr [r8 + 0x1438]
+  0xcae6: mov       qword ptr [rax + rdi*8 - 8], r10
+  0xcaeb: mov       word ptr [r10 + 0xe2], bx
+  0xcaf3: mov       rbx, qword ptr [rsp + 0x10]
+  0xcaf8: pop       rdi
+  0xcaf9: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_0000ca70 @ 0xca70  size=138 */
+/* xrefs: called by fun_0000c2e0 (1 site), fun_00011e40 (1 site) */
+/* confidence: HIGH */
+#include <stdbool.h>
+struct s_fun_0000ca70_qword_174148;
+#pragma pack(push, 1)
+struct s_fun_0000ca70_qword_174148 {
+    char _pad_0[5168];
+    int32_t field_1430;
+    char _pad_1434[4];
+    void* field_1438;
+};
+#pragma pack(pop)
+#define qword_174148 (*(int64_t*)0x174148)
+void fun_0000ca70(int16_t*a1) {
+    struct s_fun_0000ca70_qword_174148* gs_174148 = (struct s_fun_0000ca70_qword_174148*)qword_174148;
+    int32_t v1;
+    int64_t v2;
+    int64_t*v3;
+
+    if ((int64_t)(*(int64_t*)((char*)((char*)gs_174148->field_1438 + (int64_t)gs_174148->field_1430 * 8) - 8)) == (int64_t)(a1)) {
+        return;
+    }
+    if ((int32_t)a1[0x71] >= (int32_t)((int64_t)gs_174148->field_1430 - 1)) {
+        *(int64_t*)((char*)((char*)gs_174148->field_1438 + (int64_t)gs_174148->field_1430 * 8) - 8) = (int64_t)a1;
+        a1[0x71] = (int16_t)((int64_t)gs_174148->field_1430 - 1);
+        return;
+    }
+    v1 = (int64_t)a1[0x71];
+    v2 = v1;
+    while (true) {
+        v3 = (int64_t*)((char*)gs_174148->field_1438 + (v2 + 1) * 8);
+        *(int64_t*)((char*)v3 - 8) = *v3;
+        --*(int16_t*)(*(int64_t*)((char*)v3 - 8) + 0xe2);
+        ++v1;
+        ++v2;
+        if (v1 >= (int32_t)((int64_t)gs_174148->field_1430 - 1)) break;
+    }
+    *(int64_t*)((char*)((char*)gs_174148->field_1438 + (int64_t)gs_174148->field_1430 * 8) - 8) = (int64_t)a1;
+    a1[0x71] = (int16_t)((int64_t)gs_174148->field_1430 - 1);
+    return;
+}
+

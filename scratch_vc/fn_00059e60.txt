@@ -1,0 +1,33 @@
+=== fun_00059e60 @ 0x59e60 size=69 blocks=2 calls=1 ===
+--- DISASM ---
+  0x59e60: mov       qword ptr [rsp + 8], rbx
+  0x59e65: mov       qword ptr [rsp + 0x10], rsi
+  0x59e6a: push      rdi
+  0x59e6b: sub       rsp, 0x30
+  0x59e6f: mov       esi, r9d
+  0x59e72: mov       ebx, edx
+  0x59e74: mov       rdi, rcx
+  0x59e77: call      0x8d00
+  0x59e7c: mov       r9d, dword ptr [rsp + 0x60]
+  0x59e81: mov       r8d, esi
+  0x59e84: mov       edx, ebx
+  0x59e86: mov       dword ptr [rsp + 0x60], 0xffffffff
+  0x59e8e: mov       rcx, rdi
+  0x59e91: mov       rbx, qword ptr [rsp + 0x40]
+  0x59e96: mov       rsi, qword ptr [rsp + 0x48]
+  0x59e9b: add       rsp, 0x30
+  0x59e9f: pop       rdi
+  0x59ea0: jmp       0x8920
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_00059e60 @ 0x59e60  size=69 */
+/* xrefs: called by fun_0005b1c0 (2 sites) */
+/* confidence: HIGH */
+void fun_00008920();
+int32_t fun_00008d00();
+void fun_00059e60(int64_t a1, int32_t a2, int64_t a3, int32_t a4, int32_t a5) {
+    fun_00008d00(a1, a2, a3);
+    fun_00008920();
+    return;
+}
+

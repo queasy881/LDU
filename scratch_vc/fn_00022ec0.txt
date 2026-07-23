@@ -1,0 +1,209 @@
+=== fun_00022ec0 @ 0x22ec0 size=567 blocks=34 calls=11 ===
+--- DISASM ---
+  0x22ec0: push      rdi
+  0x22ec2: sub       rsp, 0x50
+  0x22ec6: mov       rdi, qword ptr [0x174148]
+  0x22ecd: cmp       byte ptr [rdi + 0x2861], 0
+  0x22ed4: mov       dword ptr [rdi + 0x2864], 0
+  0x22ede: je        0x230f1
+  0x22ee4: mov       rax, qword ptr [0x174148]
+  0x22eeb: xor       r8d, r8d
+  0x22eee: mov       qword ptr [rsp + 0x60], rbx
+  0x22ef3: mov       edx, 1
+  0x22ef8: mov       qword ptr [rsp + 0x68], rbp
+  0x22efd: mov       ecx, 0x20e
+  0x22f02: mov       qword ptr [rsp + 0x70], rsi
+  0x22f07: mov       esi, dword ptr [rdi + 0x14e0]
+  0x22f0d: mov       dword ptr [rax + 0x2448], 7
+  0x22f17: call      0x14fc0
+  0x22f1c: test      al, al
+  0x22f1e: je        0x22f27
+  0x22f20: mov       byte ptr [rdi + 0x2861], 0
+  0x22f27: mov       ebp, dword ptr [rdi + 0x120]
+  0x22f2d: cmp       ebp, 0x3000
+  0x22f33: je        0x22f64
+  0x22f35: movzx     ecx, byte ptr [rdi + 0x2862]
+  0x22f3c: xor       edx, edx
+  0x22f3e: call      0x151d0
+  0x22f43: test      al, al
+  0x22f45: je        0x22f58
+  0x22f47: test      esi, esi
+  0x22f49: je        0x22f58
+  0x22f4b: mov       dword ptr [rdi + 0x2864], esi
+  0x22f51: mov       byte ptr [rdi + 0x2861], 0
+  0x22f58: mov       rbx, qword ptr [0x174148]
+  0x22f5f: jmp       0x23032
+  0x22f64: mov       rbx, qword ptr [0x174148]
+  0x22f6b: movaps    xmmword ptr [rsp + 0x40], xmm6
+  0x22f70: xorps     xmm6, xmm6
+  0x22f73: cmp       byte ptr [rbx + 0x108], 0
+  0x22f7a: je        0x22fb1
+  0x22f7c: movss     xmm0, dword ptr [rbx + 0xb8c]
+  0x22f84: comiss    xmm6, xmm0
+  0x22f87: ja        0x22fb1
+  0x22f89: ucomiss   xmm0, xmm6
+  0x22f8c: jp        0x22fb1
+  0x22f8e: jne       0x22fb1
+  0x22f90: mov       edx, 0x290
+  0x22f95: mov       rcx, rbx
+  0x22f98: call      0x12890
+  0x22f9d: cmp       byte ptr [rax + 8], 0
+  0x22fa1: jne       0x22fb1
+  0x22fa3: mov       byte ptr [rdi + 0x2862], 0
+  0x22faa: mov       rbx, qword ptr [0x174148]
+  0x22fb1: cmp       byte ptr [rbx + 0x109], 0
+  0x22fb8: je        0x22fef
+  0x22fba: movss     xmm0, dword ptr [rbx + 0xb90]
+  0x22fc2: comiss    xmm6, xmm0
+  0x22fc5: ja        0x22fef
+  0x22fc7: ucomiss   xmm0, xmm6
+  0x22fca: jp        0x22fef
+  0x22fcc: jne       0x22fef
+  0x22fce: mov       edx, 0x291
+  0x22fd3: mov       rcx, rbx
+  0x22fd6: call      0x12890
+  0x22fdb: cmp       byte ptr [rax + 8], 0
+  0x22fdf: jne       0x22fef
+  0x22fe1: mov       byte ptr [rdi + 0x2862], 1
+  0x22fe8: mov       rbx, qword ptr [0x174148]
+  0x22fef: cmp       byte ptr [rbx + 0x10a], 0
+  0x22ff6: je        0x2302d
+  0x22ff8: movss     xmm0, dword ptr [rbx + 0xb94]
+  0x23000: comiss    xmm6, xmm0
+  0x23003: ja        0x2302d
+  0x23005: ucomiss   xmm0, xmm6
+  0x23008: jp        0x2302d
+  0x2300a: jne       0x2302d
+  0x2300c: mov       edx, 0x292
+  0x23011: mov       rcx, rbx
+  0x23014: call      0x12890
+  0x23019: cmp       byte ptr [rax + 8], 0
+  0x2301d: jne       0x2302d
+  0x2301f: mov       byte ptr [rdi + 0x2862], 2
+  0x23026: mov       rbx, qword ptr [0x174148]
+  0x2302d: movaps    xmm6, xmmword ptr [rsp + 0x40]
+  0x23032: or        dword ptr [rbx + 0x1ea8], 0x40
+  0x23039: xor       edx, edx
+  0x2303b: xor       ecx, ecx
+  0x2303d: mov       dword ptr [rbx + 0x1f10], 0x3f333333
+  0x23047: call      0xc7f0
+  0x2304c: mov       rbx, qword ptr [rsp + 0x60]
+  0x23051: test      al, al
+  0x23053: je        0x230e7
+  0x23059: mov       edx, esi
+  0x2305b: lea       rcx, [0x8acf0]
+  0x23062: call      0x55ae0
+  0x23067: lea       rcx, [0x8ad08]
+  0x2306e: call      0x55ae0
+  0x23073: lea       rax, [0x8ad24]
+  0x2307a: mov       qword ptr [rsp + 0x20], rax
+  0x2307f: lea       rax, [0x8ad2c]
+  0x23086: mov       qword ptr [rsp + 0x28], rax
+  0x2308b: lea       rax, [0x8ad34]
+  0x23092: mov       qword ptr [rsp + 0x30], rax
+  0x23097: cmp       ebp, 0x3000
+  0x2309d: jne       0x230ad
+  0x2309f: lea       rcx, [0x8ad40]
+  0x230a6: call      0x55ae0
+  0x230ab: jmp       0x230e2
+  0x230ad: movzx     r8d, byte ptr [rdi + 0x2862]
+  0x230b5: lea       rdx, [0x8ad80]
+  0x230bc: xor       ecx, ecx
+  0x230be: mov       eax, 0x10
+  0x230c3: test      esi, esi
+  0x230c5: mov       r8, qword ptr [rsp + r8*8 + 0x20]
+  0x230ca: cmove     ecx, eax
+  0x230cd: mov       rax, qword ptr [0x174148]
+  0x230d4: add       rax, 0xd98
+  0x230da: add       rcx, rax
+  0x230dd: call      0x55b50
+  0x230e2: call      0xf670
+  0x230e7: mov       rbp, qword ptr [rsp + 0x68]
+  0x230ec: mov       rsi, qword ptr [rsp + 0x70]
+  0x230f1: add       rsp, 0x50
+  0x230f5: pop       rdi
+  0x230f6: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_00022ec0 @ 0x22ec0  size=567 */
+/* xrefs: called by fun_0001ab40 (1 site) */
+/* confidence: HIGH */
+struct s_fun_00022ec0_qword_174148;
+#pragma pack(push, 1)
+struct s_fun_00022ec0_qword_174148 {
+    char _pad_0[264];
+    int8_t field_108;
+    int8_t field_109;
+    int8_t field_10a;
+    char _pad_10b[21];
+    int32_t field_120;
+    char _pad_124[2664];
+    float field_b8c;
+    float field_b90;
+    float field_b94;
+    char _pad_b98[2376];
+    int32_t field_14e0;
+    char _pad_14e4[2500];
+    int32_t field_1ea8;
+    char _pad_1eac[100];
+    int32_t field_1f10;
+    char _pad_1f14[1332];
+    int32_t field_2448;
+    char _pad_244c[1045];
+    int8_t field_2861;
+    uint8_t field_2862;
+    char _pad_2863[1];
+    int32_t field_2864;
+};
+#pragma pack(pop)
+#define qword_174148 (*(int64_t*)0x174148)
+int32_t fun_0000c7f0();
+void fun_0000f670();
+int64_t fun_00012890();
+int32_t fun_00014fc0();
+int32_t fun_000151d0();
+int32_t fun_00055ae0();
+void fun_00055b50();
+void fun_00022ec0(int64_t a1, int64_t a2, int64_t a3, int64_t a4) {
+    char buf1[16];
+    struct s_fun_00022ec0_qword_174148* gs_174148 = (struct s_fun_00022ec0_qword_174148*)qword_174148;
+
+    gs_174148->field_2864 = 0;
+    if (!gs_174148->field_2861) {
+        return;
+    }
+    gs_174148->field_2448 = 7;
+    if ((uint8_t)fun_00014fc0(0x20e, 1, 0)) {
+        gs_174148->field_2861 = 0;
+    }
+    if (gs_174148->field_120 == 0x3000) {
+        if (gs_174148->field_108 && !(gs_174148->field_b8c < 0.0f) && gs_174148->field_b8c == 0.0f && !*(int8_t*)(fun_00012890(qword_174148, 0x290) + 8)) {
+            gs_174148->field_2862 = 0;
+        }
+        if (gs_174148->field_109 && !(gs_174148->field_b90 < 0.0f) && gs_174148->field_b90 == 0.0f && !*(int8_t*)(fun_00012890(qword_174148, 0x291) + 8)) {
+            gs_174148->field_2862 = 1;
+        }
+        if (gs_174148->field_10a && !(gs_174148->field_b94 < 0.0f) && gs_174148->field_b94 == 0.0f && !*(int8_t*)(fun_00012890(qword_174148, 0x292) + 8)) {
+            gs_174148->field_2862 = 2;
+        }
+    } else if ((uint8_t)fun_000151d0((uint32_t)gs_174148->field_2862, 0, 0, a4) && gs_174148->field_14e0) {
+        gs_174148->field_2864 = gs_174148->field_14e0;
+        gs_174148->field_2861 = 0;
+    }
+    gs_174148->field_1ea8 |= 0x40;
+    gs_174148->field_1f10 = 0x3f333333;
+    if (!((uint8_t)fun_0000c7f0(0, 0))) {
+        return;
+    }
+    fun_00055ae0("HoveredId: 0x%08X", (uint32_t)gs_174148->field_14e0);
+    fun_00055ae0("Press ESC to abort picking.", (uint32_t)gs_174148->field_14e0, 0, a4);
+    if (gs_174148->field_120 != 0x3000) {
+        fun_00055b50((uint32_t)(gs_174148->field_14e0 == 0 ? 0x10 : 0) + (qword_174148 + 0xd98), "Click %s Button to break in debugger! (remap w/ Ctrl+Shift)", *(int64_t*)((char*)buf1 + ((uint32_t)gs_174148->field_2862 * 8)));
+        fun_0000f670();
+        return;
+    }
+    fun_00055ae0("Remap w/ Ctrl+Shift: click anywhere to select new mouse button.", (uint32_t)gs_174148->field_14e0, 0, a4);
+    fun_0000f670();
+    return;
+}
+

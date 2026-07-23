@@ -1,0 +1,53 @@
+=== fun_00012890 @ 0x12890 size=95 blocks=9 calls=0 ===
+--- DISASM ---
+  0x12890: mov       r8, rcx
+  0x12893: test      edx, 0xf000
+  0x12899: je        0x128d6
+  0x1289b: cmp       edx, 0x1000
+  0x128a1: jne       0x128aa
+  0x128a3: mov       edx, 0x297
+  0x128a8: jmp       0x128d6
+  0x128aa: cmp       edx, 0x2000
+  0x128b0: jne       0x128b9
+  0x128b2: mov       edx, 0x298
+  0x128b7: jmp       0x128d6
+  0x128b9: cmp       edx, 0x4000
+  0x128bf: jne       0x128c8
+  0x128c1: mov       edx, 0x299
+  0x128c6: jmp       0x128d6
+  0x128c8: cmp       edx, 0x8000
+  0x128ce: mov       eax, 0x29a
+  0x128d3: cmove     edx, eax
+  0x128d6: lea       eax, [rdx - 0x200]
+  0x128dc: movsxd    rcx, eax
+  0x128df: add       rcx, 0x1c9
+  0x128e6: lea       rax, [rcx + rcx*2]
+  0x128ea: lea       rax, [r8 + rax*4]
+  0x128ee: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_00012890 @ 0x12890  size=95 */
+/* xrefs: called by fun_00017ee0 (3 sites), fun_00022ec0 (3 sites), fun_00022c40 (2 sites), fun_00014f10 (1 site), fun_000151d0 (1 site), fun_00015290 (1 site), fun_00015300 (1 site), fun_000154d0 (1 site) */
+/* confidence: HIGH */
+int64_t fun_00012890(int64_t a1, int32_t a2) {
+    int32_t v1;
+
+    v1 = a2;
+    if (a2 & 0xf000) {
+        if (a2 == 0x1000) {
+            v1 = 0x297;
+            return a1 + ((int64_t)((int32_t)(v1 - 0x200)) + 0x1c9) * 0xc;
+        }
+        if (a2 == 0x2000) {
+            v1 = 0x298;
+            return a1 + ((int64_t)((int32_t)(v1 - 0x200)) + 0x1c9) * 0xc;
+        }
+        if (a2 != 0x4000) {
+            v1 = a2 == 0x8000 ? 0x29a : a2;
+            return a1 + ((int64_t)((int32_t)(v1 - 0x200)) + 0x1c9) * 0xc;
+        }
+        v1 = 0x299;
+    }
+    return a1 + ((int64_t)((int32_t)(v1 - 0x200)) + 0x1c9) * 0xc;
+}
+

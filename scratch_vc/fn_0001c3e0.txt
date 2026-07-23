@@ -1,0 +1,60 @@
+=== fun_0001c3e0 @ 0x1c3e0 size=87 blocks=5 calls=0 ===
+--- DISASM ---
+  0x1c3e0: mov       rdx, qword ptr [0x174148]
+  0x1c3e7: mov       rax, qword ptr [rdx + 0x2818]
+  0x1c3ee: movsxd    r8, dword ptr [rdx + 0x1f58]
+  0x1c3f5: movsx     ecx, word ptr [rax + 0xc]
+  0x1c3f9: cmp       r8d, ecx
+  0x1c3fc: jg        0x1c40a
+  0x1c3fe: lea       rcx, [0x89f18]
+  0x1c405: jmp       0x10890
+  0x1c40a: lea       eax, [r8 - 1]
+  0x1c40e: mov       dword ptr [rdx + 0x1f58], eax
+  0x1c414: test      eax, eax
+  0x1c416: je        0x1c42c
+  0x1c418: mov       rax, qword ptr [rdx + 0x1f60]
+  0x1c41f: mov       r8d, dword ptr [rax + r8*8 - 0x10]
+  0x1c424: mov       dword ptr [rdx + 0x1e14], r8d
+  0x1c42b: ret       
+  0x1c42c: xor       r8d, r8d
+  0x1c42f: mov       dword ptr [rdx + 0x1e14], r8d
+  0x1c436: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_0001c3e0 @ 0x1c3e0  size=87 */
+/* xrefs: called by fun_0004aaf0 (1 site) */
+/* confidence: HIGH */
+struct s_fun_0001c3e0_qword_174148;
+#pragma pack(push, 1)
+struct s_fun_0001c3e0_qword_174148 {
+    char _pad_0[7700];
+    int32_t field_1e14;
+    char _pad_1e18[320];
+    int32_t field_1f58;
+    char _pad_1f5c[4];
+    void* field_1f60;
+    char _pad_1f68[2224];
+    void* field_2818;
+};
+#pragma pack(pop)
+#define qword_174148 (*(int64_t*)0x174148)
+int32_t fun_00010890();
+int32_t fun_0001c3e0(void) {
+    struct s_fun_0001c3e0_qword_174148* gs_174148 = (struct s_fun_0001c3e0_qword_174148*)qword_174148;
+    int64_t result;
+    int32_t v1;
+
+    if (gs_174148->field_1f58 <= (int32_t)((int16_t*)gs_174148->field_2818)[6]) {
+        return fun_00010890("Calling PopFocusScope() too many times!");
+    }
+    result = (int64_t)gs_174148->field_1f58 - 1;
+    v1 = (int64_t)gs_174148->field_1f58;
+    gs_174148->field_1f58 = (int32_t)((int64_t)gs_174148->field_1f58 - 1);
+    if (!((int32_t)result)) {
+        gs_174148->field_1e14 = 0;
+        return (int32_t)result;
+    }
+    gs_174148->field_1e14 = *(int32_t*)((char*)((char*)gs_174148->field_1f60 + v1 * 8) - 0x10);
+    return (int32_t)gs_174148->field_1f60;
+}
+

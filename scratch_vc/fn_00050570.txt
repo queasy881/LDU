@@ -1,0 +1,111 @@
+=== fun_00050570 @ 0x50570 size=176 blocks=14 calls=3 ===
+--- DISASM ---
+  0x50570: mov       qword ptr [rsp + 0x20], rsi
+  0x50575: push      rdi
+  0x50576: sub       rsp, 0x20
+  0x5057a: mov       rax, qword ptr [rcx]
+  0x5057d: mov       rdi, rcx
+  0x50580: movsxd    rsi, edx
+  0x50583: cmp       byte ptr [rax + 0x79], 0
+  0x50587: je        0x5059a
+  0x50589: mov       edx, esi
+  0x5058b: mov       rsi, qword ptr [rsp + 0x48]
+  0x50590: add       rsp, 0x20
+  0x50594: pop       rdi
+  0x50595: jmp       0x50620
+  0x5059a: movsxd    rcx, dword ptr [rcx + 0x18]
+  0x5059e: mov       qword ptr [rsp + 0x38], rbx
+  0x505a3: cmp       esi, ecx
+  0x505a5: jl        0x505ac
+  0x505a7: lea       ebx, [rcx + 1]
+  0x505aa: jmp       0x505c7
+  0x505ac: mov       r8, rcx
+  0x505af: mov       rdx, rsi
+  0x505b2: add       r8, qword ptr [rdi + 0x20]
+  0x505b6: lea       rcx, [rsp + 0x30]
+  0x505bb: add       rdx, qword ptr [rdi + 0x20]
+  0x505bf: call      0x14040
+  0x505c4: lea       ebx, [rsi + rax]
+  0x505c7: mov       esi, dword ptr [rdi + 0x18]
+  0x505ca: cmp       ebx, esi
+  0x505cc: jge       0x5060b
+  0x505ce: nop       
+  0x505d0: mov       edx, ebx
+  0x505d2: mov       rcx, rdi
+  0x505d5: call      0x567e0
+  0x505da: test      eax, eax
+  0x505dc: jne       0x50609
+  0x505de: movsxd    rcx, dword ptr [rdi + 0x18]
+  0x505e2: cmp       ebx, ecx
+  0x505e4: jl        0x505eb
+  0x505e6: lea       ebx, [rcx + 1]
+  0x505e9: jmp       0x50605
+  0x505eb: mov       r8, rcx
+  0x505ee: movsxd    rdx, ebx
+  0x505f1: add       r8, qword ptr [rdi + 0x20]
+  0x505f5: lea       rcx, [rsp + 0x40]
+  0x505fa: add       rdx, qword ptr [rdi + 0x20]
+  0x505fe: call      0x14040
+  0x50603: add       ebx, eax
+  0x50605: cmp       ebx, esi
+  0x50607: jl        0x505d0
+  0x50609: cmp       ebx, esi
+  0x5060b: cmovg     ebx, esi
+  0x5060e: mov       rsi, qword ptr [rsp + 0x48]
+  0x50613: mov       eax, ebx
+  0x50615: mov       rbx, qword ptr [rsp + 0x38]
+  0x5061a: add       rsp, 0x20
+  0x5061e: pop       rdi
+  0x5061f: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_00050570 @ 0x50570  size=176 */
+/* xrefs: called by fun_00057760 (2 sites) */
+/* confidence: HIGH */
+#include <stdbool.h>
+struct s_fun_00050570_a1;
+#pragma pack(push, 1)
+struct s_fun_00050570_a1 {
+    void* field_0;
+    char _pad_8[16];
+    int32_t field_18;
+};
+#pragma pack(pop)
+int32_t fun_00014040();
+int32_t fun_00050620();
+int32_t fun_000567e0();
+int32_t fun_00050570(struct s_fun_00050570_a1*a1, int32_t a2) {
+    char s1[16];
+    char s2[256];
+    int64_t v1;
+    int64_t v2;
+
+    if (*(int8_t*)((char*)a1->field_0 + 0x79)) {
+        return fun_00050620(a1, a2);
+    }
+    if (a2 < a1->field_18) {
+        v1 = (int64_t)a2 + fun_00014040(s1, (int64_t)a2 + *(int64_t*)((char*)a1 + 0x20), (int64_t)a1->field_18 + *(int64_t*)((char*)a1 + 0x20));
+    } else {
+        v1 = (int64_t)a1->field_18 + 1;
+    }
+    if ((int32_t)v1 >= a1->field_18) {
+        return 1 ? a1->field_18 : (int32_t)v1;
+    }
+    while (true) {
+        v2 = v1;
+        if (fun_000567e0(a1, (uint32_t)v1)) break;
+        if ((int32_t)v1 < a1->field_18) {
+            v1 = (int32_t)v1 + fun_00014040(s2, (int64_t)((int32_t)v1) + *(int64_t*)((char*)a1 + 0x20), (int64_t)a1->field_18 + *(int64_t*)((char*)a1 + 0x20));
+        } else {
+            v1 = (int64_t)a1->field_18 + 1;
+        }
+        v2 = v1;
+        if ((int32_t)v1 >= a1->field_18) {
+            v1 = v2;
+            return 1 ? a1->field_18 : (int32_t)v1;
+        }
+    }
+    v1 = v2;
+    return 1 ? a1->field_18 : (int32_t)v1;
+}
+

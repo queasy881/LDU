@@ -1,0 +1,86 @@
+=== fun_0003cf10 @ 0x3cf10 size=168 blocks=3 calls=0 ===
+--- DISASM ---
+  0x3cf10: mov       rax, qword ptr [0x174148]
+  0x3cf17: mov       r10, qword ptr [rax + 0x1480]
+  0x3cf1e: mov       r9, qword ptr [r10 + 0x1c8]
+  0x3cf25: cmp       dword ptr [r9 + 0x10], 1
+  0x3cf2a: je        0x3cfb7
+  0x3cf30: movups    xmm0, xmmword ptr [r9 + 0x3c]
+  0x3cf35: mov       rax, qword ptr [r10 + 0x2c8]
+  0x3cf3c: movss     xmm1, dword ptr [r9 + 0x3c]
+  0x3cf42: movss     xmm2, dword ptr [r9 + 0x40]
+  0x3cf48: movss     xmm3, dword ptr [r9 + 0x44]
+  0x3cf4e: movss     xmm4, dword ptr [r9 + 0x48]
+  0x3cf54: movups    xmmword ptr [r10 + 0x268], xmm0
+  0x3cf5c: movss     dword ptr [rax + 0x60], xmm1
+  0x3cf61: movss     dword ptr [rax + 0x64], xmm2
+  0x3cf66: movss     dword ptr [rax + 0x68], xmm3
+  0x3cf6b: movss     dword ptr [rax + 0x6c], xmm4
+  0x3cf70: mov       rax, qword ptr [r10 + 0x2c8]
+  0x3cf77: movsxd    rdx, dword ptr [rax + 0xa0]
+  0x3cf7e: mov       rcx, qword ptr [rax + 0xa8]
+  0x3cf85: add       rdx, rdx
+  0x3cf88: movss     dword ptr [rcx + rdx*8 - 0x10], xmm1
+  0x3cf8e: movss     dword ptr [rcx + rdx*8 - 0xc], xmm2
+  0x3cf94: movss     dword ptr [rcx + rdx*8 - 8], xmm3
+  0x3cf9a: movss     dword ptr [rcx + rdx*8 - 4], xmm4
+  0x3cfa0: lea       rcx, [r9 + 0x70]
+  0x3cfa4: mov       r8d, dword ptr [r9 + 0xc]
+  0x3cfa8: mov       rdx, qword ptr [r10 + 0x2c8]
+  0x3cfaf: inc       r8d
+  0x3cfb2: jmp       0x34290
+  0x3cfb7: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_0003cf10 @ 0x3cf10  size=168 */
+/* xrefs: called by fun_000510e0 (1 site), fun_00051840 (1 site) */
+/* confidence: HIGH */
+struct s_fun_0003cf10_v3;
+struct s_fun_0003cf10_v2;
+#pragma pack(push, 1)
+struct s_fun_0003cf10_v3 {
+    char _pad_0[96];
+    float field_60;
+    float field_64;
+    float field_68;
+    float field_6c;
+    char _pad_70[48];
+    int32_t field_a0;
+    char _pad_a4[4];
+    int64_t field_a8;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_0003cf10_v2 {
+    int64_t field_0;
+    int64_t field_8;
+};
+#pragma pack(pop)
+#define qword_174148 (*(int64_t*)0x174148)
+int32_t fun_00034290();
+int32_t fun_0003cf10(void) {
+    int64_t*v1;
+    struct s_fun_0003cf10_v3*v3;
+    float*v4;
+    struct s_fun_0003cf10_v2*v2;
+
+    if (*(int32_t*)(*(int64_t*)(*(int64_t*)(qword_174148 + 0x1480) + 0x1c8) + 0x10) == 1) {
+        return (int32_t)qword_174148;
+    }
+    v1 = (int64_t*)(qword_174148 + 0x1480);
+    v2 = (struct s_fun_0003cf10_v2*)(*v1 + 0x268);
+    v2->field_0 = *(int64_t*)(*(int64_t*)(*v1 + 0x1c8) + 0x3c);
+    v2->field_8 = *(int64_t*)(*(int64_t*)(*v1 + 0x1c8) + 0x44);
+    v3 = (struct s_fun_0003cf10_v3*)*(int64_t*)(*v1 + 0x2c8);
+    v3->field_60 = *(float*)(*(int64_t*)(*v1 + 0x1c8) + 0x3c);
+    v3->field_64 = *(float*)(*(int64_t*)(*v1 + 0x1c8) + 0x40);
+    v3->field_68 = *(float*)(*(int64_t*)(*v1 + 0x1c8) + 0x44);
+    v3->field_6c = *(float*)(*(int64_t*)(*v1 + 0x1c8) + 0x48);
+    v4 = (float*)(v3->field_a8 + (int64_t)v3->field_a0 * 0x10);
+    *(float*)((char*)v4 - 0x10) = *(float*)(*(int64_t*)(*v1 + 0x1c8) + 0x3c);
+    *(float*)((char*)v4 - 0xc) = *(float*)(*(int64_t*)(*v1 + 0x1c8) + 0x40);
+    *(float*)((char*)v4 - 8) = *(float*)(*(int64_t*)(*v1 + 0x1c8) + 0x44);
+    *(float*)((char*)v4 - 4) = *(float*)(*(int64_t*)(*v1 + 0x1c8) + 0x48);
+    return fun_00034290(*(int64_t*)(*(int64_t*)(qword_174148 + 0x1480) + 0x1c8) + 0x70, *(int64_t*)(*(int64_t*)(qword_174148 + 0x1480) + 0x2c8), (uint32_t)(*(int32_t*)(*(int64_t*)(*(int64_t*)(qword_174148 + 0x1480) + 0x1c8) + 0xc) + 1));
+}
+

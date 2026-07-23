@@ -1,0 +1,202 @@
+=== fun_00020d90 @ 0x20d90 size=288 blocks=15 calls=1 ===
+--- DISASM ---
+  0x20d90: push      rdi
+  0x20d92: sub       rsp, 0x20
+  0x20d96: mov       r8, qword ptr [0x174148]
+  0x20d9d: xor       r9d, r9d
+  0x20da0: mov       rdi, rcx
+  0x20da3: mov       qword ptr [r8 + 0x1480], rcx
+  0x20daa: test      rcx, rcx
+  0x20dad: je        0x20e01
+  0x20daf: mov       eax, dword ptr [r8 + 0x1450]
+  0x20db6: mov       rcx, qword ptr [r8 + 0x1458]
+  0x20dbd: dec       eax
+  0x20dbf: cdqe      
+  0x20dc1: add       rcx, 0x58
+  0x20dc5: imul      rdx, rax, 0x78
+  0x20dc9: add       rcx, rdx
+  0x20dcc: mov       qword ptr [r8 + 0x2818], rcx
+  0x20dd3: movsxd    rax, dword ptr [rdi + 0x1d0]
+  0x20dda: cmp       eax, -1
+  0x20ddd: je        0x20e08
+  0x20ddf: imul      rcx, rax, 0x250
+  0x20de6: add       rcx, qword ptr [r8 + 0x22f0]
+  0x20ded: mov       qword ptr [r8 + 0x22c8], rcx
+  0x20df4: mov       dword ptr [r8 + 0x11a8], 0x3f800000
+  0x20dff: jmp       0x20e23
+  0x20e01: mov       qword ptr [r8 + 0x2818], r9
+  0x20e08: mov       qword ptr [r8 + 0x22c8], r9
+  0x20e0f: mov       dword ptr [r8 + 0x11a8], 0x3f800000
+  0x20e1a: test      rdi, rdi
+  0x20e1d: je        0x20eaa
+  0x20e23: test      byte ptr [r8 + 0x2c], 0x10
+  0x20e28: xorps     xmm1, xmm1
+  0x20e2b: mov       qword ptr [rsp + 0x30], rbx
+  0x20e30: je        0x20e51
+  0x20e32: mov       rax, qword ptr [rdi + 0x20]
+  0x20e36: movss     xmm0, dword ptr [rax + 0x18]
+  0x20e3b: ucomiss   xmm0, xmm1
+  0x20e3e: jp        0x20e48
+  0x20e40: jne       0x20e48
+  0x20e42: movss     xmm0, dword ptr [r8 + 0x38]
+  0x20e48: movss     dword ptr [r8 + 0x11a4], xmm0
+  0x20e51: movzx     ebx, byte ptr [rdi + 0xd1]
+  0x20e58: xorps     xmm0, xmm0
+  0x20e5b: mov       byte ptr [rdi + 0xd1], r9b
+  0x20e62: call      0x22d50
+  0x20e67: mov       byte ptr [rdi + 0xd1], bl
+  0x20e6d: mov       rax, qword ptr [0x174148]
+  0x20e74: mov       rbx, qword ptr [rsp + 0x30]
+  0x20e79: cmp       qword ptr [rax + 0x22c8], 0
+  0x20e81: mov       rcx, qword ptr [rax + 0x1480]
+  0x20e88: jne       0x20ea2
+  0x20e8a: cmp       qword ptr [rcx + 0x1c8], 0
+  0x20e92: jne       0x20ea2
+  0x20e94: mov       al, 1
+  0x20e96: mov       byte ptr [rcx + 0x178], al
+  0x20e9c: add       rsp, 0x20
+  0x20ea0: pop       rdi
+  0x20ea1: ret       
+  0x20ea2: xor       al, al
+  0x20ea4: mov       byte ptr [rcx + 0x178], al
+  0x20eaa: add       rsp, 0x20
+  0x20eae: pop       rdi
+  0x20eaf: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_00020d90 @ 0x20d90  size=288 */
+/* xrefs: called by fun_00009550 (2 sites) */
+/* confidence: MEDIUM - 1 residual goto */
+struct s_fun_00020d90_a1;
+struct s_fun_00020d90_qword_174148;
+struct s_fun_00020d90_qword_174148_1480;
+#pragma pack(push, 1)
+struct s_fun_00020d90_a1 {
+    char _pad_0[32];
+    void* field_20;
+    char _pad_28[169];
+    uint8_t field_d1;
+    char _pad_d2[254];
+    int32_t field_1d0;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_00020d90_qword_174148 {
+    char _pad_0[44];
+    int8_t field_2c;
+    char _pad_2d[11];
+    float field_38;
+    char _pad_3c[4456];
+    float field_11a4;
+    int32_t field_11a8;
+    char _pad_11ac[676];
+    int32_t field_1450;
+    char _pad_1454[4];
+    int64_t field_1458;
+    char _pad_1460[32];
+    struct s_fun_00020d90_qword_174148_1480* field_1480;
+    char _pad_1488[3648];
+    int64_t field_22c8;
+    char _pad_22d0[32];
+    int64_t field_22f0;
+    char _pad_22f8[1312];
+    int64_t field_2818;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_00020d90_qword_174148_1480 {
+    char _pad_0[376];
+    int8_t field_178;
+    char _pad_179[79];
+    int64_t field_1c8;
+};
+#pragma pack(pop)
+#define qword_174148 (*(int64_t*)0x174148)
+int32_t fun_00022d50(float);
+void fun_00020d90(struct s_fun_00020d90_a1*a1) {
+    struct s_fun_00020d90_qword_174148* gs_174148 = (struct s_fun_00020d90_qword_174148*)qword_174148;
+    float v1;
+    uint32_t v2;
+
+    gs_174148->field_1480 = (struct s_fun_00020d90_qword_174148_1480*)a1;
+    if (!a1) {
+        gs_174148->field_2818 = 0;
+        gs_174148->field_22c8 = 0;
+        gs_174148->field_11a8 = 0x3f800000;
+        if (!a1) {
+            return;
+        }
+L_20e23:;
+        if (gs_174148->field_2c & 0x10) {
+            v1 = ((float*)a1->field_20)[6];
+            if (v1 == 0.0f) {
+                v1 = gs_174148->field_38;
+            }
+            gs_174148->field_11a4 = v1;
+        }
+        v2 = a1->field_d1;
+        a1->field_d1 = 0;
+        fun_00022d50(0.0f);
+        a1->field_d1 = (int8_t)v2;
+        if (gs_174148->field_22c8 || gs_174148->field_1480->field_1c8) {
+            gs_174148->field_1480->field_178 = 0;
+            return;
+        }
+        gs_174148->field_1480->field_178 = 1;
+        return;
+    }
+    gs_174148->field_2818 = gs_174148->field_1458 + 0x58 + (int64_t)(gs_174148->field_1450 - 1) * 0x78;
+    if (a1->field_1d0 == -1) {
+        gs_174148->field_22c8 = 0;
+        gs_174148->field_11a8 = 0x3f800000;
+        if (!a1) {
+            return;
+        } else if (!(gs_174148->field_2c & 0x10)) {
+            v2 = a1->field_d1;
+            a1->field_d1 = 0;
+            fun_00022d50(0.0f);
+            a1->field_d1 = (int8_t)v2;
+            if (gs_174148->field_22c8 || gs_174148->field_1480->field_1c8) {
+                gs_174148->field_1480->field_178 = 0;
+                return;
+            } else {
+                gs_174148->field_1480->field_178 = 1;
+                return;
+            }
+        } else {
+            v1 = ((float*)a1->field_20)[6];
+            if (v1 != 0.0f) {
+                gs_174148->field_11a4 = v1;
+                v2 = a1->field_d1;
+                a1->field_d1 = 0;
+                fun_00022d50(0.0f);
+                a1->field_d1 = (int8_t)v2;
+                if (gs_174148->field_22c8 || gs_174148->field_1480->field_1c8) {
+                    gs_174148->field_1480->field_178 = 0;
+                    return;
+                } else {
+                    gs_174148->field_1480->field_178 = 1;
+                    return;
+                }
+            } else {
+                v1 = gs_174148->field_38;
+                gs_174148->field_11a4 = v1;
+                v2 = a1->field_d1;
+                a1->field_d1 = 0;
+                fun_00022d50(0.0f);
+                a1->field_d1 = (int8_t)v2;
+                if (gs_174148->field_22c8 || gs_174148->field_1480->field_1c8) {
+                    gs_174148->field_1480->field_178 = 0;
+                    return;
+                } else {
+                    gs_174148->field_1480->field_178 = 1;
+                    return;
+                }
+            }
+        }
+    }
+    gs_174148->field_22c8 = (int64_t)a1->field_1d0 * 0x250 + gs_174148->field_22f0;
+    gs_174148->field_11a8 = 0x3f800000;
+    goto L_20e23;
+}
+

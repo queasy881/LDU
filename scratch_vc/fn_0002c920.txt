@@ -1,0 +1,251 @@
+=== fun_0002c920 @ 0x2c920 size=374 blocks=32 calls=9 ===
+--- DISASM ---
+  0x2c920: push      rbx
+  0x2c922: push      rbp
+  0x2c923: push      rsi
+  0x2c924: push      rdi
+  0x2c925: push      r14
+  0x2c927: push      r15
+  0x2c929: sub       rsp, 0x28
+  0x2c92d: mov       rdi, rcx
+  0x2c930: mov       r14, qword ptr [rcx + 0x70]
+  0x2c934: movsxd    rax, dword ptr [rcx + 0x68]
+  0x2c938: lea       rbp, [r14 + rax*8]
+  0x2c93c: xor       r15d, r15d
+  0x2c93f: cmp       r14, rbp
+  0x2c942: je        0x2c9bc
+  0x2c944: mov       rsi, qword ptr [r14]
+  0x2c947: mov       rcx, qword ptr [rsi + 8]
+  0x2c94b: test      rcx, rcx
+  0x2c94e: je        0x2c95b
+  0x2c950: xor       r8d, r8d
+  0x2c953: mov       rdx, rsi
+  0x2c956: call      0x2e8e0
+  0x2c95b: xor       eax, eax
+  0x2c95d: mov       byte ptr [rsi + 0x34], al
+  0x2c960: mov       qword ptr [rsi], r15
+  0x2c963: mov       rbx, qword ptr [rsi + 0x28]
+  0x2c967: movsxd    rax, dword ptr [rsi + 0x20]
+  0x2c96b: lea       rsi, [rbx + rax*8]
+  0x2c96f: cmp       rbx, rsi
+  0x2c972: je        0x2c9b3
+  0x2c974: nop       dword ptr [rax]
+  0x2c978: nop       dword ptr [rax + rax]
+  0x2c980: mov       rdx, qword ptr [rbx]
+  0x2c983: mov       rax, qword ptr [rdx + 0x88]
+  0x2c98a: test      rax, rax
+  0x2c98d: jne       0x2c99b
+  0x2c98f: mov       rax, qword ptr [rdi + 0x2b8]
+  0x2c996: test      rax, rax
+  0x2c999: je        0x2c9aa
+  0x2c99b: mov       r8, qword ptr [rax + 0x20]
+  0x2c99f: test      r8, r8
+  0x2c9a2: je        0x2c9aa
+  0x2c9a4: mov       rcx, rdi
+  0x2c9a7: call      r8
+  0x2c9aa: add       rbx, 8
+  0x2c9ae: cmp       rbx, rsi
+  0x2c9b1: jne       0x2c980
+  0x2c9b3: add       r14, 8
+  0x2c9b7: cmp       r14, rbp
+  0x2c9ba: jne       0x2c944
+  0x2c9bc: cmp       qword ptr [rdi + 0x2b0], r15
+  0x2c9c3: je        0x2c9df
+  0x2c9c5: mov       rax, qword ptr [rdi + 0x2b8]
+  0x2c9cc: test      rax, rax
+  0x2c9cf: je        0x2c9df
+  0x2c9d1: mov       rdx, qword ptr [rax + 0x10]
+  0x2c9d5: test      rdx, rdx
+  0x2c9d8: je        0x2c9df
+  0x2c9da: mov       rcx, rdi
+  0x2c9dd: call      rdx
+  0x2c9df: mov       rsi, qword ptr [rdi + 0x2b0]
+  0x2c9e6: test      rsi, rsi
+  0x2c9e9: je        0x2ca82
+  0x2c9ef: mov       rcx, qword ptr [rsi + 0xe0]
+  0x2c9f6: test      rcx, rcx
+  0x2c9f9: je        0x2ca01
+  0x2c9fb: call      0x168c0
+  0x2ca00: nop       
+  0x2ca01: mov       rbx, qword ptr [rsi + 0xd0]
+  0x2ca08: movsxd    rax, dword ptr [rsi + 0xc8]
+  0x2ca0f: lea       rbp, [rbx + rax*8]
+  0x2ca13: cmp       rbx, rbp
+  0x2ca16: je        0x2ca29
+  0x2ca18: mov       rcx, qword ptr [rbx]
+  0x2ca1b: call      0x168c0
+  0x2ca20: add       rbx, 8
+  0x2ca24: cmp       rbx, rbp
+  0x2ca27: jne       0x2ca18
+  0x2ca29: mov       rcx, qword ptr [rsi + 0xd0]
+  0x2ca30: test      rcx, rcx
+  0x2ca33: je        0x2ca3b
+  0x2ca35: call      0x168c0
+  0x2ca3a: nop       
+  0x2ca3b: mov       rcx, qword ptr [rsi + 0x88]
+  0x2ca42: test      rcx, rcx
+  0x2ca45: je        0x2ca4d
+  0x2ca47: call      0x168c0
+  0x2ca4c: nop       
+  0x2ca4d: mov       rcx, qword ptr [rsi + 0x78]
+  0x2ca51: test      rcx, rcx
+  0x2ca54: je        0x2ca5c
+  0x2ca56: call      0x168c0
+  0x2ca5b: nop       
+  0x2ca5c: mov       rcx, qword ptr [rsi + 0x68]
+  0x2ca60: test      rcx, rcx
+  0x2ca63: je        0x2ca6b
+  0x2ca65: call      0x168c0
+  0x2ca6a: nop       
+  0x2ca6b: mov       rcx, qword ptr [rsi + 0x58]
+  0x2ca6f: test      rcx, rcx
+  0x2ca72: je        0x2ca7a
+  0x2ca74: call      0x168c0
+  0x2ca79: nop       
+  0x2ca7a: mov       rcx, rsi
+  0x2ca7d: call      0x168c0
+  0x2ca82: mov       qword ptr [rdi + 0x2b0], r15
+  0x2ca89: add       rsp, 0x28
+  0x2ca8d: pop       r15
+  0x2ca8f: pop       r14
+  0x2ca91: pop       rdi
+  0x2ca92: pop       rsi
+  0x2ca93: pop       rbp
+  0x2ca94: pop       rbx
+  0x2ca95: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_0002c920 @ 0x2c920  size=374 */
+/* xrefs: called by fun_0002b400 (1 site), fun_0002cf40 (1 site) */
+/* confidence: HIGH */
+#include <stdbool.h>
+#include <stddef.h>
+struct s_fun_0002c920_a1;
+struct s_fun_0002c920_a1_2b0;
+struct s_fun_0002c920_t37;
+#pragma pack(push, 1)
+struct s_fun_0002c920_a1 {
+    char _pad_0[104];
+    int32_t field_68;
+    char _pad_6c[4];
+    int64_t field_70;
+    char _pad_78[568];
+    struct s_fun_0002c920_a1_2b0* field_2b0;
+    void* field_2b8;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_0002c920_a1_2b0 {
+    char _pad_0[88];
+    int64_t field_58;
+    char _pad_60[8];
+    int64_t field_68;
+    char _pad_70[8];
+    int64_t field_78;
+    char _pad_80[8];
+    int64_t field_88;
+    char _pad_90[64];
+    int64_t field_d0;
+    char _pad_d8[8];
+    int64_t field_e0;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_0002c920_t37 {
+    char _pad_0[200];
+    int32_t field_c8;
+    char _pad_cc[4];
+    int64_t field_d0;
+};
+#pragma pack(pop)
+void fun_000168c0();
+void fun_0002e8e0();
+void fun_0002c920(struct s_fun_0002c920_a1*a1) {
+    int64_t v2 = 0;
+    int64_t*v1;
+    int64_t*v3;
+    int64_t v4;
+    int64_t*v7;
+    int64_t*v5;
+    int64_t*v6;
+
+    v1 = (int64_t*)a1->field_70;
+    if ((int64_t)a1->field_68 * 8) {
+        do {
+            if (*(int64_t*)(*v1 + 8)) {
+                fun_0002e8e0(*(int64_t*)(*v1 + 8), *v1, 0);
+                v2 = 0;
+            }
+            *(int8_t*)(*v1 + 0x34) = 0;
+            *(int64_t*)(*v1) = 0;
+            if ((int64_t)*(int32_t*)(*v1 + 0x20) * 8) {
+                v3 = (int64_t*)*(int64_t*)(*v1 + 0x28);
+                v4 = v2;
+                do {
+                    v5 = (int64_t*)*(int64_t*)(*v3 + 0x88);
+                    if (v5) {
+                        v4 = v5[4];
+                        if (v4) {
+                            v6 = (int64_t*)((char*)v5 + 0x20);
+                            ((int64_t(*)())(*v6))(a1, *v3, *v6);
+                            v4 = v5[4];
+                        }
+                    } else {
+                        v5 = (int64_t*)a1->field_2b8;
+                        if (a1->field_2b8) {
+                            v4 = v5[4];
+                            if (v4) {
+                                v6 = (int64_t*)((char*)v5 + 0x20);
+                                ((int64_t(*)())(*v6))(a1, *v3, *v6);
+                                v4 = v5[4];
+                            }
+                        }
+                    }
+                    v3 = (int64_t*)((char*)v3 + 8);
+                    v2 = v4;
+                } while ((int64_t)(v3) != (int64_t)(*(int64_t*)(*v1 + 0x28) + (int64_t)*(int32_t*)(*v1 + 0x20) * 8));
+            }
+            v1 = (int64_t*)((char*)v1 + 8);
+        } while ((int64_t)(v1) != (int64_t)(a1->field_70 + (int64_t)a1->field_68 * 8));
+    }
+    if (a1->field_2b0 && a1->field_2b8 && ((int64_t*)a1->field_2b8)[2]) {
+        ((int64_t(*)())(((int64_t*)a1->field_2b8)[2]))(a1, ((int64_t*)a1->field_2b8)[2], v2);
+    }
+    if (!a1->field_2b0) {
+        a1->field_2b0 = NULL;
+        return;
+    }
+    if (a1->field_2b0->field_e0) {
+        fun_000168c0(a1->field_2b0->field_e0);
+    }
+    v7 = (int64_t*)a1->field_2b0->field_d0;
+    if ((int64_t)((int32_t*)a1->field_2b0)[0x32] * 8) {
+        while (true) {
+            fun_000168c0(*v7);
+            v7 = (int64_t*)((char*)v7 + 8);
+            if ((int64_t)(v7) == (int64_t)(a1->field_2b0->field_d0 + (int64_t)((int32_t*)a1->field_2b0)[0x32] * 8)) break;
+        }
+    }
+    if (a1->field_2b0->field_d0) {
+        fun_000168c0(a1->field_2b0->field_d0);
+    }
+    if (a1->field_2b0->field_88) {
+        fun_000168c0(a1->field_2b0->field_88);
+    }
+    if (a1->field_2b0->field_78) {
+        fun_000168c0(a1->field_2b0->field_78);
+    }
+    if (a1->field_2b0->field_68) {
+        fun_000168c0(a1->field_2b0->field_68);
+    }
+    if (!a1->field_2b0->field_58) {
+        fun_000168c0(a1->field_2b0);
+        a1->field_2b0 = NULL;
+        return;
+    }
+    fun_000168c0(a1->field_2b0->field_58);
+    fun_000168c0(a1->field_2b0);
+    a1->field_2b0 = NULL;
+    return;
+}
+

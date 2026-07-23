@@ -1,0 +1,139 @@
+=== fun_00027740 @ 0x27740 size=137 blocks=6 calls=1 ===
+--- DISASM ---
+  0x27740: mov       qword ptr [rsp + 8], rbx
+  0x27745: push      rdi
+  0x27746: sub       rsp, 0x20
+  0x2774a: mov       rbx, rcx
+  0x2774d: mov       rdi, rdx
+  0x27750: mov       ecx, dword ptr [rcx + 4]
+  0x27753: mov       r8d, dword ptr [rbx]
+  0x27756: cmp       r8d, ecx
+  0x27759: jne       0x27784
+  0x2775b: inc       r8d
+  0x2775e: test      ecx, ecx
+  0x27760: je        0x2776d
+  0x27762: mov       eax, ecx
+  0x27764: cdq       
+  0x27765: sub       eax, edx
+  0x27767: sar       eax, 1
+  0x27769: add       eax, ecx
+  0x2776b: jmp       0x27772
+  0x2776d: mov       eax, 8
+  0x27772: cmp       eax, r8d
+  0x27775: mov       rcx, rbx
+  0x27778: cmovg     r8d, eax
+  0x2777c: mov       edx, r8d
+  0x2777f: call      0x27d10
+  0x27784: movsxd    rax, dword ptr [rbx]
+  0x27787: movups    xmm0, xmmword ptr [rdi]
+  0x2778a: lea       rcx, [rax + rax*8]
+  0x2778e: mov       rax, qword ptr [rbx + 8]
+  0x27792: movups    xmmword ptr [rax + rcx*8], xmm0
+  0x27796: movups    xmm1, xmmword ptr [rdi + 0x10]
+  0x2779a: movups    xmmword ptr [rax + rcx*8 + 0x10], xmm1
+  0x2779f: movups    xmm0, xmmword ptr [rdi + 0x20]
+  0x277a3: movups    xmmword ptr [rax + rcx*8 + 0x20], xmm0
+  0x277a8: movups    xmm1, xmmword ptr [rdi + 0x30]
+  0x277ac: movups    xmmword ptr [rax + rcx*8 + 0x30], xmm1
+  0x277b1: movsd     xmm0, qword ptr [rdi + 0x40]
+  0x277b6: movsd     qword ptr [rax + rcx*8 + 0x40], xmm0
+  0x277bc: inc       dword ptr [rbx]
+  0x277be: mov       rbx, qword ptr [rsp + 0x30]
+  0x277c3: add       rsp, 0x20
+  0x277c7: pop       rdi
+  0x277c8: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_00027740 @ 0x27740  size=137 */
+/* xrefs: called by fun_000356d0 (1 site) */
+/* confidence: HIGH */
+struct s_fun_00027740_a1;
+struct s_fun_00027740_a2;
+struct s_fun_00027740_v2;
+#pragma pack(push, 1)
+struct s_fun_00027740_a1 {
+    int32_t field_0;
+    int32_t field_4;
+    int64_t field_8;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_00027740_a2 {
+    int64_t field_0;
+    int64_t field_8;
+    int64_t field_10;
+    int64_t field_18;
+    int64_t field_20;
+    int64_t field_28;
+    int64_t field_30;
+    int64_t field_38;
+    double field_40;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_00027740_v2 {
+    int64_t field_0;
+    int64_t field_8;
+    int64_t field_10;
+    char _pad_18[8];
+    int64_t field_20;
+    char _pad_28[8];
+    int64_t field_30;
+    char _pad_38[8];
+    double field_40;
+};
+#pragma pack(pop)
+#ifndef __max
+#define __max(a,b) ((a)>(b)?(a):(b))
+#endif
+void fun_00027d10();
+void fun_00027740(struct s_fun_00027740_a1*a1, struct s_fun_00027740_a2*a2) {
+    int32_t v1;
+    struct s_fun_00027740_v2*v2;
+
+    if (a1->field_0 != a1->field_4) {
+        v2 = (struct s_fun_00027740_v2*)(a1->field_8 + (int64_t)a1->field_0 * 0x48);
+        v2->field_0 = a2->field_0;
+        v2->field_8 = a2->field_8;
+        v2->field_10 = a2->field_10;
+        *(int64_t*)((char*)v2 + 0x18) = a2->field_18;
+        v2->field_20 = a2->field_20;
+        *(int64_t*)((char*)v2 + 0x28) = a2->field_28;
+        v2->field_30 = a2->field_30;
+        *(int64_t*)((char*)v2 + 0x38) = a2->field_38;
+        v2->field_40 = a2->field_40;
+        ++a1->field_0;
+        return;
+    }
+    if (!a1->field_4) {
+        v1 = 8;
+        fun_00027d10(a1, (uint32_t)__max(v1, a1->field_0 + 1));
+        v2 = (struct s_fun_00027740_v2*)(a1->field_8 + (int64_t)a1->field_0 * 0x48);
+        v2->field_0 = a2->field_0;
+        v2->field_8 = a2->field_8;
+        v2->field_10 = a2->field_10;
+        *(int64_t*)((char*)v2 + 0x18) = a2->field_18;
+        v2->field_20 = a2->field_20;
+        *(int64_t*)((char*)v2 + 0x28) = a2->field_28;
+        v2->field_30 = a2->field_30;
+        *(int64_t*)((char*)v2 + 0x38) = a2->field_38;
+        v2->field_40 = a2->field_40;
+        ++a1->field_0;
+        return;
+    }
+    v1 = a1->field_4 / 2 + a1->field_4;
+    fun_00027d10(a1, (uint32_t)__max(v1, a1->field_0 + 1));
+    v2 = (struct s_fun_00027740_v2*)(a1->field_8 + (int64_t)a1->field_0 * 0x48);
+    v2->field_0 = a2->field_0;
+    v2->field_8 = a2->field_8;
+    v2->field_10 = a2->field_10;
+    *(int64_t*)((char*)v2 + 0x18) = a2->field_18;
+    v2->field_20 = a2->field_20;
+    *(int64_t*)((char*)v2 + 0x28) = a2->field_28;
+    v2->field_30 = a2->field_30;
+    *(int64_t*)((char*)v2 + 0x38) = a2->field_38;
+    v2->field_40 = a2->field_40;
+    ++a1->field_0;
+    return;
+}
+

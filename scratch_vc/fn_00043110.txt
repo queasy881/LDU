@@ -1,0 +1,326 @@
+=== fun_00043110 @ 0x43110 size=874 blocks=45 calls=8 ===
+--- DISASM ---
+  0x43110: mov       qword ptr [rsp + 8], rbx
+  0x43115: push      rdi
+  0x43116: sub       rsp, 0x90
+  0x4311d: mov       rbx, r9
+  0x43120: mov       rdi, r8
+  0x43123: cmp       r8, r9
+  0x43126: jne       0x4313c
+  0x43128: xorps     xmm0, xmm0
+  0x4312b: mov       rbx, qword ptr [rsp + 0xa0]
+  0x43133: add       rsp, 0x90
+  0x4313a: pop       rdi
+  0x4313b: ret       
+  0x4313c: jge       0x43154
+  0x4313e: cmp       rdx, rdi
+  0x43141: jge       0x43148
+  0x43143: mov       rax, rdi
+  0x43146: jmp       0x43168
+  0x43148: cmp       rdx, rbx
+  0x4314b: mov       rax, rdx
+  0x4314e: cmovg     rax, rbx
+  0x43152: jmp       0x43168
+  0x43154: cmp       rdx, rbx
+  0x43157: jge       0x4315e
+  0x43159: mov       rax, rbx
+  0x4315c: jmp       0x43168
+  0x4315e: cmp       rdx, rdi
+  0x43161: mov       rax, rdx
+  0x43164: cmovg     rax, rdi
+  0x43168: movss     xmm1, dword ptr [rsp + 0xc0]
+  0x43171: xorps     xmm2, xmm2
+  0x43174: comiss    xmm1, xmm2
+  0x43177: jbe       0x4344b
+  0x4317d: movaps    xmmword ptr [rsp + 0x80], xmm6
+  0x43185: cmp       rbx, rdi
+  0x43188: movdqa    xmm6, xmmword ptr [0x87d70]
+  0x43190: mov       r8, rbx
+  0x43193: movaps    xmmword ptr [rsp + 0x70], xmm7
+  0x43198: cmovge    r8, rdi
+  0x4319c: movss     xmm7, dword ptr [0x8aef0]
+  0x431a4: mov       rcx, rdi
+  0x431a7: movaps    xmmword ptr [rsp + 0x60], xmm8
+  0x431ad: cmovge    rcx, rbx
+  0x431b1: movaps    xmmword ptr [rsp + 0x50], xmm9
+  0x431b7: movaps    xmm4, xmm1
+  0x431ba: movaps    xmmword ptr [rsp + 0x30], xmm11
+  0x431c0: xorps     xmm5, xmm5
+  0x431c3: xorps     xmm11, xmm11
+  0x431c7: movaps    xmmword ptr [rsp + 0x20], xmm12
+  0x431cd: cvtsi2sd  xmm11, r8
+  0x431d2: cvtps2pd  xmm12, xmm1
+  0x431d6: movaps    xmm0, xmm11
+  0x431da: xorps     xmm4, xmm7
+  0x431dd: andps     xmm0, xmm6
+  0x431e0: comisd    xmm12, xmm0
+  0x431e5: cvtsi2ss  xmm5, r8
+  0x431ea: jbe       0x43202
+  0x431ec: comiss    xmm2, xmm5
+  0x431ef: jbe       0x431f6
+  0x431f1: movaps    xmm0, xmm4
+  0x431f4: jmp       0x431f9
+  0x431f6: movaps    xmm0, xmm1
+  0x431f9: xorps     xmm11, xmm11
+  0x431fd: cvtss2sd  xmm11, xmm0
+  0x43202: xorps     xmm9, xmm9
+  0x43206: xorps     xmm3, xmm3
+  0x43209: cvtsi2sd  xmm9, rcx
+  0x4320e: cvtsi2ss  xmm3, rcx
+  0x43213: movaps    xmm0, xmm9
+  0x43217: andps     xmm0, xmm6
+  0x4321a: comisd    xmm12, xmm0
+  0x4321f: jbe       0x43232
+  0x43221: comiss    xmm2, xmm3
+  0x43224: jbe       0x43229
+  0x43226: movaps    xmm1, xmm4
+  0x43229: xorps     xmm9, xmm9
+  0x4322d: cvtss2sd  xmm9, xmm1
+  0x43232: ucomiss   xmm5, xmm2
+  0x43235: jp        0x43249
+  0x43237: jne       0x43249
+  0x43239: comiss    xmm2, xmm3
+  0x4323c: jbe       0x43249
+  0x4323e: xorps     xmm11, xmm11
+  0x43242: cvtss2sd  xmm11, xmm4
+  0x43247: jmp       0x4325e
+  0x43249: ucomiss   xmm3, xmm2
+  0x4324c: jp        0x4325e
+  0x4324e: jne       0x4325e
+  0x43250: comiss    xmm2, xmm5
+  0x43253: jbe       0x4325e
+  0x43255: xorps     xmm9, xmm9
+  0x43259: cvtss2sd  xmm9, xmm4
+  0x4325e: movss     xmm8, dword ptr [0x88544]
+  0x43267: xorps     xmm1, xmm1
+  0x4326a: cvtsi2sd  xmm1, rax
+  0x4326f: movaps    xmmword ptr [rsp + 0x40], xmm10
+  0x43275: comisd    xmm11, xmm1
+  0x4327a: jae       0x433e7
+  0x43280: comisd    xmm1, xmm9
+  0x43285: jb        0x43290
+  0x43287: movaps    xmm2, xmm8
+  0x4328b: jmp       0x433e7
+  0x43290: imul      rcx, r8
+  0x43294: xorps     xmm0, xmm0
+  0x43297: cvtsi2ss  xmm0, rcx
+  0x4329c: comiss    xmm2, xmm0
+  0x4329f: jbe       0x4336e
+  0x432a5: xorps     xmm0, xmm0
+  0x432a8: subss     xmm3, xmm5
+  0x432ac: cvtsi2ss  xmm0, rdx
+  0x432b1: movaps    xmm10, xmm5
+  0x432b5: xorps     xmm10, xmm7
+  0x432b9: ucomiss   xmm0, xmm2
+  0x432bc: divss     xmm10, xmm3
+  0x432c1: jp        0x432ce
+  0x432c3: jne       0x432ce
+  0x432c5: movaps    xmm2, xmm10
+  0x432c9: jmp       0x433e7
+  0x432ce: comiss    xmm2, xmm0
+  0x432d1: jbe       0x43327
+  0x432d3: xorps     xmm1, xmmword ptr [0x927e0]
+  0x432da: divsd     xmm1, xmm12
+  0x432df: movaps    xmm0, xmm1
+  0x432e2: call      0x71670
+  0x432e7: xorps     xmm11, xmmword ptr [0x927e0]
+  0x432ef: movaps    xmm7, xmm0
+  0x432f2: divsd     xmm11, xmm12
+  0x432f7: movaps    xmm0, xmm11
+  0x432fb: call      0x71670
+  0x43300: subss     xmm10, dword ptr [rsp + 0xc8]
+  0x4330a: divsd     xmm7, xmm0
+  0x4330e: xorps     xmm1, xmm1
+  0x43311: movaps    xmm2, xmm8
+  0x43315: cvtsd2ss  xmm1, xmm7
+  0x43319: subss     xmm2, xmm1
+  0x4331d: mulss     xmm2, xmm10
+  0x43322: jmp       0x433e7
+  0x43327: addss     xmm10, dword ptr [rsp + 0xc8]
+  0x43331: divsd     xmm1, xmm12
+  0x43336: movaps    xmm0, xmm1
+  0x43339: call      0x71670
+  0x4333e: divsd     xmm9, xmm12
+  0x43343: movaps    xmm6, xmm0
+  0x43346: movaps    xmm0, xmm9
+  0x4334a: call      0x71670
+  0x4334f: xorps     xmm2, xmm2
+  0x43352: movaps    xmm1, xmm8
+  0x43356: divsd     xmm6, xmm0
+  0x4335a: subss     xmm1, xmm10
+  0x4335f: cvtsd2ss  xmm2, xmm6
+  0x43363: mulss     xmm2, xmm1
+  0x43367: addss     xmm2, xmm10
+  0x4336c: jmp       0x433e7
+  0x4336e: comiss    xmm2, xmm5
+  0x43371: ja        0x433a3
+  0x43373: comiss    xmm2, xmm3
+  0x43376: ja        0x433a3
+  0x43378: divsd     xmm1, xmm11
+  0x4337d: movaps    xmm0, xmm1
+  0x43380: call      0x71670
+  0x43385: divsd     xmm9, xmm11
+  0x4338a: movaps    xmm6, xmm0
+  0x4338d: movaps    xmm0, xmm9
+  0x43391: call      0x71670
+  0x43396: divsd     xmm6, xmm0
+  0x4339a: xorps     xmm2, xmm2
+  0x4339d: cvtsd2ss  xmm2, xmm6
+  0x433a1: jmp       0x433e7
+  0x433a3: movsd     xmm7, qword ptr [0x927e0]
+  0x433ab: xorps     xmm1, xmm7
+  0x433ae: xorps     xmm9, xmm7
+  0x433b2: divsd     xmm1, xmm9
+  0x433b7: movaps    xmm0, xmm1
+  0x433ba: call      0x71670
+  0x433bf: xorps     xmm11, xmm7
+  0x433c3: movaps    xmm6, xmm0
+  0x433c6: divsd     xmm11, xmm9
+  0x433cb: movaps    xmm0, xmm11
+  0x433cf: call      0x71670
+  0x433d4: divsd     xmm6, xmm0
+  0x433d8: xorps     xmm1, xmm1
+  0x433db: movaps    xmm2, xmm8
+  0x433df: cvtsd2ss  xmm1, xmm6
+  0x433e3: subss     xmm2, xmm1
+  0x433e7: movaps    xmm12, xmmword ptr [rsp + 0x20]
+  0x433ed: movaps    xmm11, xmmword ptr [rsp + 0x30]
+  0x433f3: movaps    xmm10, xmmword ptr [rsp + 0x40]
+  0x433f9: movaps    xmm9, xmmword ptr [rsp + 0x50]
+  0x433ff: movaps    xmm7, xmmword ptr [rsp + 0x70]
+  0x43404: movaps    xmm6, xmmword ptr [rsp + 0x80]
+  0x4340c: cmp       rbx, rdi
+  0x4340f: jge       0x43431
+  0x43411: subss     xmm8, xmm2
+  0x43416: movaps    xmm0, xmm8
+  0x4341a: movaps    xmm8, xmmword ptr [rsp + 0x60]
+  0x43420: mov       rbx, qword ptr [rsp + 0xa0]
+  0x43428: add       rsp, 0x90
+  0x4342f: pop       rdi
+  0x43430: ret       
+  0x43431: movaps    xmm8, xmmword ptr [rsp + 0x60]
+  0x43437: movaps    xmm0, xmm2
+  0x4343a: mov       rbx, qword ptr [rsp + 0xa0]
+  0x43442: add       rsp, 0x90
+  0x43449: pop       rdi
+  0x4344a: ret       
+  0x4344b: xorps     xmm1, xmm1
+  0x4344e: sub       rax, rdi
+  0x43451: sub       rbx, rdi
+  0x43454: xorps     xmm0, xmm0
+  0x43457: cvtsi2sd  xmm1, rax
+  0x4345c: cvtsi2sd  xmm0, rbx
+  0x43461: mov       rbx, qword ptr [rsp + 0xa0]
+  0x43469: divsd     xmm1, xmm0
+  0x4346d: cvtpd2ps  xmm0, xmm1
+  0x43471: add       rsp, 0x90
+  0x43478: pop       rdi
+  0x43479: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_00043110 @ 0x43110  size=874 */
+/* xrefs: called by fun_00046760 (4 sites) */
+/* confidence: HIGH */
+#ifndef __DS_FABS_DEFINED
+#define __DS_FABS_DEFINED
+static double __fabs(double x){ return x<0.0?-x:x; }
+static float __fabsf(float x){ return x<0.0f?-x:x; }
+#endif
+#ifndef __min
+#define __min(a,b) ((a)<(b)?(a):(b))
+#endif
+#ifndef __max
+#define __max(a,b) ((a)>(b)?(a):(b))
+#endif
+int32_t fun_00071670(double);
+float fun_00043110(int64_t a1, int64_t a2, int64_t a3, int64_t a4, float a5, float a6) {
+    int64_t v2;
+    float v5;
+    double v3;
+    float v7;
+    double v6;
+    float result;
+    float v8;
+    int32_t v4;
+    int32_t v1 = 0;
+
+    if (a3 == a4) {
+        return 0.0f;
+    }
+    if (a3 >= a4) {
+        if (a2 >= a4) {
+            v2 = __min(a2, a3);
+        } else {
+            v2 = a4;
+        }
+    } else if (a2 >= a3) {
+        v2 = __min(a2, a4);
+    } else {
+        v2 = a3;
+    }
+    if (!(a5 > 0.0f)) {
+        return (float)((double)(v2 - a3) / (double)(a4 - a3));
+    }
+    v3 = (double)__min(a4, a3);
+    *(float*)&v4 = (float)__min(a4, a3) < 0.0f;
+    if ((double)a5 > __fabs(v3)) {
+        if (!v4) {
+            v5 = a5;
+        } else {
+            v5 = -a5;
+        }
+        v3 = (double)v5;
+    }
+    v6 = (double)__max(a4, a3);
+    *(float*)&v1 = (float)__max(a4, a3) < 0.0f;
+    if ((double)a5 > __fabs(v6)) {
+        v7 = a5;
+        if (v1) {
+            v7 = -a5;
+        }
+        v6 = (double)v7;
+    }
+    if ((float)__min(a4, a3) != 0.0f || !v1) {
+        if ((float)__max(a4, a3) == 0.0f && v4) {
+            v6 = (double)(-a5);
+        }
+    } else {
+        v3 = (double)(-a5);
+    }
+    result = 0.0f;
+    if (!(v3 >= (double)v2)) {
+        if (!((double)v2 >= v6)) {
+            if (!((float)(__max(a4, a3) * __min(a4, a3)) < 0.0f)) {
+                if (v4 || v1) {
+                    fun_00071670(-((double)v2) / -v6);
+                    fun_00071670(-v3 / -v6);
+                    result = 1.0f - (float)(-((double)v2) / -v6 / (-v3 / -v6));
+                } else {
+                    fun_00071670((double)v2 / v3);
+                    fun_00071670(v6 / v3);
+                    result = (float)((double)v2 / v3 / (v6 / v3));
+                }
+            } else if ((float)a2 != 0.0f) {
+                if (!((float)a2 < 0.0f)) {
+                    fun_00071670((double)v2 / (double)a5);
+                    fun_00071670(v6 / (double)a5);
+                    v8 = -((float)__min(a4, a3)) / ((float)__max(a4, a3) - (float)__min(a4, a3)) + a6;
+                    result = (float)((double)v2 / (double)a5 / (v6 / (double)a5)) * (1.0f - v8) + v8;
+                } else {
+                    fun_00071670(-((double)v2) / (double)a5);
+                    fun_00071670(-v3 / (double)a5);
+                    result = (1.0f - (float)(-((double)v2) / (double)a5 / (-v3 / (double)a5))) * (-((float)__min(a4, a3)) / ((float)__max(a4, a3) - (float)__min(a4, a3)) - a6);
+                }
+            } else {
+                result = -((float)__min(a4, a3)) / ((float)__max(a4, a3) - (float)__min(a4, a3));
+            }
+        } else {
+            result = 1.0f;
+        }
+    }
+    if (a4 >= a3) {
+        return result;
+    }
+    return 1.0f - result;
+}
+

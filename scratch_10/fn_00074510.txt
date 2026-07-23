@@ -1,0 +1,104 @@
+=== fun_00074510 @ 0x74510 size=126 blocks=11 calls=4 ===
+--- DISASM ---
+  0x74510: sub       rsp, 0x28
+  0x74514: mov       r9, rcx
+  0x74517: test      rcx, rcx
+  0x7451a: je        0x74529
+  0x7451c: test      rdx, rdx
+  0x7451f: je        0x74529
+  0x74521: test      r8, r8
+  0x74524: jne       0x74543
+  0x74526: mov       byte ptr [rcx], r8b
+  0x74529: call      0x74e00
+  0x7452e: mov       dword ptr [rax], 0x16
+  0x74534: call      0x74c58
+  0x74539: mov       eax, 0x16
+  0x7453e: add       rsp, 0x28
+  0x74542: ret       
+  0x74543: sub       r8, r9
+  0x74546: nop       word ptr [rax + rax]
+  0x74550: movzx     eax, byte ptr [r8 + rcx]
+  0x74555: mov       byte ptr [rcx], al
+  0x74557: lea       rcx, [rcx + 1]
+  0x7455b: test      al, al
+  0x7455d: je        0x74587
+  0x7455f: sub       rdx, 1
+  0x74563: jne       0x74550
+  0x74565: test      rdx, rdx
+  0x74568: jne       0x74587
+  0x7456a: mov       byte ptr [r9], dl
+  0x7456d: call      0x74e00
+  0x74572: mov       dword ptr [rax], 0x22
+  0x74578: call      0x74c58
+  0x7457d: mov       eax, 0x22
+  0x74582: add       rsp, 0x28
+  0x74586: ret       
+  0x74587: xor       eax, eax
+  0x74589: add       rsp, 0x28
+  0x7458d: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_00074510 @ 0x74510  size=126 */
+/* xrefs: called by fun_00080f74 (2 sites), fun_0005f71c (1 site), fun_00073e30 (1 site), fun_00077298 (1 site), fun_00077910 (1 site) */
+/* confidence: HIGH */
+#include <stdbool.h>
+void fun_00074c58();
+int64_t fun_00074e00();
+int32_t fun_00074510(int8_t*a1, int64_t a2, int64_t a3) {
+    uint8_t*v3;
+    int64_t v4;
+    uint8_t*v5;
+    bool v2;
+    bool v1;
+
+    v1 = 0;
+    v2 = 0;
+    if (!a1 || !a2) {
+        *(int32_t*)(fun_00074e00()) = 0x16;
+        fun_00074c58();
+        return 0x16;
+    }
+    if (!a3) {
+        *a1 = (int8_t)a3;
+        *(int32_t*)(fun_00074e00()) = 0x16;
+        fun_00074c58();
+        return 0x16;
+    }
+    v3 = (uint8_t*)a1;
+    v4 = a2;
+    while (true) {
+        v5 = (uint8_t*)(a3 - (int64_t)a1 + (int64_t)v3);
+        *(int8_t*)v3 = (int8_t)*v5;
+        if (!*v5) break;
+        ++v3;
+        --v4;
+        if (v4) continue;
+        v1 = 1;
+        break;
+    }
+    if (v1) {
+        if (v2) {
+            return 0;
+        }
+        if (v4) {
+            return 0;
+        }
+        *a1 = (int8_t)v4;
+        *(int32_t*)(fun_00074e00()) = 0x22;
+        fun_00074c58();
+        return 0x22;
+    }
+    v2 = 1;
+    if (v2) {
+        return 0;
+    }
+    if (v4) {
+        return 0;
+    } else {
+        *a1 = (int8_t)v4;
+        *(int32_t*)(fun_00074e00()) = 0x22;
+        fun_00074c58();
+        return 0x22;
+    }
+}
+

@@ -1,0 +1,280 @@
+=== fun_0000e390 @ 0xe390 size=217 blocks=23 calls=2 ===
+--- DISASM ---
+  0xe390: mov       qword ptr [rsp + 0x10], rsi
+  0xe395: push      rdi
+  0xe396: sub       rsp, 0x20
+  0xe39a: mov       rdi, qword ptr [0x174148]
+  0xe3a1: movzx     esi, dl
+  0xe3a4: mov       r9, rcx
+  0xe3a7: mov       r10d, dword ptr [rdi + 0x1f88]
+  0xe3ae: test      r10d, r10d
+  0xe3b1: je        0xe45e
+  0xe3b7: mov       qword ptr [rsp + 0x30], rbx
+  0xe3bc: xor       ebx, ebx
+  0xe3be: test      rcx, rcx
+  0xe3c1: je        0xe422
+  0xe3c3: test      r10d, r10d
+  0xe3c6: jle       0xe422
+  0xe3c8: mov       r11, qword ptr [rdi + 0x1f90]
+  0xe3cf: nop       
+  0xe3d0: mov       eax, ebx
+  0xe3d2: imul      rcx, rax, 0x38
+  0xe3d6: cmp       qword ptr [rcx + r11 + 8], 0
+  0xe3dc: je        0xe41b
+  0xe3de: mov       r8d, ebx
+  0xe3e1: movsxd    rax, r8d
+  0xe3e4: imul      rcx, rax, 0x38
+  0xe3e8: mov       rdx, qword ptr [rcx + r11 + 8]
+  0xe3ed: test      rdx, rdx
+  0xe3f0: je        0xe411
+  0xe3f2: mov       rax, r9
+  0xe3f5: cmp       qword ptr [r9 + 0x3c0], rdx
+  0xe3fc: je        0xe41b
+  0xe3fe: nop       
+  0xe400: cmp       rax, rdx
+  0xe403: je        0xe41b
+  0xe405: mov       rax, qword ptr [rax + 0x3b8]
+  0xe40c: test      rax, rax
+  0xe40f: jne       0xe400
+  0xe411: inc       r8d
+  0xe414: cmp       r8d, r10d
+  0xe417: jl        0xe3e1
+  0xe419: jmp       0xe427
+  0xe41b: inc       ebx
+  0xe41d: cmp       ebx, r10d
+  0xe420: jl        0xe3d0
+  0xe422: cmp       ebx, r10d
+  0xe425: jge       0xe459
+  0xe427: test      byte ptr [rdi + 0x2824], 8
+  0xe42e: je        0xe44e
+  0xe430: test      r9, r9
+  0xe433: je        0xe43b
+  0xe435: mov       rdx, qword ptr [r9 + 8]
+  0xe439: jmp       0xe442
+  0xe43b: lea       rdx, [0x8a7c8]
+  0xe442: lea       rcx, [0x8a7d0]
+  0xe449: call      0xf0a0
+  0xe44e: movzx     edx, sil
+  0xe452: mov       ecx, ebx
+  0xe454: call      0xe210
+  0xe459: mov       rbx, qword ptr [rsp + 0x30]
+  0xe45e: mov       rsi, qword ptr [rsp + 0x38]
+  0xe463: add       rsp, 0x20
+  0xe467: pop       rdi
+  0xe468: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_0000e390 @ 0xe390  size=217 */
+/* xrefs: called by fun_00024ad0 (3 sites), fun_00011e40 (1 site), fun_00019b80 (1 site), fun_0001ab40 (1 site) */
+/* confidence: MEDIUM - 2 residual gotos */
+#include <stdbool.h>
+struct s_fun_0000e390_a1;
+struct s_fun_0000e390_qword_174148;
+#pragma pack(push, 1)
+struct s_fun_0000e390_a1 {
+    char _pad_0[8];
+    int64_t field_8;
+    char _pad_10[944];
+    int64_t field_3c0;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_0000e390_qword_174148 {
+    char _pad_0[8072];
+    int32_t field_1f88;
+    char _pad_1f8c[4];
+    int64_t field_1f90;
+    char _pad_1f98[2188];
+    int8_t field_2824;
+};
+#pragma pack(pop)
+#define qword_174148 (*(int64_t*)0x174148)
+int32_t fun_0000e210();
+int32_t fun_0000f0a0();
+int64_t* fun_0000e390(struct s_fun_0000e390_a1*a1, int32_t a2) {
+    struct s_fun_0000e390_qword_174148* gs_174148 = (struct s_fun_0000e390_qword_174148*)qword_174148;
+    int32_t v5 = 0;
+    int32_t v7 = 0;
+    int32_t v6 = 0;
+    int64_t*v8;
+    int64_t*result = 0;
+    int32_t v4;
+    int64_t v9;
+    bool v3;
+    bool v2;
+    bool v1;
+
+    v1 = 0;
+    v2 = 0;
+    v3 = 0;
+    if (!gs_174148->field_1f88) {
+        return result;
+    }
+    v4 = 0;
+    if (!a1) {
+        v3 = 1;
+        if (v3) {
+            v5 = v4;
+            v6 = v7;
+            if (v4 < gs_174148->field_1f88) {
+                if (!(gs_174148->field_2824 & 8)) {
+                    result = (int64_t*)fun_0000e210(v5, (uint8_t)a2);
+                    return result;
+                }
+                if (!a1) {
+                    v9 = (int64_t)"<NULL>";
+                    fun_0000f0a0("[popup] ClosePopupsOverWindow(\"%s\")\n", v9);
+                    result = (int64_t*)fun_0000e210(v5, (uint8_t)a2);
+                    return result;
+                }
+                v9 = a1->field_8;
+                fun_0000f0a0("[popup] ClosePopupsOverWindow(\"%s\")\n", v9);
+                result = (int64_t*)fun_0000e210(v5, (uint8_t)a2);
+                return result;
+            }
+        } else if (!(gs_174148->field_2824 & 8)) {
+            result = (int64_t*)fun_0000e210(v5, (uint8_t)a2);
+        } else if (!a1) {
+            v9 = (int64_t)"<NULL>";
+            fun_0000f0a0("[popup] ClosePopupsOverWindow(\"%s\")\n", v9);
+            result = (int64_t*)fun_0000e210(v5, (uint8_t)a2);
+        } else {
+            v9 = a1->field_8;
+            fun_0000f0a0("[popup] ClosePopupsOverWindow(\"%s\")\n", v9);
+            result = (int64_t*)fun_0000e210(v5, (uint8_t)a2);
+        }
+    } else {
+        v4 = 0;
+        if (gs_174148->field_1f88 <= 0) {
+            v3 = 1;
+            if (v3) {
+                v5 = v4;
+                v6 = v7;
+                if (v4 < gs_174148->field_1f88) {
+                    if (!(gs_174148->field_2824 & 8)) {
+                        result = (int64_t*)fun_0000e210(v5, (uint8_t)a2);
+                    } else if (!a1) {
+                        v9 = (int64_t)"<NULL>";
+                        fun_0000f0a0("[popup] ClosePopupsOverWindow(\"%s\")\n", v9);
+                        result = (int64_t*)fun_0000e210(v5, (uint8_t)a2);
+                    } else {
+                        v9 = a1->field_8;
+                        fun_0000f0a0("[popup] ClosePopupsOverWindow(\"%s\")\n", v9);
+                        result = (int64_t*)fun_0000e210(v5, (uint8_t)a2);
+                    }
+                }
+            } else if (!(gs_174148->field_2824 & 8)) {
+                result = (int64_t*)fun_0000e210(v5, (uint8_t)a2);
+            } else if (!a1) {
+                v9 = (int64_t)"<NULL>";
+                fun_0000f0a0("[popup] ClosePopupsOverWindow(\"%s\")\n", v9);
+                result = (int64_t*)fun_0000e210(v5, (uint8_t)a2);
+            } else {
+                v9 = a1->field_8;
+                fun_0000f0a0("[popup] ClosePopupsOverWindow(\"%s\")\n", v9);
+                result = (int64_t*)fun_0000e210(v5, (uint8_t)a2);
+            }
+        } else {
+            v5 = 0;
+            while (true) {
+                result = (int64_t*)v5;
+                if (*(int64_t*)((int64_t)((uint32_t)v5) * 0x38 + gs_174148->field_1f90 + 8)) {
+                    v6 = v5;
+L_e3e1:;
+                    if (!*(int64_t*)((int64_t)v6 * 0x38 + gs_174148->field_1f90 + 8)) {
+                        v1 = 1;
+                    } else {
+                        result = (int64_t*)a1;
+                        v7 = v6;
+                        if (a1->field_3c0 != *(int64_t*)((int64_t)v6 * 0x38 + gs_174148->field_1f90 + 8)) {
+                            v8 = (int64_t*)a1;
+                            while (true) {
+                                result = v8;
+                                v7 = v6;
+                                if ((int64_t)(v8) == (int64_t)(*(int64_t*)((int64_t)v6 * 0x38 + gs_174148->field_1f90 + 8))) break;
+                                v8 = (int64_t*)v8[0x77];
+                                if (v8) continue;
+                                v1 = 1;
+                                break;
+                            }
+                        }
+                    }
+                }
+                if (v1) {
+                    ++v6;
+                    if (v6 < gs_174148->field_1f88) {
+                        goto L_e3e1;
+                    } else {
+                        v2 = 1;
+                        if (v2) break;
+L_e41b:;
+                        v4 = v5 + 1;
+                        ++v5;
+                        if (v5 < gs_174148->field_1f88) continue;
+                        v3 = 1;
+                        if (v3) {
+                            v5 = v4;
+                            v6 = v7;
+                            if (v4 < gs_174148->field_1f88) {
+                                if (!(gs_174148->field_2824 & 8)) {
+                                    result = (int64_t*)fun_0000e210(v5, (uint8_t)a2);
+                                } else if (!a1) {
+                                    v9 = (int64_t)"<NULL>";
+                                    fun_0000f0a0("[popup] ClosePopupsOverWindow(\"%s\")\n", v9);
+                                    result = (int64_t*)fun_0000e210(v5, (uint8_t)a2);
+                                } else {
+                                    v9 = a1->field_8;
+                                    fun_0000f0a0("[popup] ClosePopupsOverWindow(\"%s\")\n", v9);
+                                    result = (int64_t*)fun_0000e210(v5, (uint8_t)a2);
+                                }
+                            }
+                        } else if (!(gs_174148->field_2824 & 8)) {
+                            result = (int64_t*)fun_0000e210(v5, (uint8_t)a2);
+                        } else if (!a1) {
+                            v9 = (int64_t)"<NULL>";
+                            fun_0000f0a0("[popup] ClosePopupsOverWindow(\"%s\")\n", v9);
+                            result = (int64_t*)fun_0000e210(v5, (uint8_t)a2);
+                        } else {
+                            v9 = a1->field_8;
+                            fun_0000f0a0("[popup] ClosePopupsOverWindow(\"%s\")\n", v9);
+                            result = (int64_t*)fun_0000e210(v5, (uint8_t)a2);
+                        }
+                    }
+                } else {
+                    if (v2) break;
+                    goto L_e41b;
+                }
+                return result;
+            }
+            if (v3) {
+                v5 = v4;
+                v6 = v7;
+                if (v4 < gs_174148->field_1f88) {
+                    if (!(gs_174148->field_2824 & 8)) {
+                        result = (int64_t*)fun_0000e210(v5, (uint8_t)a2);
+                    } else if (!a1) {
+                        v9 = (int64_t)"<NULL>";
+                        fun_0000f0a0("[popup] ClosePopupsOverWindow(\"%s\")\n", v9);
+                        result = (int64_t*)fun_0000e210(v5, (uint8_t)a2);
+                    } else {
+                        v9 = a1->field_8;
+                        fun_0000f0a0("[popup] ClosePopupsOverWindow(\"%s\")\n", v9);
+                        result = (int64_t*)fun_0000e210(v5, (uint8_t)a2);
+                    }
+                }
+            } else if (!(gs_174148->field_2824 & 8)) {
+                result = (int64_t*)fun_0000e210(v5, (uint8_t)a2);
+            } else if (!a1) {
+                v9 = (int64_t)"<NULL>";
+                fun_0000f0a0("[popup] ClosePopupsOverWindow(\"%s\")\n", v9);
+                result = (int64_t*)fun_0000e210(v5, (uint8_t)a2);
+            } else {
+                v9 = a1->field_8;
+                fun_0000f0a0("[popup] ClosePopupsOverWindow(\"%s\")\n", v9);
+                result = (int64_t*)fun_0000e210(v5, (uint8_t)a2);
+            }
+        }
+    }
+    return result;
+}
+

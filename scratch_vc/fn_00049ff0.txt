@@ -1,0 +1,68 @@
+=== fun_00049ff0 @ 0x49ff0 size=98 blocks=3 calls=2 ===
+--- DISASM ---
+  0x49ff0: push      rbx
+  0x49ff2: push      rbp
+  0x49ff3: push      rsi
+  0x49ff4: push      rdi
+  0x49ff5: push      r14
+  0x49ff7: push      r15
+  0x49ff9: sub       rsp, 0x38
+  0x49ffd: xor       edi, edi
+  0x49fff: mov       ebp, r9d
+  0x4a002: mov       rsi, r8
+  0x4a005: mov       r14, rdx
+  0x4a008: mov       r15, rcx
+  0x4a00b: mov       rbx, r8
+  0x4a00e: cmp       byte ptr [r8], dil
+  0x4a011: je        0x4a028
+  0x4a013: mov       rcx, rbx
+  0x4a016: call      0x855e0
+  0x4a01b: inc       rbx
+  0x4a01e: inc       edi
+  0x4a020: add       rbx, rax
+  0x4a023: cmp       byte ptr [rbx], 0
+  0x4a026: jne       0x4a013
+  0x4a028: mov       dword ptr [rsp + 0x28], ebp
+  0x4a02c: lea       r8, [0x4eee0]
+  0x4a033: mov       r9, rsi
+  0x4a036: mov       dword ptr [rsp + 0x20], edi
+  0x4a03a: mov       rdx, r14
+  0x4a03d: mov       rcx, r15
+  0x4a040: call      0x4a060
+  0x4a045: add       rsp, 0x38
+  0x4a049: pop       r15
+  0x4a04b: pop       r14
+  0x4a04d: pop       rdi
+  0x4a04e: pop       rsi
+  0x4a04f: pop       rbp
+  0x4a050: pop       rbx
+  0x4a051: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_00049ff0 @ 0x49ff0  size=98 */
+/* xrefs: called by fun_000061f0 (1 site) */
+/* confidence: HIGH */
+#include <stdbool.h>
+int32_t fun_0004a060();
+int64_t fun_0004eee0();
+int64_t fun_000855e0();
+int32_t fun_00049ff0(int64_t a1, int64_t a2, int8_t*a3, int32_t a4) {
+    int8_t*v1;
+    int32_t v2;
+    int32_t v3;
+
+    v1 = a3;
+    v2 = 0;
+    v3 = 0;
+    if (!*a3) {
+        return fun_0004a060(a1, a2, fun_0004eee0, a3, v3, a4);
+    }
+    while (true) {
+        v1 = (int8_t*)(v1 + 1 + fun_000855e0(v1));
+        v3 = v2 + 1;
+        ++v2;
+        if (!*v1) break;
+    }
+    return fun_0004a060(a1, a2, fun_0004eee0, a3, v3, a4);
+}
+

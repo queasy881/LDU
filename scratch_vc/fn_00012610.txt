@@ -1,0 +1,135 @@
+=== fun_00012610 @ 0x12610 size=317 blocks=18 calls=3 ===
+--- DISASM ---
+  0x12610: push      rbx
+  0x12612: push      rbp
+  0x12613: push      rsi
+  0x12614: push      rdi
+  0x12615: push      r14
+  0x12617: sub       rsp, 0x40
+  0x1261b: mov       r14, qword ptr [0x174148]
+  0x12622: mov       ebx, ecx
+  0x12624: and       ebx, 0xffff0fff
+  0x1262a: mov       edi, ecx
+  0x1262c: lea       eax, [rbx - 0x20f]
+  0x12632: cmp       eax, 7
+  0x12635: ja        0x1268d
+  0x12637: lea       eax, [rbx - 0x20f]
+  0x1263d: test      eax, 0xfffffffb
+  0x12642: je        0x12686
+  0x12644: lea       eax, [rbx - 0x210]
+  0x1264a: test      eax, 0xfffffffb
+  0x1264f: je        0x1267f
+  0x12651: lea       eax, [rbx - 0x211]
+  0x12657: test      eax, 0xfffffffb
+  0x1265c: je        0x12678
+  0x1265e: lea       eax, [rbx - 0x212]
+  0x12664: mov       ecx, 0xffffffff
+  0x12669: test      eax, 0xfffffffb
+  0x1266e: mov       eax, 0xffff7fff
+  0x12673: cmovne    eax, ecx
+  0x12676: jmp       0x1268b
+  0x12678: mov       eax, 0xffffbfff
+  0x1267d: jmp       0x1268b
+  0x1267f: mov       eax, 0xffffdfff
+  0x12684: jmp       0x1268b
+  0x12686: mov       eax, 0xffffefff
+  0x1268b: and       edi, eax
+  0x1268d: lea       rbp, [0x8993a]
+  0x12694: test      ebx, ebx
+  0x12696: jne       0x126a1
+  0x12698: test      edi, edi
+  0x1269a: je        0x126a1
+  0x1269c: mov       r8, rbp
+  0x1269f: jmp       0x126ab
+  0x126a1: mov       ecx, ebx
+  0x126a3: call      0x12810
+  0x126a8: mov       r8, rax
+  0x126ab: mov       qword ptr [rsp + 0x38], r8
+  0x126b0: lea       rax, [0x89f90]
+  0x126b7: bt        edi, 0xf
+  0x126bb: lea       r9, [0x89fa0]
+  0x126c2: mov       rdx, rbp
+  0x126c5: lea       rsi, [r14 + 0x2a38]
+  0x126cc: cmovb     rdx, rax
+  0x126d0: lea       r8, [0x89fb0]
+  0x126d7: mov       qword ptr [rsp + 0x30], rdx
+  0x126dc: lea       rax, [0x89f98]
+  0x126e3: bt        edi, 0xe
+  0x126e7: mov       rcx, rbp
+  0x126ea: mov       edx, 0x40
+  0x126ef: cmovb     rcx, rax
+  0x126f3: bt        edi, 0xd
+  0x126f7: mov       qword ptr [rsp + 0x28], rcx
+  0x126fc: mov       rax, rbp
+  0x126ff: cmovb     rax, r9
+  0x12703: mov       rcx, rsi
+  0x12706: lea       r9, [0x89fa8]
+  0x1270d: mov       qword ptr [rsp + 0x20], rax
+  0x12712: bt        edi, 0xc
+  0x12716: cmovb     rbp, r9
+  0x1271a: mov       r9, rbp
+  0x1271d: call      0x13270
+  0x12722: test      ebx, ebx
+  0x12724: jne       0x1273f
+  0x12726: test      edi, edi
+  0x12728: je        0x1273f
+  0x1272a: mov       rcx, rsi
+  0x1272d: call      0x855e0
+  0x12732: test      rax, rax
+  0x12735: je        0x1273f
+  0x12737: mov       byte ptr [rax + r14 + 0x2a37], bl
+  0x1273f: mov       rax, rsi
+  0x12742: add       rsp, 0x40
+  0x12746: pop       r14
+  0x12748: pop       rdi
+  0x12749: pop       rsi
+  0x1274a: pop       rbp
+  0x1274b: pop       rbx
+  0x1274c: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_00012610 @ 0x12610  size=317 */
+/* xrefs: called by fun_00021860 (3 sites), fun_00015c20 (1 site) */
+/* confidence: HIGH */
+#include <stdbool.h>
+#define qword_174148 (*(int64_t*)0x174148)
+int64_t fun_00012810();
+int32_t fun_00013270();
+int64_t fun_000855e0();
+int64_t fun_00012610(int32_t a1) {
+    int32_t v3;
+    int32_t v2;
+    uint64_t v4;
+    int8_t*v5;
+    bool v1 = 0;
+
+    v2 = a1;
+    if ((uint32_t)((int32_t)((a1 & 0xffff0fff) - 0x20f)) <= 7) {
+        if (!(((a1 & 0xffff0fff) - 0x20f) & 0xfffffffb)) {
+            v3 = -4097;
+        } else if (!(((a1 & 0xffff0fff) - 0x210) & 0xfffffffb)) {
+            v3 = -8193;
+        } else if (!(((a1 & 0xffff0fff) - 0x211) & 0xfffffffb)) {
+            v3 = -16385;
+        } else {
+            v3 = (((a1 & 0xffff0fff) - 0x212) & 0xfffffffb) != 0 ? -1 : -32769;
+        }
+        v2 = a1 & v3;
+    }
+    v1 = v2 == 0;
+    if (a1 & 0xffff0fff || v1) {
+        v4 = fun_00012810(a1 & 0xffff0fff);
+    } else {
+        v4 = 0x8993a;
+    }
+    fun_00013270(qword_174148 + 0x2a38, 0x40, "%s%s%s%s%s", ((v2 >> 0xc) & 1) != 0 ? "Ctrl+" : 0x8993a, ((v2 >> 0xd) & 1) != 0 ? "Shift+" : 0x8993a, ((v2 >> 0xe) & 1) != 0 ? "Alt+" : 0x8993a, ((v2 >> 0xf) & 1) != 0 ? "Super+" : 0x8993a, v4);
+    if (!(a1 & 0xffff0fff) && !v1) {
+        v5 = (int8_t*)fun_000855e0(qword_174148 + 0x2a38);
+        if (v5) {
+            *(int8_t*)((char*)(v5 + qword_174148) + 0x2a37) = (int8_t)(a1 & 0xffff0fff);
+            return qword_174148 + 0x2a38;
+        }
+    }
+    return qword_174148 + 0x2a38;
+}
+

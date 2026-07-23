@@ -1,0 +1,16 @@
+=== fun_000213a0 @ 0x213a0 size=14 blocks=1 calls=0 ===
+--- DISASM ---
+  0x213a0: mov       rax, qword ptr [0x174148]
+  0x213a7: mov       dword ptr [rax + 0x2448], ecx
+  0x213ad: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_000213a0 @ 0x213a0  size=14 */
+/* xrefs: called by fun_0003c160 (1 site), fun_000407c0 (1 site), fun_0004b530 (1 site), fun_00056020 (1 site) */
+/* confidence: HIGH */
+#define qword_174148 (*(int64_t*)0x174148)
+void fun_000213a0(int32_t a1) {
+    *(int32_t*)(qword_174148 + 0x2448) = a1;
+    return;
+}
+

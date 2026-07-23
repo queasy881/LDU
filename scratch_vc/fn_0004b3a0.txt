@@ -1,0 +1,207 @@
+=== fun_0004b3a0 @ 0x4b3a0 size=245 blocks=28 calls=0 ===
+--- DISASM ---
+  0x4b3a0: movzx     eax, byte ptr [rcx]
+  0x4b3a3: mov       r9d, edx
+  0x4b3a6: test      al, al
+  0x4b3a8: je        0x4b3c7
+  0x4b3aa: nop       word ptr [rax + rax]
+  0x4b3b0: cmp       al, 0x25
+  0x4b3b2: jne       0x4b3bc
+  0x4b3b4: cmp       byte ptr [rcx + 1], al
+  0x4b3b7: jne       0x4b3c7
+  0x4b3b9: inc       rcx
+  0x4b3bc: movzx     eax, byte ptr [rcx + 1]
+  0x4b3c0: inc       rcx
+  0x4b3c3: test      al, al
+  0x4b3c5: jne       0x4b3b0
+  0x4b3c7: cmp       byte ptr [rcx], 0x25
+  0x4b3ca: je        0x4b3d0
+  0x4b3cc: mov       eax, r9d
+  0x4b3cf: ret       
+  0x4b3d0: movzx     eax, byte ptr [rcx + 1]
+  0x4b3d4: inc       rcx
+  0x4b3d7: cmp       al, 0x30
+  0x4b3d9: jl        0x4b3ef
+  0x4b3db: nop       dword ptr [rax + rax]
+  0x4b3e0: cmp       al, 0x39
+  0x4b3e2: ja        0x4b3ef
+  0x4b3e4: movzx     eax, byte ptr [rcx + 1]
+  0x4b3e8: inc       rcx
+  0x4b3eb: cmp       al, 0x30
+  0x4b3ed: jge       0x4b3e0
+  0x4b3ef: movzx     edx, byte ptr [rcx]
+  0x4b3f2: cmp       dl, 0x2e
+  0x4b3f5: jne       0x4b465
+  0x4b3f7: movzx     eax, byte ptr [rcx + 1]
+  0x4b3fb: inc       rcx
+  0x4b3fe: cmp       al, 0x2d
+  0x4b400: jne       0x4b411
+  0x4b402: movzx     eax, byte ptr [rcx + 1]
+  0x4b406: inc       rcx
+  0x4b409: mov       r10d, 1
+  0x4b40f: jmp       0x4b414
+  0x4b411: xor       r10d, r10d
+  0x4b414: cmp       al, 0x2b
+  0x4b416: lea       rdx, [rcx + 1]
+  0x4b41a: cmovne    rdx, rcx
+  0x4b41e: movzx     eax, byte ptr [rdx]
+  0x4b421: cmp       al, 0x30
+  0x4b423: jl        0x4b45e
+  0x4b425: xor       r8d, r8d
+  0x4b428: cmp       al, 0x39
+  0x4b42a: ja        0x4b445
+  0x4b42c: movzx     eax, al
+  0x4b42f: lea       r8d, [r8 + r8*4]
+  0x4b433: inc       rdx
+  0x4b436: lea       r8d, [r8 - 0x18]
+  0x4b43a: lea       r8d, [rax + r8*2]
+  0x4b43e: movzx     eax, byte ptr [rdx]
+  0x4b441: cmp       al, 0x30
+  0x4b443: jge       0x4b428
+  0x4b445: mov       ecx, r8d
+  0x4b448: neg       ecx
+  0x4b44a: test      r10d, r10d
+  0x4b44d: cmove     ecx, r8d
+  0x4b451: cmp       ecx, 0x63
+  0x4b454: jbe       0x4b460
+  0x4b456: movzx     edx, byte ptr [rdx]
+  0x4b459: mov       ecx, r9d
+  0x4b45c: jmp       0x4b46a
+  0x4b45e: xor       ecx, ecx
+  0x4b460: movzx     edx, byte ptr [rdx]
+  0x4b463: jmp       0x4b46a
+  0x4b465: mov       ecx, 0x7fffffff
+  0x4b46a: lea       eax, [rdx - 0x45]
+  0x4b46d: test      al, 0xdf
+  0x4b46f: mov       eax, 0xffffffff
+  0x4b474: cmove     ecx, eax
+  0x4b477: sub       dl, 0x47
+  0x4b47a: test      dl, 0xdf
+  0x4b47d: jne       0x4b488
+  0x4b47f: cmp       ecx, 0x7fffffff
+  0x4b485: cmove     ecx, eax
+  0x4b488: cmp       ecx, 0x7fffffff
+  0x4b48e: cmove     ecx, r9d
+  0x4b492: mov       eax, ecx
+  0x4b494: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_0004b3a0 @ 0x4b3a0  size=245 */
+/* xrefs: called by fun_00044a20 (2 sites), fun_00045150 (2 sites), fun_00045890 (2 sites), fun_00045ff0 (2 sites), fun_00046760 (2 sites), fun_00046ea0 (2 sites) */
+/* confidence: HIGH */
+#include <stdbool.h>
+int32_t fun_0004b3a0(uint8_t*a1, int32_t a2) {
+    uint32_t v2;
+    int8_t*v3;
+    uint32_t v6;
+    uint8_t*v7;
+    uint32_t v12;
+    uint8_t*v11;
+    uint64_t v13;
+    uint8_t*v4;
+    uint8_t*v1;
+    uint8_t*v5;
+    uint32_t v8;
+    uint8_t*v9;
+    bool v10;
+    uint8_t*v14;
+    uint64_t v15;
+    int32_t v17;
+    uint32_t v18;
+    int32_t v20;
+    int32_t v16;
+    int32_t v19;
+
+    v1 = a1;
+    if (*a1) {
+        v2 = *a1;
+        v3 = (int8_t*)a1;
+        while (true) {
+            v4 = (uint8_t*)v3;
+            if ((uint8_t)v2 != '%') {
+                v2 = v4[1];
+                v3 = (int8_t*)(v4 + 1);
+                v1 = v4 + 1;
+                if (*v1) continue;
+            } else {
+                v1 = (uint8_t*)v3;
+                if (v3[1] == (uint8_t)v2) {
+                    v4 = (uint8_t*)(v3 + 1);
+                    v2 = v4[1];
+                    v3 = (int8_t*)(v4 + 1);
+                    v1 = v4 + 1;
+                    if (*v1) {
+                        continue;
+                    }
+                }
+            }
+            break;
+        }
+    }
+    if (*(int8_t*)v1 != '%') {
+        return a2;
+    }
+    v5 = v1 + 1;
+    if ((int8_t)*v5 >= '0') {
+        v6 = v1[1];
+        v7 = v1 + 1;
+        while (true) {
+            v5 = v7;
+            if ((uint8_t)v6 > '9') break;
+            v6 = v7[1];
+            v5 = v7 + 1;
+            ++v7;
+            if ((int8_t)*v7 < '0') break;
+        }
+    }
+    if (*v5 != '.') {
+        v17 = 0x7fffffff;
+        v18 = *v5;
+    } else {
+        if (v5[1] != '-') {
+            v8 = v5[1];
+            v9 = v5 + 1;
+            v10 = 0;
+        } else {
+            v8 = v5[2];
+            v9 = v5 + 2;
+            v10 = 1;
+        }
+        v11 = (uint8_t*)((uint8_t)v8 != '+' ? (int64_t)(v9) : (int64_t)(v9 + 1));
+        if ((int8_t)*v11 < '0') {
+            v17 = 0;
+            v14 = v11;
+            v18 = *v14;
+        } else {
+            v12 = *v11;
+            v13 = 0;
+            while (true) {
+                v14 = v11;
+                v15 = v13;
+                if ((uint8_t)v12 > '9') break;
+                v14 = v11 + 1;
+                v15 = (uint8_t)v12 + (v13 * 5 - 0x18) * 2;
+                v13 = (uint8_t)v12 + (v13 * 5 - 0x18) * 2;
+                v12 = v11[1];
+                ++v11;
+                if ((int8_t)*v11 < '0') break;
+            }
+            v16 = v10 == 0 ? (int32_t)v15 : -((int32_t)v15);
+            v17 = v16;
+            if ((uint32_t)(v16) <= 0x63) {
+                v18 = *v14;
+            } else {
+                v17 = a2;
+                v18 = *v14;
+            }
+        }
+    }
+    v19 = ((v18 - 0x45) & 0xdf) == 0 ? -1 : v17;
+    v20 = v19;
+    if (((int8_t)v18 - 0x47) & 0xdf) {
+        return v20 == 0x7fffffff ? a2 : v20;
+    }
+    v20 = v19 == 0x7fffffff ? -1 : v19;
+    return v20 == 0x7fffffff ? a2 : v20;
+}
+

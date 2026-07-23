@@ -1,0 +1,142 @@
+=== fun_0000df60 @ 0xdf60 size=286 blocks=11 calls=3 ===
+--- DISASM ---
+  0xdf60: mov       qword ptr [rsp + 0x18], rbx
+  0xdf65: push      rbp
+  0xdf66: sub       rsp, 0x20
+  0xdf6a: mov       rbx, rcx
+  0xdf6d: mov       edx, 0x200
+  0xdf72: mov       rcx, qword ptr [rcx + 0xd0]
+  0xdf79: nop       dword ptr [rax]
+  0xdf80: lea       eax, [rdx - 0x290]
+  0xdf86: cmp       eax, 6
+  0xdf89: jbe       0xdfae
+  0xdf8b: mov       eax, edx
+  0xdf8d: add       rax, rax
+  0xdf90: mov       byte ptr [rcx + rax*8 - 0x1edc], 0
+  0xdf98: mov       dword ptr [rcx + rax*8 - 0x1ed8], 0xbf800000
+  0xdfa3: mov       dword ptr [rcx + rax*8 - 0x1ed4], 0xbf800000
+  0xdfae: inc       edx
+  0xdfb0: cmp       edx, 0x29b
+  0xdfb6: jl        0xdf80
+  0xdfb8: mov       qword ptr [rbx + 0xf4], 0
+  0xdfc3: xor       ebp, ebp
+  0xdfc5: mov       r8d, dword ptr [rbx + 0xbac]
+  0xdfcc: test      r8d, r8d
+  0xdfcf: jns       0xe06d
+  0xdfd5: mov       qword ptr [rsp + 0x38], rdi
+  0xdfda: mov       eax, r8d
+  0xdfdd: cdq       
+  0xdfde: mov       edi, ebp
+  0xdfe0: sub       eax, edx
+  0xdfe2: sar       eax, 1
+  0xdfe4: lea       ecx, [rax + r8]
+  0xdfe8: test      ecx, ecx
+  0xdfea: cmovg     edi, ecx
+  0xdfed: cmp       edi, r8d
+  0xdff0: jle       0xe057
+  0xdff2: movsxd    rcx, edi
+  0xdff5: add       rcx, rcx
+  0xdff8: mov       qword ptr [rsp + 0x30], rsi
+  0xdffd: call      0x16810
+  0xe002: mov       rdx, qword ptr [rbx + 0xbb0]
+  0xe009: mov       rsi, rax
+  0xe00c: test      rdx, rdx
+  0xe00f: je        0xe02f
+  0xe011: movsxd    r8, dword ptr [rbx + 0xba8]
+  0xe018: mov       rcx, rax
+  0xe01b: add       r8, r8
+  0xe01e: call      0x84b90
+  0xe023: mov       rcx, qword ptr [rbx + 0xbb0]
+  0xe02a: call      0x168c0
+  0xe02f: mov       qword ptr [rbx + 0xbb0], rsi
+  0xe036: mov       rsi, qword ptr [rsp + 0x30]
+  0xe03b: mov       dword ptr [rbx + 0xbac], edi
+  0xe041: mov       rdi, qword ptr [rsp + 0x38]
+  0xe046: mov       dword ptr [rbx + 0xba8], ebp
+  0xe04c: mov       rbx, qword ptr [rsp + 0x40]
+  0xe051: add       rsp, 0x20
+  0xe055: pop       rbp
+  0xe056: ret       
+  0xe057: mov       rdi, qword ptr [rsp + 0x38]
+  0xe05c: mov       dword ptr [rbx + 0xba8], ebp
+  0xe062: mov       rbx, qword ptr [rsp + 0x40]
+  0xe067: add       rsp, 0x20
+  0xe06b: pop       rbp
+  0xe06c: ret       
+  0xe06d: mov       dword ptr [rbx + 0xba8], ebp
+  0xe073: mov       rbx, qword ptr [rsp + 0x40]
+  0xe078: add       rsp, 0x20
+  0xe07c: pop       rbp
+  0xe07d: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_0000df60 @ 0xdf60  size=286 */
+/* xrefs: called by fun_00023740 (1 site), fun_000240c0 (1 site) */
+/* confidence: HIGH */
+struct s_fun_0000df60_a1;
+#pragma pack(push, 1)
+struct s_fun_0000df60_a1 {
+    char _pad_0[208];
+    int64_t field_d0;
+    char _pad_d8[28];
+    int64_t field_f4;
+    char _pad_fc[2732];
+    int32_t field_ba8;
+    int32_t field_bac;
+    int64_t field_bb0;
+};
+#pragma pack(pop)
+#ifndef __max
+#define __max(a,b) ((a)>(b)?(a):(b))
+#endif
+int64_t fun_00016810();
+int64_t fun_000168c0();
+int64_t fun_00084b90();
+int32_t fun_0000df60(struct s_fun_0000df60_a1*a1) {
+    int32_t v1;
+    uint64_t v2;
+    int64_t v7;
+    int64_t v6;
+    int64_t v3;
+    int32_t*v4;
+    int32_t v5;
+
+    v1 = 0x200;
+    do {
+        v2 = v1 - 0x290;
+        if ((uint32_t)((int32_t)v2) > 6) {
+            v3 = (uint32_t)v1 * 2;
+            v4 = (int32_t*)(a1->field_d0 + v3 * 8);
+            *(int8_t*)((char*)v4 - 0x1edc) = 0;
+            *(int32_t*)((char*)v4 - 0x1ed8) = -1082130432;
+            *(int32_t*)((char*)v4 - 0x1ed4) = -1082130432;
+            v2 = v3;
+        }
+        ++v1;
+    } while (v1 < 0x29b);
+    a1->field_f4 = 0;
+    if (a1->field_bac >= 0) {
+        a1->field_ba8 = 0;
+        return (int32_t)v2;
+    }
+    v5 = __max((int32_t)(a1->field_bac / 2 + a1->field_bac), 0);
+    if (v5 <= a1->field_bac) {
+        a1->field_ba8 = 0;
+        return a1->field_bac / 2;
+    }
+    v6 = fun_00016810((int64_t)v5 * 2);
+    v7 = v6;
+    if (!a1->field_bb0) {
+        a1->field_bb0 = v6;
+        a1->field_bac = v5;
+        a1->field_ba8 = 0;
+        return (int32_t)v7;
+    }
+    fun_00084b90(v6, a1->field_bb0, (int64_t)a1->field_ba8 * 2);
+    v7 = fun_000168c0(a1->field_bb0);
+    a1->field_bb0 = v6;
+    a1->field_bac = v5;
+    a1->field_ba8 = 0;
+    return (int32_t)v7;
+}
+

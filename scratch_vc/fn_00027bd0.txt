@@ -1,0 +1,63 @@
+=== fun_00027bd0 @ 0x27bd0 size=89 blocks=5 calls=3 ===
+--- DISASM ---
+  0x27bd0: mov       qword ptr [rsp + 0x10], rbx
+  0x27bd5: push      rdi
+  0x27bd6: sub       rsp, 0x20
+  0x27bda: movsxd    rdi, edx
+  0x27bdd: mov       rbx, rcx
+  0x27be0: cmp       edi, dword ptr [rcx + 4]
+  0x27be3: jle       0x27c1e
+  0x27be5: mov       rcx, rdi
+  0x27be8: mov       qword ptr [rsp + 0x30], rsi
+  0x27bed: call      0x16810
+  0x27bf2: mov       rdx, qword ptr [rbx + 8]
+  0x27bf6: mov       rsi, rax
+  0x27bf9: test      rdx, rdx
+  0x27bfc: je        0x27c12
+  0x27bfe: movsxd    r8, dword ptr [rbx]
+  0x27c01: mov       rcx, rax
+  0x27c04: call      0x84b90
+  0x27c09: mov       rcx, qword ptr [rbx + 8]
+  0x27c0d: call      0x168c0
+  0x27c12: mov       qword ptr [rbx + 8], rsi
+  0x27c16: mov       rsi, qword ptr [rsp + 0x30]
+  0x27c1b: mov       dword ptr [rbx + 4], edi
+  0x27c1e: mov       rbx, qword ptr [rsp + 0x38]
+  0x27c23: add       rsp, 0x20
+  0x27c27: pop       rdi
+  0x27c28: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_00027bd0 @ 0x27bd0  size=89 */
+/* xrefs: called by fun_00026f90 (1 site), fun_0004b530 (1 site) */
+/* confidence: HIGH */
+struct s_fun_00027bd0_a1;
+#pragma pack(push, 1)
+struct s_fun_00027bd0_a1 {
+    int32_t field_0;
+    int32_t field_4;
+    int64_t field_8;
+};
+#pragma pack(pop)
+int64_t fun_00016810();
+void fun_000168c0();
+int64_t fun_00084b90();
+void fun_00027bd0(struct s_fun_00027bd0_a1*a1, int32_t a2) {
+    int64_t v1;
+
+    if (a2 <= a1->field_4) {
+        return;
+    }
+    v1 = fun_00016810((int64_t)a2);
+    if (!a1->field_8) {
+        a1->field_8 = v1;
+        a1->field_4 = a2;
+        return;
+    }
+    fun_00084b90(v1, a1->field_8, (int64_t)a1->field_0);
+    fun_000168c0(a1->field_8);
+    a1->field_8 = v1;
+    a1->field_4 = a2;
+    return;
+}
+

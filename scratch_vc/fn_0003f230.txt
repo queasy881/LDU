@@ -1,0 +1,107 @@
+=== fun_0003f230 @ 0x3f230 size=184 blocks=2 calls=0 ===
+--- DISASM ---
+  0x3f230: mov       rax, qword ptr [0x174148]
+  0x3f237: mov       rcx, qword ptr [rax + 0x22c8]
+  0x3f23e: mov       r9, qword ptr [rax + 0x1480]
+  0x3f245: movups    xmm0, xmmword ptr [rcx + 0x170]
+  0x3f24c: mov       rax, qword ptr [r9 + 0x2c8]
+  0x3f253: movss     xmm1, dword ptr [rcx + 0x170]
+  0x3f25b: movss     xmm2, dword ptr [rcx + 0x174]
+  0x3f263: movss     xmm3, dword ptr [rcx + 0x178]
+  0x3f26b: movss     xmm4, dword ptr [rcx + 0x17c]
+  0x3f273: movups    xmmword ptr [r9 + 0x268], xmm0
+  0x3f27b: movss     dword ptr [rax + 0x60], xmm1
+  0x3f280: movss     dword ptr [rax + 0x64], xmm2
+  0x3f285: movss     dword ptr [rax + 0x68], xmm3
+  0x3f28a: movss     dword ptr [rax + 0x6c], xmm4
+  0x3f28f: mov       rax, qword ptr [r9 + 0x2c8]
+  0x3f296: movsxd    r8, dword ptr [rax + 0xa0]
+  0x3f29d: mov       rdx, qword ptr [rax + 0xa8]
+  0x3f2a4: add       r8, r8
+  0x3f2a7: movss     dword ptr [rdx + r8*8 - 0x10], xmm1
+  0x3f2ae: movss     dword ptr [rdx + r8*8 - 0xc], xmm2
+  0x3f2b5: movss     dword ptr [rdx + r8*8 - 8], xmm3
+  0x3f2bc: movss     dword ptr [rdx + r8*8 - 4], xmm4
+  0x3f2c3: movsxd    rax, dword ptr [rcx + 0x74]
+  0x3f2c7: imul      rdx, rax, 0x74
+  0x3f2cb: mov       rax, qword ptr [rcx + 0x18]
+  0x3f2cf: mov       rcx, qword ptr [rcx + 0x1a0]
+  0x3f2d6: movzx     r8d, word ptr [rdx + rax + 0x60]
+  0x3f2dc: mov       rdx, qword ptr [r9 + 0x2c8]
+  0x3f2e3: jmp       0x34290
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_0003f230 @ 0x3f230  size=184 */
+/* xrefs: called by fun_000510e0 (1 site) */
+/* confidence: HIGH */
+struct s_fun_0003f230_qword_174148;
+struct s_fun_0003f230_qword_174148_22c8;
+struct s_fun_0003f230_v1;
+struct s_fun_0003f230_v2;
+#pragma pack(push, 1)
+struct s_fun_0003f230_qword_174148 {
+    char _pad_0[5248];
+    void* field_1480;
+    char _pad_1488[3648];
+    struct s_fun_0003f230_qword_174148_22c8* field_22c8;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_0003f230_qword_174148_22c8 {
+    char _pad_0[24];
+    int64_t field_18;
+    char _pad_20[84];
+    int32_t field_74;
+    char _pad_78[252];
+    float field_174;
+    char _pad_178[4];
+    float field_17c;
+    char _pad_180[32];
+    int64_t field_1a0;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_0003f230_v1 {
+    char _pad_0[616];
+    int64_t field_268;
+    char _pad_270[88];
+    int64_t field_2c8;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_0003f230_v2 {
+    char _pad_0[96];
+    float field_60;
+    float field_64;
+    float field_68;
+    float field_6c;
+    char _pad_70[48];
+    int32_t field_a0;
+    char _pad_a4[4];
+    int64_t field_a8;
+};
+#pragma pack(pop)
+#define qword_174148 (*(int64_t*)0x174148)
+int32_t fun_00034290();
+int32_t fun_0003f230(void) {
+    struct s_fun_0003f230_qword_174148* gs_174148 = (struct s_fun_0003f230_qword_174148*)qword_174148;
+    struct s_fun_0003f230_v1*v1;
+    struct s_fun_0003f230_v2*v2;
+    float*v3;
+
+    v1 = (struct s_fun_0003f230_v1*)gs_174148->field_1480;
+    v1->field_268 = ((int64_t*)gs_174148->field_22c8)[0x2e];
+    *(int64_t*)((char*)v1 + 0x270) = ((int64_t*)gs_174148->field_22c8)[0x2f];
+    v2 = (struct s_fun_0003f230_v2*)v1->field_2c8;
+    v2->field_60 = ((float*)gs_174148->field_22c8)[0x5c];
+    v2->field_64 = gs_174148->field_22c8->field_174;
+    v2->field_68 = ((float*)gs_174148->field_22c8)[0x5e];
+    v2->field_6c = gs_174148->field_22c8->field_17c;
+    v3 = (float*)(v2->field_a8 + (int64_t)v2->field_a0 * 0x10);
+    *(float*)((char*)v3 - 0x10) = ((float*)gs_174148->field_22c8)[0x5c];
+    *(float*)((char*)v3 - 0xc) = gs_174148->field_22c8->field_174;
+    *(float*)((char*)v3 - 8) = ((float*)gs_174148->field_22c8)[0x5e];
+    *(float*)((char*)v3 - 4) = gs_174148->field_22c8->field_17c;
+    return fun_00034290(gs_174148->field_22c8->field_1a0, ((int64_t*)gs_174148->field_1480)[0x59], (uint32_t)*(uint16_t*)((int64_t)gs_174148->field_22c8->field_74 * 0x74 + gs_174148->field_22c8->field_18 + 0x60));
+}
+

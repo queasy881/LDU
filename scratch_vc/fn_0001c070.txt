@@ -1,0 +1,178 @@
+=== fun_0001c070 @ 0x1c070 size=305 blocks=10 calls=5 ===
+--- DISASM ---
+  0x1c070: push      rbx
+  0x1c072: push      rbp
+  0x1c073: push      rsi
+  0x1c074: push      rdi
+  0x1c075: sub       rsp, 0x48
+  0x1c079: mov       rsi, rdx
+  0x1c07c: xor       ebp, ebp
+  0x1c07e: mov       dword ptr [rsp + 0x28], ebp
+  0x1c082: mov       qword ptr [rsp + 0x20], rbp
+  0x1c087: mov       r9d, 0xffffffff
+  0x1c08d: mov       r8, rdx
+  0x1c090: xor       edx, edx
+  0x1c092: mov       ecx, 0xfde9
+  0x1c097: call      qword ptr [0x870a0]
+  0x1c09d: mov       edi, eax
+  0x1c09f: mov       qword ptr [rsp + 0x30], rbp
+  0x1c0a4: mov       ebx, ebp
+  0x1c0a6: mov       qword ptr [rsp + 0x38], rbx
+  0x1c0ab: test      eax, eax
+  0x1c0ad: jle       0x1c0cd
+  0x1c0af: mov       edx, eax
+  0x1c0b1: mov       eax, 8
+  0x1c0b6: cmp       edx, eax
+  0x1c0b8: cmovl     edx, eax
+  0x1c0bb: test      edx, edx
+  0x1c0bd: jle       0x1c0cd
+  0x1c0bf: movsxd    rcx, edx
+  0x1c0c2: add       rcx, rcx
+  0x1c0c5: call      0x16810
+  0x1c0ca: mov       rbx, rax
+  0x1c0cd: mov       dword ptr [rsp + 0x28], edi
+  0x1c0d1: mov       qword ptr [rsp + 0x20], rbx
+  0x1c0d6: mov       r9d, 0xffffffff
+  0x1c0dc: mov       r8, rsi
+  0x1c0df: xor       edx, edx
+  0x1c0e1: mov       ecx, 0xfde9
+  0x1c0e6: call      qword ptr [0x870a0]
+  0x1c0ec: mov       dword ptr [rsp + 0x28], 0xa
+  0x1c0f4: mov       qword ptr [rsp + 0x20], rbp
+  0x1c0f9: xor       r9d, r9d
+  0x1c0fc: mov       r8, rbx
+  0x1c0ff: lea       rdx, [0x8ac88]
+  0x1c106: xor       ecx, ecx
+  0x1c108: call      qword ptr [0x873b8]
+  0x1c10e: cmp       rax, 0x20
+  0x1c112: setg      dil
+  0x1c116: test      rbx, rbx
+  0x1c119: je        0x1c194
+  0x1c11b: mov       r8, qword ptr [0x174148]
+  0x1c122: test      r8, r8
+  0x1c125: je        0x1c183
+  0x1c127: mov       r9d, dword ptr [r8 + 4]
+  0x1c12b: movsx     rdx, word ptr [r8 + 0x28ec]
+  0x1c133: lea       rcx, [r8 + 0x28f0]
+  0x1c13a: lea       rcx, [rcx + rdx*8]
+  0x1c13e: cmp       dword ptr [rcx], r9d
+  0x1c141: je        0x1c178
+  0x1c143: lea       ecx, [rdx + 1]
+  0x1c146: mov       eax, 0x2aaaaaab
+  0x1c14b: imul      ecx
+  0x1c14d: mov       eax, edx
+  0x1c14f: shr       eax, 0x1f
+  0x1c152: add       edx, eax
+  0x1c154: lea       eax, [rdx + rdx*2]
+  0x1c157: add       eax, eax
+  0x1c159: sub       ecx, eax
+  0x1c15b: mov       word ptr [r8 + 0x28ec], cx
+  0x1c163: movsx     rcx, cx
+  0x1c167: add       rcx, 0x51e
+  0x1c16e: lea       rcx, [r8 + rcx*8]
+  0x1c172: mov       dword ptr [rcx], r9d
+  0x1c175: mov       dword ptr [rcx + 4], ebp
+  0x1c178: inc       word ptr [rcx + 6]
+  0x1c17c: inc       dword ptr [r8 + 0x28e8]
+  0x1c183: mov       rdx, qword ptr [0x174150]
+  0x1c18a: mov       rcx, rbx
+  0x1c18d: call      qword ptr [0x173040]
+  0x1c193: nop       
+  0x1c194: movzx     eax, dil
+  0x1c198: add       rsp, 0x48
+  0x1c19c: pop       rdi
+  0x1c19d: pop       rsi
+  0x1c19e: pop       rbp
+  0x1c19f: pop       rbx
+  0x1c1a0: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_0001c070 @ 0x1c070  size=305 */
+typedef uint32_t DWORD;
+typedef uint64_t LPCSTR;
+typedef uint64_t LPWSTR;
+typedef uint32_t UINT;
+/* confidence: HIGH */
+#include <stdbool.h>
+struct s_fun_0001c070_qword_174148;
+struct s_fun_0001c070_v7;
+struct s_fun_0001c070_v5;
+#pragma pack(push, 1)
+struct s_fun_0001c070_qword_174148 {
+    char _pad_0[4];
+    int32_t field_4;
+    char _pad_8[10464];
+    int32_t field_28e8;
+    int16_t field_28ec;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_0001c070_v7 {
+    int32_t field_0;
+    int32_t field_4;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_0001c070_v5 {
+    int32_t field_0;
+    char _pad_4[2];
+    int16_t field_6;
+};
+#pragma pack(pop)
+#define qword_173040 (*(int64_t*)0x173040)
+#define qword_174148 (*(int64_t*)0x174148)
+#define qword_174150 (*(int64_t*)0x174150)
+#ifndef __max
+#define __max(a,b) ((a)>(b)?(a):(b))
+#endif
+int32_t MultiByteToWideChar(UINT, DWORD, LPCSTR, int32_t, LPWSTR, int32_t);
+int64_t ShellExecuteW();
+int64_t fun_00016810();
+uint8_t fun_0001c070(int64_t a1, LPCSTR a2) {
+    struct s_fun_0001c070_qword_174148* gs_174148 = (struct s_fun_0001c070_qword_174148*)qword_174148;
+    int32_t v1;
+    LPWSTR v2;
+    uint64_t v3;
+    struct s_fun_0001c070_v5*v5;
+    int64_t v4;
+    int64_t v6;
+    struct s_fun_0001c070_v7*v7;
+
+    v1 = 0;
+    v2 = 0;
+    v1 = MultiByteToWideChar(0xfde9, 0, a2, 0xffffffffLL, v2, v1);
+    v3 = 0;
+    if (v1 > 0) {
+        v3 = 0;
+        if (__max(v1, 8) > 0) {
+            v3 = fun_00016810((int64_t)__max(v1, 8) * 2);
+        }
+    }
+    MultiByteToWideChar(0xfde9, 0, a2, 0xffffffffLL, v3, v1);
+    v4 = ShellExecuteW(0, L"open", v3, 0);
+    if (!v3) {
+        return (uint8_t)(v4 > 0x20);
+    }
+    if (!qword_174148) {
+        ((int64_t(*)())(qword_173040))(v3, qword_174150);
+        return (uint8_t)(v4 > 0x20);
+    }
+    v5 = (struct s_fun_0001c070_v5*)(qword_174148 + 0x28f0 + (int64_t)gs_174148->field_28ec * 8);
+    if (v5->field_0 == gs_174148->field_4) {
+        ++v5->field_6;
+        ++gs_174148->field_28e8;
+        ((int64_t(*)())(qword_173040))(v3, qword_174150);
+        return (uint8_t)(v4 > 0x20);
+    }
+    v6 = (int64_t)gs_174148->field_28ec + 1;
+    gs_174148->field_28ec = (int16_t)((int32_t)((int64_t)gs_174148->field_28ec + 1) - (int32_t)((int32_t)((int64_t)gs_174148->field_28ec + 1) / 6 * 3) * 2);
+    v7 = (struct s_fun_0001c070_v7*)(qword_174148 + ((int64_t)((int16_t)((int32_t)v6 - (int32_t)((int32_t)v6 / 6 * 3) * 2)) + 0x51e) * 8);
+    v7->field_0 = gs_174148->field_4;
+    v7->field_4 = 0;
+    v5 = (struct s_fun_0001c070_v5*)v7;
+    ++v5->field_6;
+    ++gs_174148->field_28e8;
+    ((int64_t(*)())(qword_173040))(v3, qword_174150);
+    return (uint8_t)(v4 > 0x20);
+}
+

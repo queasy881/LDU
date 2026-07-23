@@ -1,0 +1,68 @@
+=== fun_0004a880 @ 0x4a880 size=143 blocks=3 calls=6 ===
+--- DISASM ---
+  0x4a880: push      rbx
+  0x4a882: sub       rsp, 0x40
+  0x4a886: mov       rax, qword ptr [0x1733c0]
+  0x4a88d: xor       rax, rsp
+  0x4a890: mov       qword ptr [rsp + 0x30], rax
+  0x4a895: mov       rbx, qword ptr [0x174148]
+  0x4a89c: lea       r8, [0x92508]
+  0x4a8a3: mov       edx, 0x10
+  0x4a8a8: lea       rcx, [rsp + 0x20]
+  0x4a8ad: dec       dword ptr [rbx + 0x2588]
+  0x4a8b3: mov       r9d, dword ptr [rbx + 0x2588]
+  0x4a8ba: call      0x13270
+  0x4a8bf: mov       rcx, qword ptr [rbx + 0x1480]
+  0x4a8c6: lea       rdx, [rsp + 0x20]
+  0x4a8cb: mov       rcx, qword ptr [rcx + 8]
+  0x4a8cf: call      0x856a0
+  0x4a8d4: test      eax, eax
+  0x4a8d6: je        0x4a8f7
+  0x4a8d8: lea       rcx, [0x92518]
+  0x4a8df: call      0x10890
+  0x4a8e4: mov       rcx, qword ptr [rsp + 0x30]
+  0x4a8e9: xor       rcx, rsp
+  0x4a8ec: call      0x5dbe0
+  0x4a8f1: add       rsp, 0x40
+  0x4a8f5: pop       rbx
+  0x4a8f6: ret       
+  0x4a8f7: call      0x107a0
+  0x4a8fc: mov       rcx, qword ptr [rsp + 0x30]
+  0x4a901: xor       rcx, rsp
+  0x4a904: call      0x5dbe0
+  0x4a909: add       rsp, 0x40
+  0x4a90d: pop       rbx
+  0x4a90e: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_0004a880 @ 0x4a880  size=143 */
+/* xrefs: called by fun_0004a060 (1 site), fun_00052d00 (1 site) */
+/* confidence: HIGH */
+struct s_fun_0004a880_qword_174148;
+#pragma pack(push, 1)
+struct s_fun_0004a880_qword_174148 {
+    char _pad_0[5248];
+    void* field_1480;
+    char _pad_1488[4352];
+    int32_t field_2588;
+};
+#pragma pack(pop)
+#define qword_1733c0 (*(int64_t*)0x1733c0)
+#define qword_174148 (*(int64_t*)0x174148)
+int64_t fun_000107a0();
+int32_t fun_00010890();
+int32_t fun_00013270();
+int64_t fun_000856a0();
+int32_t fun_0004a880(void) {
+    char s1[32];
+    struct s_fun_0004a880_qword_174148* gs_174148 = (struct s_fun_0004a880_qword_174148*)qword_174148;
+
+    *(int64_t*)((char*)s1 + 0x10) = qword_1733c0;
+    --gs_174148->field_2588;
+    fun_00013270(s1, 0x10, "##Combo_%02d", (uint32_t)gs_174148->field_2588);
+    if (!((int32_t)fun_000856a0(((int64_t*)gs_174148->field_1480)[1], s1))) {
+        return (int32_t)fun_000107a0();
+    }
+    return fun_00010890("Calling EndCombo() in wrong window!");
+}
+

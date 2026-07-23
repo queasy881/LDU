@@ -1,0 +1,34 @@
+=== fun_000167a0 @ 0x167a0 size=29 blocks=3 calls=0 ===
+--- DISASM ---
+  0x167a0: mov       rcx, qword ptr [0x174148]
+  0x167a7: xorps     xmm0, xmm0
+  0x167aa: comiss    xmm0, dword ptr [rcx + 0x26e4]
+  0x167b1: jb        0x167bc
+  0x167b3: mov       eax, dword ptr [rcx + 0x44]
+  0x167b6: mov       dword ptr [rcx + 0x26e4], eax
+  0x167bc: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_000167a0 @ 0x167a0  size=29 */
+/* xrefs: called by fun_00052d00 (1 site) */
+/* confidence: HIGH */
+struct s_fun_000167a0_qword_174148;
+#pragma pack(push, 1)
+struct s_fun_000167a0_qword_174148 {
+    char _pad_0[68];
+    int32_t field_44;
+    char _pad_48[9884];
+    float field_26e4;
+};
+#pragma pack(pop)
+#define qword_174148 (*(int64_t*)0x174148)
+void fun_000167a0(void) {
+    struct s_fun_000167a0_qword_174148* gs_174148 = (struct s_fun_000167a0_qword_174148*)qword_174148;
+
+    if (!(gs_174148->field_26e4 <= 0.0f)) {
+        return;
+    }
+    gs_174148->field_26e4 = gs_174148->field_44;
+    return;
+}
+

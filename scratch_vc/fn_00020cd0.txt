@@ -1,0 +1,22 @@
+=== fun_00020cd0 @ 0x20cd0 size=26 blocks=3 calls=0 ===
+--- DISASM ---
+  0x20cd0: mov       rdx, rcx
+  0x20cd3: mov       rcx, qword ptr [0x174148]
+  0x20cda: mov       rax, qword ptr [rcx + 0xc08]
+  0x20ce1: test      rax, rax
+  0x20ce4: je        0x20ce9
+  0x20ce6: jmp       rax
+  0x20ce9: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_00020cd0 @ 0x20cd0  size=26 */
+/* xrefs: called by fun_0004b530 (1 site), fun_00056380 (1 site) */
+/* confidence: HIGH */
+#define qword_174148 (*(int64_t*)0x174148)
+int32_t fun_00020cd0(void) {
+    if (!*(int64_t*)(qword_174148 + 0xc08)) {
+        return 0;
+    }
+    return (int64_t)((int64_t(*)())(*(int64_t*)(qword_174148 + 0xc08)))();
+}
+

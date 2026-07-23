@@ -1,0 +1,130 @@
+=== fun_00014360 @ 0x14360 size=147 blocks=8 calls=1 ===
+--- DISASM ---
+  0x14360: cmp       edx, r8d
+  0x14363: jge       0x143f2
+  0x14369: mov       qword ptr [rsp + 0x10], rsi
+  0x1436e: push      rdi
+  0x1436f: sub       rsp, 0x30
+  0x14373: mov       qword ptr [rsp + 0x40], rbx
+  0x14378: mov       edi, r8d
+  0x1437b: mov       rbx, qword ptr [rcx + 0x30]
+  0x1437f: mov       esi, edx
+  0x14381: mov       ecx, dword ptr [rbx + 0x1c]
+  0x14384: mov       r9d, dword ptr [rbx + 0x18]
+  0x14388: cmp       r9d, ecx
+  0x1438b: jne       0x143b7
+  0x1438d: inc       r9d
+  0x14390: test      ecx, ecx
+  0x14392: je        0x1439f
+  0x14394: mov       eax, ecx
+  0x14396: cdq       
+  0x14397: sub       eax, edx
+  0x14399: sar       eax, 1
+  0x1439b: add       eax, ecx
+  0x1439d: jmp       0x143a4
+  0x1439f: mov       eax, 8
+  0x143a4: cmp       eax, r9d
+  0x143a7: lea       rcx, [rbx + 0x18]
+  0x143ab: cmovg     r9d, eax
+  0x143af: mov       edx, r9d
+  0x143b2: call      0x27df0
+  0x143b7: movsxd    rax, dword ptr [rbx + 0x18]
+  0x143bb: lea       rcx, [rax + rax*2]
+  0x143bf: mov       rax, qword ptr [rbx + 0x20]
+  0x143c3: mov       dword ptr [rax + rcx*4], esi
+  0x143c6: mov       rsi, qword ptr [rsp + 0x48]
+  0x143cb: mov       dword ptr [rax + rcx*4 + 4], edi
+  0x143cf: lea       rdx, [rax + rcx*4]
+  0x143d3: movzx     eax, byte ptr [rsp + 0x2b]
+  0x143d8: mov       word ptr [rdx + 8], 0
+  0x143de: mov       byte ptr [rdx + 0xa], 0
+  0x143e2: mov       byte ptr [rdx + 0xb], al
+  0x143e5: inc       dword ptr [rbx + 0x18]
+  0x143e8: mov       rbx, qword ptr [rsp + 0x40]
+  0x143ed: add       rsp, 0x30
+  0x143f1: pop       rdi
+  0x143f2: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_00014360 @ 0x14360  size=147 */
+/* xrefs: called by fun_0004a060 (1 site) */
+/* confidence: HIGH */
+struct s_fun_00014360_v2;
+struct s_fun_00014360_t19;
+struct s_fun_00014360_t20;
+#pragma pack(push, 1)
+struct s_fun_00014360_v2 {
+    char _pad_0[24];
+    int32_t field_18;
+    char _pad_1c[4];
+    int64_t field_20;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_00014360_t19 {
+    char _pad_0[8];
+    int16_t field_8;
+    int8_t field_a;
+    int8_t field_b;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_00014360_t20 {
+    int32_t field_0;
+    int32_t field_4;
+};
+#pragma pack(pop)
+#ifndef __max
+#define __max(a,b) ((a)>(b)?(a):(b))
+#endif
+void fun_00027df0();
+void fun_00014360(int8_t*a1, int32_t a2, int32_t a3) {
+    int8_t v5 = 0;
+    int32_t v1;
+    struct s_fun_00014360_v2*v2;
+    int32_t v3;
+    int64_t v4;
+
+    if (a2 >= a3) {
+        return;
+    }
+    if (*(int32_t*)(*(int64_t*)((char*)a1 + 0x30) + 0x18) != *(int32_t*)(*(int64_t*)((char*)a1 + 0x30) + 0x1c)) {
+        v2 = (struct s_fun_00014360_v2*)*(int64_t*)((char*)a1 + 0x30);
+        v3 = (int64_t)v2->field_18;
+        v4 = v2->field_20;
+        *(int32_t*)(v4 + v3 * 0xc) = a2;
+        *(int32_t*)(v4 + v3 * 0xc + 4) = a3;
+        *(int16_t*)(v4 + v3 * 0xc + 8) = 0;
+        *(int8_t*)(v4 + v3 * 0xc + 0xa) = 0;
+        *(int8_t*)(v4 + v3 * 0xc + 0xb) = v5;
+        ++v2->field_18;
+        return;
+    }
+    if (!*(int32_t*)(*(int64_t*)((char*)a1 + 0x30) + 0x1c)) {
+        v1 = 8;
+        fun_00027df0(*(int64_t*)((char*)a1 + 0x30) + 0x18, (uint32_t)__max(v1, *(int32_t*)(*(int64_t*)((char*)a1 + 0x30) + 0x18) + 1));
+        v2 = (struct s_fun_00014360_v2*)*(int64_t*)((char*)a1 + 0x30);
+        v3 = (int64_t)v2->field_18;
+        v4 = v2->field_20;
+        *(int32_t*)(v4 + v3 * 0xc) = a2;
+        *(int32_t*)(v4 + v3 * 0xc + 4) = a3;
+        *(int16_t*)(v4 + v3 * 0xc + 8) = 0;
+        *(int8_t*)(v4 + v3 * 0xc + 0xa) = 0;
+        *(int8_t*)(v4 + v3 * 0xc + 0xb) = v5;
+        ++v2->field_18;
+        return;
+    }
+    v1 = *(int32_t*)(*(int64_t*)((char*)a1 + 0x30) + 0x1c) / 2 + *(int32_t*)(*(int64_t*)((char*)a1 + 0x30) + 0x1c);
+    fun_00027df0(*(int64_t*)((char*)a1 + 0x30) + 0x18, (uint32_t)__max(v1, *(int32_t*)(*(int64_t*)((char*)a1 + 0x30) + 0x18) + 1));
+    v2 = (struct s_fun_00014360_v2*)*(int64_t*)((char*)a1 + 0x30);
+    v3 = (int64_t)v2->field_18;
+    v4 = v2->field_20;
+    *(int32_t*)(v4 + v3 * 0xc) = a2;
+    *(int32_t*)(v4 + v3 * 0xc + 4) = a3;
+    *(int16_t*)(v4 + v3 * 0xc + 8) = 0;
+    *(int8_t*)(v4 + v3 * 0xc + 0xa) = 0;
+    *(int8_t*)(v4 + v3 * 0xc + 0xb) = v5;
+    ++v2->field_18;
+    return;
+}
+

@@ -1,0 +1,88 @@
+=== fun_00014a60 @ 0x14a60 size=123 blocks=11 calls=0 ===
+--- DISASM ---
+  0x14a60: mov       rax, qword ptr [0x174148]
+  0x14a67: movss     xmm0, dword ptr [rcx + 0xc]
+  0x14a6c: mov       r8, qword ptr [rax + 0x1480]
+  0x14a73: comiss    xmm0, dword ptr [r8 + 0x26c]
+  0x14a7b: jbe       0x14aa9
+  0x14a7d: movss     xmm0, dword ptr [r8 + 0x274]
+  0x14a86: comiss    xmm0, dword ptr [rcx + 4]
+  0x14a8a: jbe       0x14aa9
+  0x14a8c: movss     xmm0, dword ptr [rcx + 8]
+  0x14a91: comiss    xmm0, dword ptr [r8 + 0x268]
+  0x14a99: jbe       0x14aa9
+  0x14a9b: movss     xmm0, dword ptr [r8 + 0x270]
+  0x14aa4: comiss    xmm0, dword ptr [rcx]
+  0x14aa7: ja        0x14acd
+  0x14aa9: test      edx, edx
+  0x14aab: je        0x14ad0
+  0x14aad: cmp       edx, dword ptr [rax + 0x14f4]
+  0x14ab3: je        0x14acd
+  0x14ab5: cmp       edx, dword ptr [rax + 0x1520]
+  0x14abb: je        0x14acd
+  0x14abd: cmp       edx, dword ptr [rax + 0x1fcc]
+  0x14ac3: je        0x14acd
+  0x14ac5: cmp       edx, dword ptr [rax + 0x1fe4]
+  0x14acb: jne       0x14ad0
+  0x14acd: xor       al, al
+  0x14acf: ret       
+  0x14ad0: cmp       byte ptr [rax + 0x14f2], 0
+  0x14ad7: sete      al
+  0x14ada: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_00014a60 @ 0x14a60  size=123 */
+/* xrefs: called by fun_00055be0 (1 site) */
+/* confidence: HIGH */
+struct Vec4;
+struct s_fun_00014a60_qword_174148;
+struct s_fun_00014a60_qword_174148_1480;
+#ifndef __DS_TY_Vec4
+#define __DS_TY_Vec4
+#pragma pack(push, 1)
+struct Vec4 {
+    float x;
+    float y;
+    float z;
+    float w;
+};
+#pragma pack(pop)
+#endif
+#pragma pack(push, 1)
+struct s_fun_00014a60_qword_174148 {
+    char _pad_0[5248];
+    struct s_fun_00014a60_qword_174148_1480* field_1480;
+    char _pad_1488[106];
+    int8_t field_14f2;
+    char _pad_14f3[1];
+    int32_t field_14f4;
+    char _pad_14f8[40];
+    int32_t field_1520;
+    char _pad_1524[2728];
+    int32_t field_1fcc;
+    char _pad_1fd0[20];
+    int32_t field_1fe4;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_00014a60_qword_174148_1480 {
+    char _pad_0[616];
+    float field_268;
+    float field_26c;
+    float field_270;
+    float field_274;
+};
+#pragma pack(pop)
+#define qword_174148 (*(int64_t*)0x174148)
+int32_t fun_00014a60(struct Vec4*a1, int32_t a2) {
+    struct s_fun_00014a60_qword_174148* gs_174148 = (struct s_fun_00014a60_qword_174148*)qword_174148;
+
+    if (a1->w > gs_174148->field_1480->field_26c && gs_174148->field_1480->field_274 > a1->y && a1->z > gs_174148->field_1480->field_268 && gs_174148->field_1480->field_270 > a1->x) {
+        return 0;
+    }
+    if (!a2 || a2 != gs_174148->field_14f4 && a2 != gs_174148->field_1520 && a2 != gs_174148->field_1fcc && a2 != gs_174148->field_1fe4) {
+        return (int32_t)((qword_174148 & 0xffffff00) | gs_174148->field_14f2 == 0);
+    }
+    return 0;
+}
+

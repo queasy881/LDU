@@ -1,0 +1,69 @@
+=== fun_00038330 @ 0x38330 size=145 blocks=1 calls=1 ===
+--- DISASM ---
+  0x38330: sub       rsp, 0x58
+  0x38334: movaps    xmm5, xmm2
+  0x38337: movaps    xmmword ptr [rsp + 0x40], xmm6
+  0x3833c: addss     xmm5, dword ptr [rcx + 0x14]
+  0x38341: movaps    xmm6, xmm1
+  0x38344: mov       r11, rcx
+  0x38347: addss     xmm6, dword ptr [rcx + 0x10]
+  0x3834c: cvttss2si edx, xmm5
+  0x38350: movaps    xmm4, xmm6
+  0x38353: movaps    xmm2, xmm5
+  0x38356: addss     xmm2, dword ptr [rsp + 0x80]
+  0x3835f: addss     xmm4, xmm3
+  0x38363: cvttss2si r10d, xmm6
+  0x38368: cvttss2si eax, xmm2
+  0x3836c: movaps    xmm1, xmm4
+  0x3836f: movaps    xmm0, xmm2
+  0x38372: addss     xmm1, dword ptr [rsp + 0x88]
+  0x3837b: addss     xmm0, dword ptr [rsp + 0x90]
+  0x38384: mov       dword ptr [rsp + 0x38], eax
+  0x38388: movss     dword ptr [rcx + 0x10], xmm1
+  0x3838d: movss     dword ptr [rcx + 0x14], xmm0
+  0x38392: cvttss2si ecx, xmm4
+  0x38396: cvttss2si r9d, xmm0
+  0x3839b: mov       dword ptr [rsp + 0x30], ecx
+  0x3839f: mov       rcx, r11
+  0x383a2: mov       dword ptr [rsp + 0x28], edx
+  0x383a6: mov       dl, 4
+  0x383a8: mov       dword ptr [rsp + 0x20], r10d
+  0x383ad: cvttss2si r8d, xmm1
+  0x383b2: call      0x38470
+  0x383b7: movaps    xmm6, xmmword ptr [rsp + 0x40]
+  0x383bc: add       rsp, 0x58
+  0x383c0: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_00038330 @ 0x38330  size=145 */
+/* xrefs: called by fun_00039aa0 (11 sites) */
+/* confidence: HIGH */
+struct s_fun_00038330_a1;
+#pragma pack(push, 1)
+struct s_fun_00038330_a1 {
+    char _pad_0[16];
+    float field_10;
+    float field_14;
+};
+#pragma pack(pop)
+void fun_00038470();
+void fun_00038330(struct s_fun_00038330_a1*a1, float a2, float a3, float a4, float a5, float a6, float a7) {
+    int32_t v1;
+    int32_t v2;
+    float v3;
+    float v4;
+    int32_t v5;
+    float v6;
+
+    v1 = (int32_t)(a3 + a1->field_14 + a5);
+    v2 = (int32_t)(a2 + a1->field_10);
+    v3 = a2 + a1->field_10 + a4 + a6;
+    v4 = a2 + a1->field_10 + a4;
+    a1->field_10 = a2 + a1->field_10 + a4 + a6;
+    v5 = (int32_t)(a3 + a1->field_14);
+    v6 = a3 + a1->field_14 + a5 + a7;
+    a1->field_14 = a3 + a1->field_14 + a5 + a7;
+    fun_00038470(a1, (v5 & 0xffffff00) | 4, v3, v6, v2, v5, v4, v1);
+    return;
+}
+

@@ -1,0 +1,69 @@
+=== fun_0000d190 @ 0xd190 size=91 blocks=15 calls=0 ===
+--- DISASM ---
+  0xd190: xorps     xmm4, xmm4
+  0xd193: ucomiss   xmm1, xmm4
+  0xd196: jp        0xd1a0
+  0xd198: jne       0xd1a0
+  0xd19a: mov       eax, 1
+  0xd19f: ret       
+  0xd1a0: comiss    xmm0, xmm1
+  0xd1a3: jb        0xd1a8
+  0xd1a5: xor       eax, eax
+  0xd1a7: ret       
+  0xd1a8: comiss    xmm4, xmm3
+  0xd1ab: jb        0xd1bd
+  0xd1ad: comiss    xmm2, xmm0
+  0xd1b0: jbe       0xd1a5
+  0xd1b2: comiss    xmm1, xmm2
+  0xd1b5: jb        0xd1a5
+  0xd1b7: mov       eax, 1
+  0xd1bc: ret       
+  0xd1bd: comiss    xmm2, xmm0
+  0xd1c0: mov       eax, 0xffffffff
+  0xd1c5: jbe       0xd1cb
+  0xd1c7: mov       ecx, eax
+  0xd1c9: jmp       0xd1d7
+  0xd1cb: subss     xmm0, xmm2
+  0xd1cf: divss     xmm0, xmm3
+  0xd1d3: cvttss2si ecx, xmm0
+  0xd1d7: comiss    xmm2, xmm1
+  0xd1da: ja        0xd1e8
+  0xd1dc: subss     xmm1, xmm2
+  0xd1e0: divss     xmm1, xmm3
+  0xd1e4: cvttss2si eax, xmm1
+  0xd1e8: sub       eax, ecx
+  0xd1ea: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_0000d190 @ 0xd190  size=91 */
+/* xrefs: called by fun_00015140 (1 site), fun_000151d0 (1 site), fun_00048bf0 (1 site) */
+/* confidence: HIGH */
+int32_t fun_0000d190(float a1, float a2, float a3, float a4) {
+    int32_t v1;
+    int32_t v2;
+
+    if (a2 == 0.0f) {
+        return 1;
+    }
+    if (a1 >= a2) {
+        return 0;
+    }
+    if (!(a4 <= 0.0f)) {
+        if (a3 <= a1) {
+            v1 = (int32_t)((a1 - a3) / a4);
+        } else {
+            v1 = -1;
+        }
+        v2 = -1;
+        if (a3 > a2) {
+            return v2 - v1;
+        }
+        v2 = (int32_t)((a2 - a3) / a4);
+        return v2 - v1;
+    }
+    if (a3 <= a1 || a2 < a3) {
+        return 0;
+    }
+    return 1;
+}
+

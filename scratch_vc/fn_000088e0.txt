@@ -1,0 +1,25 @@
+=== fun_000088e0 @ 0x88e0 size=50 blocks=2 calls=2 ===
+--- DISASM ---
+  0x88e0: push      rbx
+  0x88e2: sub       rsp, 0x20
+  0x88e6: mov       rbx, rcx
+  0x88e9: add       rcx, 0xf0
+  0x88f0: call      0x8230
+  0x88f5: lea       rcx, [rbx + 0xe0]
+  0x88fc: call      0x8230
+  0x8901: lea       rcx, [rbx + 0x98]
+  0x8908: add       rsp, 0x20
+  0x890c: pop       rbx
+  0x890d: jmp       0x8230
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_000088e0 @ 0x88e0  size=50 */
+/* confidence: HIGH */
+int64_t fun_00008230();
+void fun_000088e0(int64_t a1) {
+    fun_00008230(a1 + 0xf0);
+    fun_00008230(a1 + 0xe0);
+    fun_00008230(a1 + 0x98);
+    return;
+}
+

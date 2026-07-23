@@ -1,0 +1,159 @@
+=== fun_0000d450 @ 0xd450 size=332 blocks=22 calls=0 ===
+--- DISASM ---
+  0xd450: sub       rsp, 8
+  0xd454: cmp       byte ptr [rcx + 0xcf], 0
+  0xd45b: je        0xd46f
+  0xd45d: cmp       byte ptr [rcx + 0xe8], 0
+  0xd464: jg        0xd46f
+  0xd466: cmp       byte ptr [rcx + 0xe9], 0
+  0xd46d: jle       0xd48a
+  0xd46f: cmp       byte ptr [rcx + 0xd4], 0
+  0xd476: je        0xd4a2
+  0xd478: cmp       byte ptr [rcx + 0xec], 0
+  0xd47f: jne       0xd4a2
+  0xd481: cmp       byte ptr [rcx + 0xeb], 0
+  0xd488: jle       0xd4a2
+  0xd48a: movsd     xmm0, qword ptr [rcx + 0x40]
+  0xd48f: movsd     qword ptr [rdx], xmm0
+  0xd493: movsd     xmm1, qword ptr [rcx + 0x48]
+  0xd498: movsd     qword ptr [r8], xmm1
+  0xd49d: add       rsp, 8
+  0xd4a1: ret       
+  0xd4a2: movss     xmm0, dword ptr [rcx + 0x50]
+  0xd4a7: xorps     xmm1, xmm1
+  0xd4aa: ucomiss   xmm0, xmm1
+  0xd4ad: jp        0xd4d8
+  0xd4af: jne       0xd4d8
+  0xd4b1: lea       r10, [rcx + 0x130]
+  0xd4b8: movss     xmm0, dword ptr [r10]
+  0xd4bd: lea       r9, [rcx + 0x128]
+  0xd4c4: subss     xmm0, dword ptr [r9]
+  0xd4c9: cvttss2si rax, xmm0
+  0xd4ce: xorps     xmm0, xmm0
+  0xd4d1: cvtsi2ss  xmm0, rax
+  0xd4d6: jmp       0xd4e6
+  0xd4d8: lea       r9, [rcx + 0x128]
+  0xd4df: lea       r10, [rcx + 0x130]
+  0xd4e6: movss     dword ptr [rdx], xmm0
+  0xd4ea: movss     xmm2, dword ptr [rcx + 0x54]
+  0xd4ef: ucomiss   xmm2, xmm1
+  0xd4f2: mov       qword ptr [rsp], rbx
+  0xd4f6: jp        0xd520
+  0xd4f8: jne       0xd520
+  0xd4fa: lea       rbx, [rcx + 0x134]
+  0xd501: xorps     xmm2, xmm2
+  0xd504: movss     xmm0, dword ptr [rbx]
+  0xd508: lea       r11, [rcx + 0x12c]
+  0xd50f: subss     xmm0, dword ptr [r11]
+  0xd514: cvttss2si rax, xmm0
+  0xd519: cvtsi2ss  xmm2, rax
+  0xd51e: jmp       0xd52e
+  0xd520: lea       r11, [rcx + 0x12c]
+  0xd527: lea       rbx, [rcx + 0x134]
+  0xd52e: movss     dword ptr [rdx + 4], xmm2
+  0xd533: movss     xmm0, dword ptr [rcx + 0x50]
+  0xd538: ucomiss   xmm0, xmm1
+  0xd53b: jp        0xd55e
+  0xd53d: jne       0xd55e
+  0xd53f: movss     xmm0, dword ptr [r10]
+  0xd544: maxss     xmm0, dword ptr [rcx + 0x138]
+  0xd54c: subss     xmm0, dword ptr [r9]
+  0xd551: cvttss2si rax, xmm0
+  0xd556: xorps     xmm0, xmm0
+  0xd559: cvtsi2ss  xmm0, rax
+  0xd55e: movss     dword ptr [r8], xmm0
+  0xd563: movss     xmm0, dword ptr [rcx + 0x54]
+  0xd568: ucomiss   xmm0, xmm1
+  0xd56b: jp        0xd58d
+  0xd56d: jne       0xd58d
+  0xd56f: movss     xmm0, dword ptr [rbx]
+  0xd573: maxss     xmm0, dword ptr [rcx + 0x13c]
+  0xd57b: subss     xmm0, dword ptr [r11]
+  0xd580: cvttss2si rax, xmm0
+  0xd585: xorps     xmm0, xmm0
+  0xd588: cvtsi2ss  xmm0, rax
+  0xd58d: mov       rbx, qword ptr [rsp]
+  0xd591: movss     dword ptr [r8 + 4], xmm0
+  0xd597: add       rsp, 8
+  0xd59b: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_0000d450 @ 0xd450  size=332 */
+/* xrefs: called by fun_00009550 (1 site), fun_0000d650 (1 site) */
+/* confidence: HIGH */
+struct s_fun_0000d450_a1;
+#pragma pack(push, 1)
+struct s_fun_0000d450_a1 {
+    char _pad_0[64];
+    double field_40;
+    double field_48;
+    float field_50;
+    float field_54;
+    char _pad_58[119];
+    int8_t field_cf;
+    char _pad_d0[4];
+    int8_t field_d4;
+    char _pad_d5[19];
+    int8_t field_e8;
+    int8_t field_e9;
+    char _pad_ea[1];
+    int8_t field_eb;
+    int8_t field_ec;
+    char _pad_ed[59];
+    float field_128;
+    float field_12c;
+    float field_130;
+    float field_134;
+};
+#pragma pack(pop)
+#ifndef __max
+#define __max(a,b) ((a)>(b)?(a):(b))
+#endif
+int64_t fun_0000d450(struct s_fun_0000d450_a1*a1, float*a2, float*a3) {
+    float v1;
+    int32_t result;
+    float v2;
+    float v3;
+    float v4;
+
+    if (a1->field_cf && a1->field_e8 <= 0 && a1->field_e9 <= 0) {
+        *(double*)a2 = a1->field_40;
+        *(double*)a3 = a1->field_48;
+        return 0;
+    }
+    if (a1->field_d4 && !a1->field_ec && a1->field_eb > 0) {
+        *(double*)a2 = a1->field_40;
+        *(double*)a3 = a1->field_48;
+        return 0;
+    }
+    if (a1->field_50 != 0.0f) {
+        v1 = a1->field_50;
+    } else {
+        v1 = (float)((int64_t)(a1->field_130 - a1->field_128));
+    }
+    *a2 = v1;
+    if (a1->field_54 != 0.0f) {
+        result = (int64_t)(a1->field_130 - a1->field_128);
+        v2 = a1->field_54;
+    } else {
+        result = (int64_t)(a1->field_134 - a1->field_12c);
+        v2 = (float)result;
+    }
+    a2[1] = v2;
+    v3 = a1->field_50;
+    if (v3 == 0.0f) {
+        result = (int64_t)(__max(a1->field_130, *(float*)((char*)a1 + 0x138)) - a1->field_128);
+        v3 = (float)((int64_t)(__max(a1->field_130, *(float*)((char*)a1 + 0x138)) - a1->field_128));
+    }
+    *a3 = v3;
+    v4 = a1->field_54;
+    if (v4 != 0.0f) {
+        a3[1] = v4;
+        return result;
+    }
+    result = (int64_t)(__max(a1->field_134, *(float*)((char*)a1 + 0x13c)) - a1->field_12c);
+    v4 = (float)((int64_t)(__max(a1->field_134, *(float*)((char*)a1 + 0x13c)) - a1->field_12c));
+    a3[1] = v4;
+    return result;
+}
+

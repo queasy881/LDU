@@ -1,0 +1,35 @@
+=== fun_00059eb0 @ 0x59eb0 size=59 blocks=3 calls=1 ===
+--- DISASM ---
+  0x59eb0: sub       rsp, 0x28
+  0x59eb4: call      qword ptr [0x87420]
+  0x59eba: mov       rcx, rax
+  0x59ebd: mov       eax, 0xffffff80
+  0x59ec2: and       rcx, rax
+  0x59ec5: mov       eax, 0xff515700
+  0x59eca: cmp       rcx, rax
+  0x59ecd: jne       0x59ed9
+  0x59ecf: mov       eax, 2
+  0x59ed4: add       rsp, 0x28
+  0x59ed8: ret       
+  0x59ed9: xor       eax, eax
+  0x59edb: mov       edx, 0xff515780
+  0x59ee0: cmp       rcx, rdx
+  0x59ee3: sete      al
+  0x59ee6: add       rsp, 0x28
+  0x59eea: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_00059eb0 @ 0x59eb0  size=59 */
+/* xrefs: called by fun_0005b1c0 (3 sites) */
+/* confidence: HIGH */
+int64_t GetMessageExtraInfo();
+int32_t fun_00059eb0(void) {
+    int64_t v1;
+
+    v1 = GetMessageExtraInfo();
+    if ((v1 & 0xffffff80LL) != 0xff515700LL) {
+        return (v1 & 0xffffff80LL) == 0xff515780LL;
+    }
+    return 2;
+}
+

@@ -1,0 +1,101 @@
+=== fun_0001cad0 @ 0x1cad0 size=132 blocks=8 calls=2 ===
+--- DISASM ---
+  0x1cad0: mov       qword ptr [rsp + 8], rbx
+  0x1cad5: push      rdi
+  0x1cad6: sub       rsp, 0x20
+  0x1cada: mov       rax, qword ptr [0x174148]
+  0x1cae1: mov       edi, ecx
+  0x1cae3: mov       rbx, qword ptr [rax + 0x1480]
+  0x1caea: cmp       dword ptr [rax + 0x14d8], ecx
+  0x1caf0: jne       0x1cb02
+  0x1caf2: xor       r9d, r9d
+  0x1caf5: xor       r8d, r8d
+  0x1caf8: mov       edx, 0xd
+  0x1cafd: call      0xebe0
+  0x1cb02: add       rbx, 0x108
+  0x1cb09: mov       ecx, dword ptr [rbx + 4]
+  0x1cb0c: mov       r8d, dword ptr [rbx]
+  0x1cb0f: cmp       r8d, ecx
+  0x1cb12: jne       0x1cb3d
+  0x1cb14: inc       r8d
+  0x1cb17: test      ecx, ecx
+  0x1cb19: je        0x1cb26
+  0x1cb1b: mov       eax, ecx
+  0x1cb1d: cdq       
+  0x1cb1e: sub       eax, edx
+  0x1cb20: sar       eax, 1
+  0x1cb22: add       eax, ecx
+  0x1cb24: jmp       0x1cb2b
+  0x1cb26: mov       eax, 8
+  0x1cb2b: cmp       eax, r8d
+  0x1cb2e: mov       rcx, rbx
+  0x1cb31: cmovg     r8d, eax
+  0x1cb35: mov       edx, r8d
+  0x1cb38: call      0x27c30
+  0x1cb3d: movsxd    rcx, dword ptr [rbx]
+  0x1cb40: mov       rax, qword ptr [rbx + 8]
+  0x1cb44: mov       dword ptr [rax + rcx*4], edi
+  0x1cb47: inc       dword ptr [rbx]
+  0x1cb49: mov       rbx, qword ptr [rsp + 0x30]
+  0x1cb4e: add       rsp, 0x20
+  0x1cb52: pop       rdi
+  0x1cb53: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_0001cad0 @ 0x1cad0  size=132 */
+/* xrefs: called by fun_000482e0 (1 site), fun_00048610 (1 site) */
+/* confidence: HIGH */
+struct s_fun_0001cad0_qword_174148;
+struct s_fun_0001cad0_v2;
+#pragma pack(push, 1)
+struct s_fun_0001cad0_qword_174148 {
+    char _pad_0[5248];
+    void* field_1480;
+    char _pad_1488[80];
+    int32_t field_14d8;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_0001cad0_v2 {
+    char _pad_0[264];
+    int32_t field_108;
+    char _pad_10c[4];
+    int64_t field_110;
+};
+#pragma pack(pop)
+#define qword_174148 (*(int64_t*)0x174148)
+#ifndef __max
+#define __max(a,b) ((a)>(b)?(a):(b))
+#endif
+int32_t fun_0000ebe0();
+void fun_00027c30();
+void fun_0001cad0(int32_t a1) {
+    struct s_fun_0001cad0_qword_174148* gs_174148 = (struct s_fun_0001cad0_qword_174148*)qword_174148;
+    int32_t v1;
+    struct s_fun_0001cad0_v2*v2;
+
+    if (gs_174148->field_14d8 == a1) {
+        fun_0000ebe0(a1, 0xd, 0, 0);
+    }
+    if (((int32_t*)gs_174148->field_1480)[0x42] != ((int32_t*)gs_174148->field_1480)[0x43]) {
+        v2 = (struct s_fun_0001cad0_v2*)gs_174148->field_1480;
+        *(int32_t*)(v2->field_110 + (int64_t)v2->field_108 * 4) = a1;
+        ++v2->field_108;
+        return;
+    }
+    if (!((int32_t*)gs_174148->field_1480)[0x43]) {
+        v1 = 8;
+        fun_00027c30((char*)gs_174148->field_1480 + 0x108, (uint32_t)__max(v1, ((int32_t*)gs_174148->field_1480)[0x42] + 1));
+        v2 = (struct s_fun_0001cad0_v2*)gs_174148->field_1480;
+        *(int32_t*)(v2->field_110 + (int64_t)v2->field_108 * 4) = a1;
+        ++v2->field_108;
+        return;
+    }
+    v1 = ((int32_t*)gs_174148->field_1480)[0x43] / 2 + ((int32_t*)gs_174148->field_1480)[0x43];
+    fun_00027c30((char*)gs_174148->field_1480 + 0x108, (uint32_t)__max(v1, ((int32_t*)gs_174148->field_1480)[0x42] + 1));
+    v2 = (struct s_fun_0001cad0_v2*)gs_174148->field_1480;
+    *(int32_t*)(v2->field_110 + (int64_t)v2->field_108 * 4) = a1;
+    ++v2->field_108;
+    return;
+}
+

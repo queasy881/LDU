@@ -1,0 +1,13 @@
+=== fun_00028460 @ 0x28460 size=8 blocks=1 calls=0 ===
+--- DISASM ---
+  0x28460: lea       rax, [0x174158]
+  0x28467: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* ptr_174158 @ 0x28460  size=8 */
+/* xrefs: called by fun_00028470 (1 site), fun_0005e5f4 (1 site) */
+/* confidence: HIGH */
+uint64_t ptr_174158(void) {
+    return 0x174158;
+}
+

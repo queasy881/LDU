@@ -1,0 +1,570 @@
+=== fun_0002dd70 @ 0x2dd70 size=1090 blocks=42 calls=5 ===
+--- DISASM ---
+  0x2dd70: push      rbx
+  0x2dd72: push      rbp
+  0x2dd73: push      rsi
+  0x2dd74: push      rdi
+  0x2dd75: push      r12
+  0x2dd77: push      r13
+  0x2dd79: push      r14
+  0x2dd7b: push      r15
+  0x2dd7d: sub       rsp, 0x58
+  0x2dd81: test      dword ptr [rcx], 2
+  0x2dd87: mov       r14, rcx
+  0x2dd8a: mov       edi, 2
+  0x2dd8f: mov       ecx, 0xf5
+  0x2dd94: mov       esi, edi
+  0x2dd96: xorps     xmm0, xmm0
+  0x2dd99: cmove     esi, ecx
+  0x2dd9c: mov       ebx, 0x1b
+  0x2dda1: mov       rbp, qword ptr [r14 + 0x2b0]
+  0x2dda8: mov       rcx, r14
+  0x2ddab: test      dword ptr [r14], edi
+  0x2ddae: movups    xmmword ptr [rsp + 0x30], xmm0
+  0x2ddb3: cmove     edi, ebx
+  0x2ddb6: mov       edx, dword ptr [rbp + 0xec]
+  0x2ddbc: call      0x2eeb0
+  0x2ddc1: test      rax, rax
+  0x2ddc4: jne       0x2e15a
+  0x2ddca: cmp       qword ptr [r14 + 0x2b0], rax
+  0x2ddd1: jne       0x2dddb
+  0x2ddd3: mov       rcx, r14
+  0x2ddd6: call      0x2cb40
+  0x2dddb: xor       r9d, r9d
+  0x2ddde: mov       r8d, edi
+  0x2dde1: mov       edx, esi
+  0x2dde3: mov       rcx, r14
+  0x2dde6: call      0x2eae0
+  0x2ddeb: mov       edi, eax
+  0x2dded: cmp       eax, -1
+  0x2ddf0: jne       0x2ddf4
+  0x2ddf2: jmp       0x2de59
+  0x2ddf4: lea       r8, [rsp + 0x30]
+  0x2ddf9: mov       edx, edi
+  0x2ddfb: mov       rcx, r14
+  0x2ddfe: call      0x2b910
+  0x2de03: cmp       byte ptr [r14 + 0x51], 0
+  0x2de08: je        0x2de59
+  0x2de0a: mov       rdx, qword ptr [r14 + 0x2b0]
+  0x2de11: mov       ecx, edi
+  0x2de13: and       ecx, 0x7ffff
+  0x2de19: mov       rax, qword ptr [rdx + 0x78]
+  0x2de1d: mov       rdx, qword ptr [rdx + 0x68]
+  0x2de21: mov       ecx, dword ptr [rax + rcx*4]
+  0x2de24: shl       ecx, 0xc
+  0x2de27: movsxd    r8, ecx
+  0x2de2a: sar       r8, 0xc
+  0x2de2e: movzx     ecx, word ptr [rdx + r8*8 + 4]
+  0x2de34: movzx     eax, word ptr [rdx + r8*8 + 6]
+  0x2de3a: movzx     r9d, word ptr [rdx + r8*8 + 2]
+  0x2de40: movzx     r8d, word ptr [rdx + r8*8]
+  0x2de45: mov       rdx, qword ptr [r14 + 0x38]
+  0x2de49: mov       dword ptr [rsp + 0x28], eax
+  0x2de4d: mov       dword ptr [rsp + 0x20], ecx
+  0x2de51: mov       rcx, r14
+  0x2de54: call      0x2f630
+  0x2de59: movzx     r12d, word ptr [rsp + 0x32]
+  0x2de5f: movzx     r13d, word ptr [rsp + 0x30]
+  0x2de65: mov       dword ptr [rbp + 0xec], edi
+  0x2de6b: test      byte ptr [r14], 2
+  0x2de6f: mov       rdi, qword ptr [r14 + 0x38]
+  0x2de73: mov       r10d, dword ptr [rdi + 0x18]
+  0x2de77: je        0x2dedc
+  0x2de79: mov       ecx, r12d
+  0x2de7c: mov       edx, r13d
+  0x2de7f: test      r10d, r10d
+  0x2de82: je        0x2deb3
+  0x2de84: cmp       r10d, 1
+  0x2de88: jne       0x2e163
+  0x2de8e: imul      ecx, dword ptr [rdi + 0x1c]
+  0x2de92: add       ecx, edx
+  0x2de94: imul      ecx, dword ptr [rdi + 0x24]
+  0x2de98: movsxd    rdx, ecx
+  0x2de9b: add       rdx, qword ptr [rdi + 0x28]
+  0x2de9f: mov       word ptr [rdx], 0xffff
+  0x2dea4: movsxd    rax, dword ptr [rdi + 0x1c]
+  0x2dea8: mov       word ptr [rax + rdx], 0xffff
+  0x2deae: jmp       0x2e163
+  0x2deb3: imul      ecx, dword ptr [rdi + 0x1c]
+  0x2deb7: add       ecx, edx
+  0x2deb9: imul      ecx, dword ptr [rdi + 0x24]
+  0x2debd: movsxd    rdx, ecx
+  0x2dec0: add       rdx, qword ptr [rdi + 0x28]
+  0x2dec4: mov       qword ptr [rdx], 0xffffffffffffffff
+  0x2decb: movsxd    rax, dword ptr [rdi + 0x1c]
+  0x2decf: mov       qword ptr [rdx + rax*4], 0xffffffffffffffff
+  0x2ded7: jmp       0x2e163
+  0x2dedc: lea       rdx, [0x90d60]
+  0x2dee3: mov       r11d, 0xff
+  0x2dee9: mov       dword ptr [rsp + 0xa0], r11d
+  0x2def1: mov       r8, rdx
+  0x2def4: lea       r15d, [r13 + 0x7b]
+  0x2def8: mov       ecx, r13d
+  0x2defb: mov       ebp, r12d
+  0x2defe: mov       r9d, 0xffffffff
+  0x2df04: test      r10d, r10d
+  0x2df07: je        0x2dfc7
+  0x2df0d: cmp       r10d, 1
+  0x2df11: jne       0x2e031
+  0x2df17: movdqa    xmm2, xmmword ptr [0x92080]
+  0x2df1f: mov       eax, r12d
+  0x2df22: imul      eax, dword ptr [rdi + 0x1c]
+  0x2df26: mov       esi, ebx
+  0x2df28: add       eax, ecx
+  0x2df2a: imul      eax, dword ptr [rdi + 0x24]
+  0x2df2e: movsxd    r11, eax
+  0x2df31: add       r11, qword ptr [rdi + 0x28]
+  0x2df35: lea       rax, [r8 + 0x79]
+  0x2df39: cmp       r11, rax
+  0x2df3c: ja        0x2df4a
+  0x2df3e: xor       r10d, r10d
+  0x2df41: lea       rax, [r11 + 0x79]
+  0x2df45: cmp       rax, r8
+  0x2df48: jae       0x2df92
+  0x2df4a: movdqu    xmm0, xmmword ptr [r8]
+  0x2df4f: mov       r10d, 0x40
+  0x2df55: movdqa    xmm1, xmm2
+  0x2df59: pcmpeqb   xmm1, xmm0
+  0x2df5d: movdqu    xmm0, xmmword ptr [r8 + 0x10]
+  0x2df63: movdqu    xmmword ptr [r11], xmm1
+  0x2df68: movdqu    xmm1, xmmword ptr [r8 + 0x20]
+  0x2df6e: pcmpeqb   xmm0, xmm2
+  0x2df72: movdqu    xmmword ptr [r11 + 0x10], xmm0
+  0x2df78: movdqu    xmm0, xmmword ptr [r8 + 0x30]
+  0x2df7e: pcmpeqb   xmm1, xmm2
+  0x2df82: pcmpeqb   xmm0, xmm2
+  0x2df86: movdqu    xmmword ptr [r11 + 0x20], xmm1
+  0x2df8c: movdqu    xmmword ptr [r11 + 0x30], xmm0
+  0x2df92: movsxd    rcx, r10d
+  0x2df95: xor       eax, eax
+  0x2df97: cmp       byte ptr [rcx + r8], 0x2e
+  0x2df9c: cmove     eax, dword ptr [rsp + 0xa0]
+  0x2dfa4: inc       r10d
+  0x2dfa7: mov       byte ptr [rcx + r11], al
+  0x2dfab: cmp       r10d, 0x7a
+  0x2dfaf: jl        0x2df92
+  0x2dfb1: movsxd    rax, dword ptr [rdi + 0x1c]
+  0x2dfb5: add       r8, 0x7a
+  0x2dfb9: add       r11, rax
+  0x2dfbc: sub       esi, 1
+  0x2dfbf: jne       0x2df35
+  0x2dfc5: jmp       0x2e02b
+  0x2dfc7: mov       eax, ebp
+  0x2dfc9: mov       r11d, ebx
+  0x2dfcc: imul      eax, dword ptr [rdi + 0x1c]
+  0x2dfd0: add       eax, ecx
+  0x2dfd2: imul      eax, dword ptr [rdi + 0x24]
+  0x2dfd6: movsxd    r10, eax
+  0x2dfd9: add       r10, qword ptr [rdi + 0x28]
+  0x2dfdd: nop       dword ptr [rax]
+  0x2dfe0: xor       ecx, ecx
+  0x2dfe2: nop       dword ptr [rax]
+  0x2dfe6: nop       word ptr [rax + rax]
+  0x2dff0: xor       eax, eax
+  0x2dff2: cmp       byte ptr [r8 + rcx], 0x2e
+  0x2dff7: cmove     eax, r9d
+  0x2dffb: mov       dword ptr [r10 + rcx*4], eax
+  0x2dfff: xor       eax, eax
+  0x2e001: cmp       byte ptr [r8 + rcx + 1], 0x2e
+  0x2e007: cmove     eax, r9d
+  0x2e00b: mov       dword ptr [r10 + rcx*4 + 4], eax
+  0x2e010: add       rcx, 2
+  0x2e014: cmp       rcx, 0x7a
+  0x2e018: jne       0x2dff0
+  0x2e01a: movsxd    rax, dword ptr [rdi + 0x1c]
+  0x2e01e: add       r8, rcx
+  0x2e021: lea       r10, [r10 + rax*4]
+  0x2e025: sub       r11d, 1
+  0x2e029: jne       0x2dfe0
+  0x2e02b: mov       r11d, 0xff
+  0x2e031: mov       r10, qword ptr [r14 + 0x38]
+  0x2e035: mov       ecx, dword ptr [r10 + 0x18]
+  0x2e039: test      ecx, ecx
+  0x2e03b: je        0x2e0f0
+  0x2e041: cmp       ecx, 1
+  0x2e044: jne       0x2e163
+  0x2e04a: imul      ebp, dword ptr [r10 + 0x1c]
+  0x2e04f: movdqa    xmm2, xmmword ptr [0x920a0]
+  0x2e057: add       ebp, r15d
+  0x2e05a: imul      ebp, dword ptr [r10 + 0x24]
+  0x2e05f: movsxd    r9, ebp
+  0x2e062: add       r9, qword ptr [r10 + 0x28]
+  0x2e066: lea       rax, [rdx + 0x79]
+  0x2e06a: cmp       r9, rax
+  0x2e06d: ja        0x2e07b
+  0x2e06f: xor       r8d, r8d
+  0x2e072: lea       rax, [r9 + 0x79]
+  0x2e076: cmp       rax, rdx
+  0x2e079: jae       0x2e0c0
+  0x2e07b: movdqu    xmm0, xmmword ptr [rdx]
+  0x2e07f: mov       r8d, 0x40
+  0x2e085: movdqa    xmm1, xmm2
+  0x2e089: pcmpeqb   xmm1, xmm0
+  0x2e08d: movdqu    xmm0, xmmword ptr [rdx + 0x10]
+  0x2e092: movdqu    xmmword ptr [r9], xmm1
+  0x2e097: movdqu    xmm1, xmmword ptr [rdx + 0x20]
+  0x2e09c: pcmpeqb   xmm0, xmm2
+  0x2e0a0: movdqu    xmmword ptr [r9 + 0x10], xmm0
+  0x2e0a6: movdqu    xmm0, xmmword ptr [rdx + 0x30]
+  0x2e0ab: pcmpeqb   xmm1, xmm2
+  0x2e0af: pcmpeqb   xmm0, xmm2
+  0x2e0b3: movdqu    xmmword ptr [r9 + 0x20], xmm1
+  0x2e0b9: movdqu    xmmword ptr [r9 + 0x30], xmm0
+  0x2e0bf: nop       
+  0x2e0c0: movsxd    rcx, r8d
+  0x2e0c3: xor       eax, eax
+  0x2e0c5: cmp       byte ptr [rcx + rdx], 0x58
+  0x2e0c9: cmove     eax, r11d
+  0x2e0cd: inc       r8d
+  0x2e0d0: mov       byte ptr [rcx + r9], al
+  0x2e0d4: cmp       r8d, 0x7a
+  0x2e0d8: jl        0x2e0c0
+  0x2e0da: movsxd    rax, dword ptr [r10 + 0x1c]
+  0x2e0de: add       rdx, 0x7a
+  0x2e0e2: add       r9, rax
+  0x2e0e5: sub       ebx, 1
+  0x2e0e8: jne       0x2e066
+  0x2e0ee: jmp       0x2e163
+  0x2e0f0: imul      ebp, dword ptr [r10 + 0x1c]
+  0x2e0f5: add       ebp, r15d
+  0x2e0f8: imul      ebp, dword ptr [r10 + 0x24]
+  0x2e0fd: movsxd    r8, ebp
+  0x2e100: add       r8, qword ptr [r10 + 0x28]
+  0x2e104: nop       dword ptr [rax]
+  0x2e108: nop       dword ptr [rax + rax]
+  0x2e110: xor       ecx, ecx
+  0x2e112: nop       dword ptr [rax]
+  0x2e116: nop       word ptr [rax + rax]
+  0x2e120: xor       eax, eax
+  0x2e122: cmp       byte ptr [rcx + rdx], 0x58
+  0x2e126: cmove     eax, r9d
+  0x2e12a: mov       dword ptr [r8 + rcx*4], eax
+  0x2e12e: xor       eax, eax
+  0x2e130: cmp       byte ptr [rcx + rdx + 1], 0x58
+  0x2e135: cmove     eax, r9d
+  0x2e139: mov       dword ptr [r8 + rcx*4 + 4], eax
+  0x2e13e: add       rcx, 2
+  0x2e142: cmp       rcx, 0x7a
+  0x2e146: jne       0x2e120
+  0x2e148: movsxd    rax, dword ptr [r10 + 0x1c]
+  0x2e14c: add       rdx, rcx
+  0x2e14f: lea       r8, [r8 + rax*4]
+  0x2e153: sub       ebx, 1
+  0x2e156: jne       0x2e110
+  0x2e158: jmp       0x2e163
+  0x2e15a: movzx     r13d, word ptr [rax]
+  0x2e15e: movzx     r12d, word ptr [rax + 2]
+  0x2e163: movzx     eax, r13w
+  0x2e167: movd      xmm0, eax
+  0x2e16b: cvtdq2ps  xmm0, xmm0
+  0x2e16e: movzx     eax, r12w
+  0x2e172: addss     xmm0, dword ptr [0x88530]
+  0x2e17a: mulss     xmm0, dword ptr [r14 + 0x54]
+  0x2e180: movss     dword ptr [r14 + 0x5c], xmm0
+  0x2e186: movd      xmm0, eax
+  0x2e18a: cvtdq2ps  xmm0, xmm0
+  0x2e18d: addss     xmm0, dword ptr [0x88530]
+  0x2e195: mulss     xmm0, dword ptr [r14 + 0x58]
+  0x2e19b: movss     dword ptr [r14 + 0x60], xmm0
+  0x2e1a1: add       rsp, 0x58
+  0x2e1a5: pop       r15
+  0x2e1a7: pop       r14
+  0x2e1a9: pop       r13
+  0x2e1ab: pop       r12
+  0x2e1ad: pop       rdi
+  0x2e1ae: pop       rsi
+  0x2e1af: pop       rbp
+  0x2e1b0: pop       rbx
+  0x2e1b1: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_0002dd70 @ 0x2dd70  size=1090 */
+/* xrefs: called by fun_0002cb40 (1 site), fun_0002fb10 (1 site) */
+/* confidence: LOW - 96 unmodeled ops (__pcmpeqb) */
+#include <stdbool.h>
+#include <stddef.h>
+struct s_fun_0002dd70_a1;
+struct s_fun_0002dd70_a1_38;
+struct s_fun_0002dd70_s1;
+struct s_fun_0002dd70_v3;
+struct s_fun_0002dd70_v5;
+struct s_fun_0002dd70_t193;
+struct s_fun_0002dd70_t197;
+struct s_fun_0002dd70_v21;
+struct s_fun_0002dd70_v30;
+#pragma pack(push, 1)
+struct s_fun_0002dd70_a1 {
+    char _pad_0[56];
+    struct s_fun_0002dd70_a1_38* field_38;
+    char _pad_40[17];
+    int8_t field_51;
+    char _pad_52[2];
+    float field_54;
+    float field_58;
+    float field_5c;
+    float field_60;
+    char _pad_64[588];
+    void* field_2b0;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_0002dd70_a1_38 {
+    char _pad_0[24];
+    int32_t field_18;
+    int32_t field_1c;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_0002dd70_s1 {
+    char _pad_0[2];
+    uint16_t field_2;
+    char _pad_4[4];
+    int64_t field_8;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_0002dd70_v3 {
+    uint16_t field_0;
+    uint16_t field_2;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_0002dd70_v5 {
+    uint16_t field_0;
+    uint16_t field_2;
+    uint16_t field_4;
+    uint16_t field_6;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_0002dd70_t193 {
+    char _pad_0[28];
+    int32_t field_1c;
+    char _pad_20[4];
+    int32_t field_24;
+    int64_t field_28;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_0002dd70_t197 {
+    char _pad_0[28];
+    int32_t field_1c;
+    char _pad_20[4];
+    int32_t field_24;
+    int64_t field_28;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_0002dd70_v21 {
+    int32_t field_0;
+    int32_t field_4;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_0002dd70_v30 {
+    int32_t field_0;
+    int32_t field_4;
+};
+#pragma pack(pop)
+int64_t __pcmpeqb();
+int64_t fun_0002b910();
+void fun_0002cb40();
+int32_t fun_0002eae0();
+int64_t fun_0002eeb0();
+void fun_0002f630();
+uint16_t fun_0002dd70(struct s_fun_0002dd70_a1*a1) {
+    char s1[16];
+    int32_t v13;
+    int8_t*v14;
+    int8_t*v15;
+    int32_t v16;
+    int8_t*v17;
+    int32_t*v18;
+    int32_t v19;
+    int8_t*v20;
+    int8_t*v22;
+    int32_t v23;
+    int8_t*v24;
+    int32_t v25;
+    int8_t*v26;
+    int32_t v27;
+    int32_t*v28;
+    int8_t*v29;
+    uint32_t result;
+    uint32_t v6;
+    struct s_fun_0002dd70_v3*v3;
+    int32_t v4;
+    struct s_fun_0002dd70_v5*v5;
+    int32_t v7;
+    int32_t v8;
+    int16_t*v9;
+    int32_t v10;
+    int32_t v11;
+    int64_t*v12;
+    struct s_fun_0002dd70_v21*v21;
+    struct s_fun_0002dd70_v30*v30;
+    int32_t v1;
+    int32_t v2;
+
+    v1 = (*(int32_t*)a1 & 2) == 0 ? 0xf5 : 2;
+    *(int64_t*)s1 = 0;
+    ((struct s_fun_0002dd70_s1*)s1)->field_8 = 0;
+    v2 = (*(int32_t*)a1 & 2) == 0 ? 0x1b : 2;
+    v3 = (struct s_fun_0002dd70_v3*)fun_0002eeb0(a1, (uint32_t)((int32_t*)a1->field_2b0)[0x3b]);
+    if (v3) {
+        result = v3->field_2;
+        v6 = v3->field_0;
+        a1->field_5c = (*(float*)&v6 + 0.5f) * a1->field_54;
+        a1->field_60 = (*(float*)&result + 0.5f) * a1->field_58;
+        return (uint16_t)result;
+    }
+    if ((int64_t)(a1->field_2b0) == (int64_t)(v3)) {
+        fun_0002cb40(a1);
+    }
+    v4 = fun_0002eae0(a1, v1, v2, 0);
+    if (v4 != -1) {
+        fun_0002b910(a1, v4, s1);
+        if (a1->field_51) {
+            v5 = (struct s_fun_0002dd70_v5*)(((int64_t*)a1->field_2b0)[0xd] + ((int64_t)(*(int32_t*)(((int64_t*)a1->field_2b0)[0xf] + (v4 & 0x7ffff) * 4) << 0xc) >> 0xc) * 8);
+            fun_0002f630(a1, a1->field_38, (uint32_t)v5->field_0, (uint32_t)v5->field_2, (uint32_t)v5->field_4, (uint32_t)v5->field_6);
+        }
+    }
+    ((int32_t*)a1->field_2b0)[0x3b] = v4;
+    if (!(*(int8_t*)a1 & 2)) {
+        if (!a1->field_38->field_18) {
+            v17 = (int8_t*)"..-         -XXXXXXX-    X    -           X           -XXXXXXX          -          XXXXXXX-     XX          - XX       XX ..-         -X.....X-   X.X   -          X.X          -X.....X          -          X.....X-    X..X         -X..X     X..X---         -XXX.XXX-  X...X  -         X...X         -X....X           -           X....X-    X..X         -X...X   X...XX           -  X.X  - X.....X -        X.....X        -X...X            -            X...X-    X..X         - X...X X...X XX          -  X.X  -X.......X-       X.......X       -X..X.X           -           X.X..X-    X..X         -  X...X...X  X.X         -  X.X  -XXXX.XXXX-       XXXX.XXXX       -X.X X.X          -          X.X X.X-    X..XXX       -   X.....X   X..X        -  X.X  -   X.X   -          X.X          -XX   X.X         -         X.X   XX-    X..X..XXX    -    X...X    X...X       -  X.X  -   X.X   -    XX    X.X    XX    -      X.X        -        X.X      -    X..X..X..XX  -     X.X     X....X      -  X.X  -   X.X   -   X.X    X.X    X.X   -       X.X       -       X.X       -    X..X..X..X.X -    X...X    X.....X     -  X.X  -   X.X   -  X..X    X.X    X..X  -        X.X      -      X.X        -XXX X..X..X..X..X-   X.....X   X......X    -  X.X  -   X.X   - X...XXXXXX.XXXXXX...X -         X.X   XX-XX   X.X         -X..XX........X..X-  X...X...X  X.......X   -  X.X  -   X.X   -X.....................X-          X.X X.X-X.X X.X          -X...X...........X- X...X X...X X........X  -  X.X  -   X.X   - X...XXXXXX.XXXXXX...X -           X.X..X-X..X.X           - X..............X-X...X   X...XX.........X -XXX.XXX-   X.X   -  X..X    X.X    X..X  -            X...X-X...X            -  X.............X-X..X     X..XX..........X-X.....X-   X.X   -   X.X    X.X    X.X   -           X....X-X....X           -  X.............X- XX       XX X......XXXXX-XXXXXXX-   X.X   -    XX    X.X    XX    -          X.....X-X.....X          -   X............X--------------X...X..X    ---------   X.X   -          X.X          -          XXXXXXX-XXXXXXX          -   X...........X -             X..X X..X   -       -XXXX.XXXX-       XXXX.XXXX       -------------------------------------    X..........X -             X.X  X..X   -       -X.......X-       X.......X       -    XX           XX    -           -    X..........X -             XX    X..X  -       - X.....X -        X.....X        -   X.X           X.X   -           -     X........X  -                   X..X  -       -  X...X  -         X...X         -  X..X           X..X  -           -     X........X  -                    XX   -       -   X.X   -          X.X          - X...XXXXXXXXXXXXX...X -           -     XXXXXXXXXX  -             -------------       -    X    -           X           -X.....................X-           -------------------                                 ----------------------------------- X...XXXXXXXXXXXXX...X -                                                                                                 -  X..X           X..X  -                                                                                                 -   X.X           X.X   -                                                                                                 -    XX           XX    -                                           ";
+            v18 = (int32_t*)((int64_t)(((uint32_t)((struct s_fun_0002dd70_s1*)s1)->field_2 * a1->field_38->field_1c + (uint32_t)*(uint16_t*)s1) * ((int32_t*)a1->field_38)[9]) + ((int64_t*)a1->field_38)[5]);
+            v19 = 0x1b;
+            do {
+                v20 = NULL;
+                while (true) {
+                    v21 = (struct s_fun_0002dd70_v21*)((char*)v18 + (int64_t)v20 * 4);
+                    v21->field_0 = v17[(int64_t)v20] == '.' ? -1 : 0;
+                    v21->field_4 = *(int8_t*)((char*)(v17 + (int64_t)v20) + 1) == '.' ? -1 : 0;
+                    v20 += 2;
+                    if ((int64_t)(v20) == 0x7a) break;
+                }
+                v17 = (int8_t*)(v17 + (int64_t)v20);
+                v18 = (int32_t*)((char*)v18 + (int64_t)a1->field_38->field_1c * 4);
+                --v19;
+            } while (v19);
+        } else if (a1->field_38->field_18 == 1) {
+            v13 = 0x1b;
+            v14 = (int8_t*)"..-         -XXXXXXX-    X    -           X           -XXXXXXX          -          XXXXXXX-     XX          - XX       XX ..-         -X.....X-   X.X   -          X.X          -X.....X          -          X.....X-    X..X         -X..X     X..X---         -XXX.XXX-  X...X  -         X...X         -X....X           -           X....X-    X..X         -X...X   X...XX           -  X.X  - X.....X -        X.....X        -X...X            -            X...X-    X..X         - X...X X...X XX          -  X.X  -X.......X-       X.......X       -X..X.X           -           X.X..X-    X..X         -  X...X...X  X.X         -  X.X  -XXXX.XXXX-       XXXX.XXXX       -X.X X.X          -          X.X X.X-    X..XXX       -   X.....X   X..X        -  X.X  -   X.X   -          X.X          -XX   X.X         -         X.X   XX-    X..X..XXX    -    X...X    X...X       -  X.X  -   X.X   -    XX    X.X    XX    -      X.X        -        X.X      -    X..X..X..XX  -     X.X     X....X      -  X.X  -   X.X   -   X.X    X.X    X.X   -       X.X       -       X.X       -    X..X..X..X.X -    X...X    X.....X     -  X.X  -   X.X   -  X..X    X.X    X..X  -        X.X      -      X.X        -XXX X..X..X..X..X-   X.....X   X......X    -  X.X  -   X.X   - X...XXXXXX.XXXXXX...X -         X.X   XX-XX   X.X         -X..XX........X..X-  X...X...X  X.......X   -  X.X  -   X.X   -X.....................X-          X.X X.X-X.X X.X          -X...X...........X- X...X X...X X........X  -  X.X  -   X.X   - X...XXXXXX.XXXXXX...X -           X.X..X-X..X.X           - X..............X-X...X   X...XX.........X -XXX.XXX-   X.X   -  X..X    X.X    X..X  -            X...X-X...X            -  X.............X-X..X     X..XX..........X-X.....X-   X.X   -   X.X    X.X    X.X   -           X....X-X....X           -  X.............X- XX       XX X......XXXXX-XXXXXXX-   X.X   -    XX    X.X    XX    -          X.....X-X.....X          -   X............X--------------X...X..X    ---------   X.X   -          X.X          -          XXXXXXX-XXXXXXX          -   X...........X -             X..X X..X   -       -XXXX.XXXX-       XXXX.XXXX       -------------------------------------    X..........X -             X.X  X..X   -       -X.......X-       X.......X       -    XX           XX    -           -    X..........X -             XX    X..X  -       - X.....X -        X.....X        -   X.X           X.X   -           -     X........X  -                   X..X  -       -  X...X  -         X...X         -  X..X           X..X  -           -     X........X  -                    XX   -       -   X.X   -          X.X          - X...XXXXXXXXXXXXX...X -           -     XXXXXXXXXX  -             -------------       -    X    -           X           -X.....................X-           -------------------                                 ----------------------------------- X...XXXXXXXXXXXXX...X -                                                                                                 -  X..X           X..X  -                                                                                                 -   X.X           X.X   -                                                                                                 -    XX           XX    -                                           ";
+            v15 = (int8_t*)((int64_t)(((uint32_t)((struct s_fun_0002dd70_s1*)s1)->field_2 * a1->field_38->field_1c + (uint32_t)*(uint16_t*)s1) * ((int32_t*)a1->field_38)[9]) + ((int64_t*)a1->field_38)[5]);
+            do {
+                if ((uint64_t)(v15) > (uint64_t)(v14 + 0x79)) {
+                    *(int32_t*)v15 = __pcmpeqb(0x2e2e2e2e2e2e2e2eLL, *(int64_t*)v14);
+                    *(int32_t*)((char*)v15 + 0x10) = __pcmpeqb(*(int64_t*)((char*)v14 + 0x10), 0x2e2e2e2e2e2e2e2eLL);
+                    *(int32_t*)((char*)v15 + 0x20) = __pcmpeqb(*(int64_t*)((char*)v14 + 0x20), 0x2e2e2e2e2e2e2e2eLL);
+                    *(int32_t*)((char*)v15 + 0x30) = __pcmpeqb(*(int64_t*)((char*)v14 + 0x30), 0x2e2e2e2e2e2e2e2eLL);
+                    v16 = 0x40;
+                } else {
+                    v16 = 0;
+                    if ((uint64_t)(v15 + 0x79) < (uint64_t)(v14)) {
+                        *(int32_t*)v15 = __pcmpeqb(0x2e2e2e2e2e2e2e2eLL, *(int64_t*)v14);
+                        *(int32_t*)((char*)v15 + 0x10) = __pcmpeqb(*(int64_t*)((char*)v14 + 0x10), 0x2e2e2e2e2e2e2e2eLL);
+                        *(int32_t*)((char*)v15 + 0x20) = __pcmpeqb(*(int64_t*)((char*)v14 + 0x20), 0x2e2e2e2e2e2e2e2eLL);
+                        *(int32_t*)((char*)v15 + 0x30) = __pcmpeqb(*(int64_t*)((char*)v14 + 0x30), 0x2e2e2e2e2e2e2e2eLL);
+                        v16 = 0x40;
+                    }
+                }
+                while (true) {
+                    v15[v16] = (int8_t)(v14[v16] == '.' ? 0xff : 0);
+                    ++v16;
+                    if (v16 >= 0x7a) break;
+                }
+                --v13;
+                v14 += 0x7a;
+                v15 = (int8_t*)(v15 + (int64_t)a1->field_38->field_1c);
+            } while (v13);
+        }
+        if (!a1->field_38->field_18) {
+            v26 = (int8_t*)"..-         -XXXXXXX-    X    -           X           -XXXXXXX          -          XXXXXXX-     XX          - XX       XX ..-         -X.....X-   X.X   -          X.X          -X.....X          -          X.....X-    X..X         -X..X     X..X---         -XXX.XXX-  X...X  -         X...X         -X....X           -           X....X-    X..X         -X...X   X...XX           -  X.X  - X.....X -        X.....X        -X...X            -            X...X-    X..X         - X...X X...X XX          -  X.X  -X.......X-       X.......X       -X..X.X           -           X.X..X-    X..X         -  X...X...X  X.X         -  X.X  -XXXX.XXXX-       XXXX.XXXX       -X.X X.X          -          X.X X.X-    X..XXX       -   X.....X   X..X        -  X.X  -   X.X   -          X.X          -XX   X.X         -         X.X   XX-    X..X..XXX    -    X...X    X...X       -  X.X  -   X.X   -    XX    X.X    XX    -      X.X        -        X.X      -    X..X..X..XX  -     X.X     X....X      -  X.X  -   X.X   -   X.X    X.X    X.X   -       X.X       -       X.X       -    X..X..X..X.X -    X...X    X.....X     -  X.X  -   X.X   -  X..X    X.X    X..X  -        X.X      -      X.X        -XXX X..X..X..X..X-   X.....X   X......X    -  X.X  -   X.X   - X...XXXXXX.XXXXXX...X -         X.X   XX-XX   X.X         -X..XX........X..X-  X...X...X  X.......X   -  X.X  -   X.X   -X.....................X-          X.X X.X-X.X X.X          -X...X...........X- X...X X...X X........X  -  X.X  -   X.X   - X...XXXXXX.XXXXXX...X -           X.X..X-X..X.X           - X..............X-X...X   X...XX.........X -XXX.XXX-   X.X   -  X..X    X.X    X..X  -            X...X-X...X            -  X.............X-X..X     X..XX..........X-X.....X-   X.X   -   X.X    X.X    X.X   -           X....X-X....X           -  X.............X- XX       XX X......XXXXX-XXXXXXX-   X.X   -    XX    X.X    XX    -          X.....X-X.....X          -   X............X--------------X...X..X    ---------   X.X   -          X.X          -          XXXXXXX-XXXXXXX          -   X...........X -             X..X X..X   -       -XXXX.XXXX-       XXXX.XXXX       -------------------------------------    X..........X -             X.X  X..X   -       -X.......X-       X.......X       -    XX           XX    -           -    X..........X -             XX    X..X  -       - X.....X -        X.....X        -   X.X           X.X   -           -     X........X  -                   X..X  -       -  X...X  -         X...X         -  X..X           X..X  -           -     X........X  -                    XX   -       -   X.X   -          X.X          - X...XXXXXXXXXXXXX...X -           -     XXXXXXXXXX  -             -------------       -    X    -           X           -X.....................X-           -------------------                                 ----------------------------------- X...XXXXXXXXXXXXX...X -                                                                                                 -  X..X           X..X  -                                                                                                 -   X.X           X.X   -                                                                                                 -    XX           XX    -                                           ";
+            v27 = 0x1b;
+            v28 = (int32_t*)((int64_t)(((uint32_t)((struct s_fun_0002dd70_s1*)s1)->field_2 * a1->field_38->field_1c + (int32_t)((uint32_t)*(uint16_t*)s1 + 0x7b)) * ((int32_t*)a1->field_38)[9]) + ((int64_t*)a1->field_38)[5]);
+            do {
+                v29 = NULL;
+                while (true) {
+                    v30 = (struct s_fun_0002dd70_v30*)((char*)v28 + (int64_t)v29 * 4);
+                    v30->field_0 = v29[(int64_t)v26] == 'X' ? -1 : 0;
+                    v30->field_4 = *(int8_t*)((char*)(v29 + (int64_t)v26) + 1) == 'X' ? -1 : 0;
+                    v29 += 2;
+                    if ((int64_t)(v29) == 0x7a) break;
+                }
+                v26 = (int8_t*)(v26 + (int64_t)v29);
+                --v27;
+                v28 = (int32_t*)((char*)v28 + (int64_t)a1->field_38->field_1c * 4);
+            } while (v27);
+            result = ((struct s_fun_0002dd70_s1*)s1)->field_2;
+            v6 = *(uint16_t*)s1;
+        } else {
+            result = ((struct s_fun_0002dd70_s1*)s1)->field_2;
+            v6 = *(uint16_t*)s1;
+            if (a1->field_38->field_18 == 1) {
+                v22 = (int8_t*)"..-         -XXXXXXX-    X    -           X           -XXXXXXX          -          XXXXXXX-     XX          - XX       XX ..-         -X.....X-   X.X   -          X.X          -X.....X          -          X.....X-    X..X         -X..X     X..X---         -XXX.XXX-  X...X  -         X...X         -X....X           -           X....X-    X..X         -X...X   X...XX           -  X.X  - X.....X -        X.....X        -X...X            -            X...X-    X..X         - X...X X...X XX          -  X.X  -X.......X-       X.......X       -X..X.X           -           X.X..X-    X..X         -  X...X...X  X.X         -  X.X  -XXXX.XXXX-       XXXX.XXXX       -X.X X.X          -          X.X X.X-    X..XXX       -   X.....X   X..X        -  X.X  -   X.X   -          X.X          -XX   X.X         -         X.X   XX-    X..X..XXX    -    X...X    X...X       -  X.X  -   X.X   -    XX    X.X    XX    -      X.X        -        X.X      -    X..X..X..XX  -     X.X     X....X      -  X.X  -   X.X   -   X.X    X.X    X.X   -       X.X       -       X.X       -    X..X..X..X.X -    X...X    X.....X     -  X.X  -   X.X   -  X..X    X.X    X..X  -        X.X      -      X.X        -XXX X..X..X..X..X-   X.....X   X......X    -  X.X  -   X.X   - X...XXXXXX.XXXXXX...X -         X.X   XX-XX   X.X         -X..XX........X..X-  X...X...X  X.......X   -  X.X  -   X.X   -X.....................X-          X.X X.X-X.X X.X          -X...X...........X- X...X X...X X........X  -  X.X  -   X.X   - X...XXXXXX.XXXXXX...X -           X.X..X-X..X.X           - X..............X-X...X   X...XX.........X -XXX.XXX-   X.X   -  X..X    X.X    X..X  -            X...X-X...X            -  X.............X-X..X     X..XX..........X-X.....X-   X.X   -   X.X    X.X    X.X   -           X....X-X....X           -  X.............X- XX       XX X......XXXXX-XXXXXXX-   X.X   -    XX    X.X    XX    -          X.....X-X.....X          -   X............X--------------X...X..X    ---------   X.X   -          X.X          -          XXXXXXX-XXXXXXX          -   X...........X -             X..X X..X   -       -XXXX.XXXX-       XXXX.XXXX       -------------------------------------    X..........X -             X.X  X..X   -       -X.......X-       X.......X       -    XX           XX    -           -    X..........X -             XX    X..X  -       - X.....X -        X.....X        -   X.X           X.X   -           -     X........X  -                   X..X  -       -  X...X  -         X...X         -  X..X           X..X  -           -     X........X  -                    XX   -       -   X.X   -          X.X          - X...XXXXXXXXXXXXX...X -           -     XXXXXXXXXX  -             -------------       -    X    -           X           -X.....................X-           -------------------                                 ----------------------------------- X...XXXXXXXXXXXXX...X -                                                                                                 -  X..X           X..X  -                                                                                                 -   X.X           X.X   -                                                                                                 -    XX           XX    -                                           ";
+                v23 = 0x1b;
+                v24 = (int8_t*)((int64_t)(((uint32_t)((struct s_fun_0002dd70_s1*)s1)->field_2 * a1->field_38->field_1c + (int32_t)((uint32_t)*(uint16_t*)s1 + 0x7b)) * ((int32_t*)a1->field_38)[9]) + ((int64_t*)a1->field_38)[5]);
+                do {
+                    if ((uint64_t)(v24) > (uint64_t)(v22 + 0x79)) {
+                        *(int32_t*)v24 = __pcmpeqb(0x5858585858585858LL, *(int64_t*)v22);
+                        *(int32_t*)((char*)v24 + 0x10) = __pcmpeqb(*(int64_t*)((char*)v22 + 0x10), 0x5858585858585858LL);
+                        *(int32_t*)((char*)v24 + 0x20) = __pcmpeqb(*(int64_t*)((char*)v22 + 0x20), 0x5858585858585858LL);
+                        *(int32_t*)((char*)v24 + 0x30) = __pcmpeqb(*(int64_t*)((char*)v22 + 0x30), 0x5858585858585858LL);
+                        v25 = 0x40;
+                    } else {
+                        v25 = 0;
+                        if ((uint64_t)(v24 + 0x79) < (uint64_t)(v22)) {
+                            *(int32_t*)v24 = __pcmpeqb(0x5858585858585858LL, *(int64_t*)v22);
+                            *(int32_t*)((char*)v24 + 0x10) = __pcmpeqb(*(int64_t*)((char*)v22 + 0x10), 0x5858585858585858LL);
+                            *(int32_t*)((char*)v24 + 0x20) = __pcmpeqb(*(int64_t*)((char*)v22 + 0x20), 0x5858585858585858LL);
+                            *(int32_t*)((char*)v24 + 0x30) = __pcmpeqb(*(int64_t*)((char*)v22 + 0x30), 0x5858585858585858LL);
+                            v25 = 0x40;
+                        }
+                    }
+                    while (true) {
+                        v24[v25] = (int8_t)(v22[v25] == 'X' ? 0xff : 0);
+                        ++v25;
+                        if (v25 >= 0x7a) break;
+                    }
+                    v22 += 0x7a;
+                    --v23;
+                    v24 = (int8_t*)(v24 + (int64_t)a1->field_38->field_1c);
+                } while (v23);
+                result = ((struct s_fun_0002dd70_s1*)s1)->field_2;
+                v6 = *(uint16_t*)s1;
+            }
+        }
+    } else {
+        if (!a1->field_38->field_18) {
+            v10 = ((struct s_fun_0002dd70_s1*)s1)->field_2;
+            v11 = a1->field_38->field_1c;
+            v12 = (int64_t*)((int64_t)((v10 * v11 + (uint32_t)*(uint16_t*)s1) * ((int32_t*)a1->field_38)[9]) + ((int64_t*)a1->field_38)[5]);
+            *v12 = -1;
+            *(int64_t*)((char*)v12 + (int64_t)v11 * 4) = -1;
+            result = v10;
+            v6 = *(uint16_t*)s1;
+            a1->field_5c = (*(float*)&v6 + 0.5f) * a1->field_54;
+            a1->field_60 = (*(float*)&result + 0.5f) * a1->field_58;
+            return (uint16_t)result;
+        }
+        result = ((struct s_fun_0002dd70_s1*)s1)->field_2;
+        v6 = *(uint16_t*)s1;
+        if (a1->field_38->field_18 == 1) {
+            v7 = ((struct s_fun_0002dd70_s1*)s1)->field_2;
+            v8 = a1->field_38->field_1c;
+            v9 = (int16_t*)((int64_t)((v7 * v8 + (uint32_t)*(uint16_t*)s1) * ((int32_t*)a1->field_38)[9]) + ((int64_t*)a1->field_38)[5]);
+            *v9 = -1;
+            *(int16_t*)((char*)v9 + (int64_t)v8) = -1;
+            result = v7;
+            v6 = *(uint16_t*)s1;
+            a1->field_5c = (*(float*)&v6 + 0.5f) * a1->field_54;
+            a1->field_60 = (*(float*)&result + 0.5f) * a1->field_58;
+            return (uint16_t)result;
+        }
+    }
+    a1->field_5c = (*(float*)&v6 + 0.5f) * a1->field_54;
+    a1->field_60 = (*(float*)&result + 0.5f) * a1->field_58;
+    return (uint16_t)result;
+}
+

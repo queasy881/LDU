@@ -1,0 +1,78 @@
+=== fun_0002b7f0 @ 0x2b7f0 size=121 blocks=8 calls=1 ===
+--- DISASM ---
+  0x2b7f0: push      rbx
+  0x2b7f2: sub       rsp, 0x20
+  0x2b7f6: mov       rbx, rcx
+  0x2b7f9: movzx     ecx, dx
+  0x2b7fc: movsxd    rax, dword ptr [rbx + 0x20]
+  0x2b800: cmp       rcx, rax
+  0x2b803: jae       0x2b841
+  0x2b805: mov       rax, qword ptr [rbx + 0x28]
+  0x2b809: movzx     ecx, word ptr [rax + rcx*2]
+  0x2b80d: mov       eax, 0xfffe
+  0x2b812: cmp       cx, ax
+  0x2b815: jne       0x2b829
+  0x2b817: movsxd    rax, dword ptr [rbx + 0x40]
+  0x2b81b: imul      rax, rax, 0x2c
+  0x2b81f: add       rax, qword ptr [rbx + 0x38]
+  0x2b823: add       rsp, 0x20
+  0x2b827: pop       rbx
+  0x2b828: ret       
+  0x2b829: mov       eax, 0xffff
+  0x2b82e: cmp       cx, ax
+  0x2b831: je        0x2b841
+  0x2b833: imul      rax, rcx, 0x2c
+  0x2b837: add       rax, qword ptr [rbx + 0x38]
+  0x2b83b: add       rsp, 0x20
+  0x2b83f: pop       rbx
+  0x2b840: ret       
+  0x2b841: xor       r8d, r8d
+  0x2b844: mov       rcx, rbx
+  0x2b847: call      0x30320
+  0x2b84c: mov       rcx, rax
+  0x2b84f: test      rax, rax
+  0x2b852: jne       0x2b860
+  0x2b854: movsxd    rax, dword ptr [rbx + 0x40]
+  0x2b858: imul      rcx, rax, 0x2c
+  0x2b85c: add       rcx, qword ptr [rbx + 0x38]
+  0x2b860: mov       rax, rcx
+  0x2b863: add       rsp, 0x20
+  0x2b867: pop       rbx
+  0x2b868: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_0002b7f0 @ 0x2b7f0  size=121 */
+/* xrefs: called by fun_00032ed0 (1 site), fun_0004ff20 (1 site) */
+/* confidence: HIGH */
+struct s_fun_0002b7f0_a1;
+#pragma pack(push, 1)
+struct s_fun_0002b7f0_a1 {
+    char _pad_0[32];
+    int32_t field_20;
+    char _pad_24[4];
+    void* field_28;
+    char _pad_30[8];
+    int64_t field_38;
+    int32_t field_40;
+};
+#pragma pack(pop)
+int64_t fun_00030320();
+uint64_t fun_0002b7f0(struct s_fun_0002b7f0_a1*a1, int32_t a2) {
+    int64_t result;
+
+    if ((uint64_t)((uint16_t)a2) < (uint64_t)((int64_t)a1->field_20)) {
+        if (((uint16_t*)a1->field_28)[((uint16_t)a2)] == -2) {
+            return (int64_t)a1->field_40 * 0x2c + a1->field_38;
+        }
+        if (((uint16_t*)a1->field_28)[((uint16_t)a2)] != -1) {
+            return (int64_t)((uint32_t)((uint16_t*)a1->field_28)[((uint16_t)a2)]) * 0x2c + a1->field_38;
+        }
+    }
+    result = fun_00030320(a1, a2, 0);
+    if (result) {
+        return result;
+    }
+    result = (int64_t)a1->field_40 * 0x2c + a1->field_38;
+    return result;
+}
+

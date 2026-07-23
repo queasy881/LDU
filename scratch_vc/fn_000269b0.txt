@@ -1,0 +1,106 @@
+=== fun_000269b0 @ 0x269b0 size=228 blocks=9 calls=4 ===
+--- DISASM ---
+  0x269b0: mov       qword ptr [rsp + 8], rbx
+  0x269b5: push      rdi
+  0x269b6: sub       rsp, 0x30
+  0x269ba: mov       rdi, r9
+  0x269bd: lea       rdx, [0x8abf8]
+  0x269c4: mov       rbx, r8
+  0x269c7: lea       r9, [rsp + 0x20]
+  0x269cc: mov       rcx, rdi
+  0x269cf: lea       r8, [rsp + 0x50]
+  0x269d4: call      0x28470
+  0x269d9: cmp       eax, 2
+  0x269dc: jne       0x269fb
+  0x269de: movzx     eax, word ptr [rsp + 0x50]
+  0x269e3: movzx     ecx, word ptr [rsp + 0x20]
+  0x269e8: mov       word ptr [rbx + 4], ax
+  0x269ec: mov       word ptr [rbx + 6], cx
+  0x269f0: mov       rbx, qword ptr [rsp + 0x40]
+  0x269f5: add       rsp, 0x30
+  0x269f9: pop       rdi
+  0x269fa: ret       
+  0x269fb: lea       r9, [rsp + 0x20]
+  0x26a00: mov       rcx, rdi
+  0x26a03: lea       r8, [rsp + 0x50]
+  0x26a08: lea       rdx, [0x8ac08]
+  0x26a0f: call      0x28470
+  0x26a14: cmp       eax, 2
+  0x26a17: jne       0x26a36
+  0x26a19: movzx     eax, word ptr [rsp + 0x50]
+  0x26a1e: movzx     ecx, word ptr [rsp + 0x20]
+  0x26a23: mov       word ptr [rbx + 8], ax
+  0x26a27: mov       word ptr [rbx + 0xa], cx
+  0x26a2b: mov       rbx, qword ptr [rsp + 0x40]
+  0x26a30: add       rsp, 0x30
+  0x26a34: pop       rdi
+  0x26a35: ret       
+  0x26a36: lea       r8, [rsp + 0x24]
+  0x26a3b: mov       rcx, rdi
+  0x26a3e: lea       rdx, [0x8ac18]
+  0x26a45: call      0x28470
+  0x26a4a: cmp       eax, 1
+  0x26a4d: jne       0x26a65
+  0x26a4f: cmp       dword ptr [rsp + 0x24], 0
+  0x26a54: setne     al
+  0x26a57: mov       byte ptr [rbx + 0xc], al
+  0x26a5a: mov       rbx, qword ptr [rsp + 0x40]
+  0x26a5f: add       rsp, 0x30
+  0x26a63: pop       rdi
+  0x26a64: ret       
+  0x26a65: lea       r8, [rsp + 0x24]
+  0x26a6a: mov       rcx, rdi
+  0x26a6d: lea       rdx, [0x8ac28]
+  0x26a74: call      0x28470
+  0x26a79: cmp       eax, 1
+  0x26a7c: jne       0x26a89
+  0x26a7e: cmp       dword ptr [rsp + 0x24], 0
+  0x26a83: setne     al
+  0x26a86: mov       byte ptr [rbx + 0xd], al
+  0x26a89: mov       rbx, qword ptr [rsp + 0x40]
+  0x26a8e: add       rsp, 0x30
+  0x26a92: pop       rdi
+  0x26a93: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_000269b0 @ 0x269b0  size=228 */
+/* confidence: HIGH */
+struct s_fun_000269b0_a3;
+#pragma pack(push, 1)
+struct s_fun_000269b0_a3 {
+    char _pad_0[4];
+    int16_t field_4;
+    int16_t field_6;
+    int16_t field_8;
+    int16_t field_a;
+    int8_t field_c;
+    int8_t field_d;
+};
+#pragma pack(pop)
+int32_t fun_00028470();
+void fun_000269b0(int64_t a1, int64_t a2, struct s_fun_000269b0_a3*a3, int64_t a4) {
+    char s1[8];
+    char s2[12];
+    char s3[256];
+
+    if (fun_00028470(a4, "Pos=%i,%i", s3, s1) == 2) {
+        a3->field_4 = (int16_t)*(uint16_t*)s3;
+        a3->field_6 = (int16_t)*(uint16_t*)s1;
+        return;
+    }
+    if (fun_00028470(a4, "Size=%i,%i", s3, s1) == 2) {
+        a3->field_8 = (int16_t)*(uint16_t*)s3;
+        a3->field_a = (int16_t)*(uint16_t*)s1;
+        return;
+    }
+    if (fun_00028470(a4, "Collapsed=%d", s2) == 1) {
+        a3->field_c = *(int32_t*)s2 != 0;
+        return;
+    }
+    if (fun_00028470(a4, "IsChild=%d", s2) != 1) {
+        return;
+    }
+    a3->field_d = *(int32_t*)s2 != 0;
+    return;
+}
+

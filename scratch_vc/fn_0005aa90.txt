@@ -1,0 +1,508 @@
+=== fun_0005aa90 @ 0x5aa90 size=1260 blocks=40 calls=25 ===
+--- DISASM ---
+  0x5aa90: mov       qword ptr [rsp + 0x10], rbx
+  0x5aa95: mov       qword ptr [rsp + 0x18], rdi
+  0x5aa9a: push      rbp
+  0x5aa9b: lea       rbp, [rsp - 0x57]
+  0x5aaa0: sub       rsp, 0xa0
+  0x5aaa7: mov       rax, qword ptr [0x1733c0]
+  0x5aaae: xor       rax, rsp
+  0x5aab1: mov       qword ptr [rbp - 1], rax
+  0x5aab5: mov       rdi, qword ptr [rcx + 0x90]
+  0x5aabc: mov       rbx, rcx
+  0x5aabf: cmp       byte ptr [rdi + 0x31], 0
+  0x5aac3: je        0x5aaf3
+  0x5aac5: xor       eax, eax
+  0x5aac7: xor       ecx, ecx
+  0x5aac9: mov       dword ptr [rbp - 9], eax
+  0x5aacc: xorps     xmm0, xmm0
+  0x5aacf: mov       rax, qword ptr [rdi + 0x40]
+  0x5aad3: movups    xmmword ptr [rbp - 0x19], xmm0
+  0x5aad7: test      rax, rax
+  0x5aada: je        0x5aaec
+  0x5aadc: lea       r8, [rbp - 0x19]
+  0x5aae0: mov       edx, 1
+  0x5aae5: call      rax
+  0x5aae7: test      eax, eax
+  0x5aae9: sete      cl
+  0x5aaec: mov       byte ptr [rdi + 0x30], cl
+  0x5aaef: mov       byte ptr [rdi + 0x31], 0
+  0x5aaf3: and       dword ptr [rbx + 4], 0xfffffffe
+  0x5aaf7: cmp       byte ptr [rdi + 0x30], 0
+  0x5aafb: je        0x5af5b
+  0x5ab01: mov       rax, qword ptr [rdi + 0x48]
+  0x5ab05: test      rax, rax
+  0x5ab08: je        0x5af5b
+  0x5ab0e: lea       rdx, [rbp - 0x29]
+  0x5ab12: xor       ecx, ecx
+  0x5ab14: call      rax
+  0x5ab16: test      eax, eax
+  0x5ab18: jne       0x5af5b
+  0x5ab1e: or        dword ptr [rbx + 4], 1
+  0x5ab22: mov       eax, dword ptr [rdi + 0x50]
+  0x5ab25: mov       ecx, dword ptr [rbp - 0x29]
+  0x5ab28: test      eax, eax
+  0x5ab2a: je        0x5ab34
+  0x5ab2c: cmp       eax, ecx
+  0x5ab2e: je        0x5af5b
+  0x5ab34: movaps    xmmword ptr [rsp + 0x90], xmm6
+  0x5ab3c: mov       edx, 0x278
+  0x5ab41: movaps    xmmword ptr [rsp + 0x80], xmm7
+  0x5ab49: mov       dword ptr [rdi + 0x50], ecx
+  0x5ab4c: mov       rcx, rbx
+  0x5ab4f: movzx     r8d, byte ptr [rbp - 0x25]
+  0x5ab54: movaps    xmmword ptr [rsp + 0x70], xmm8
+  0x5ab5a: shr       r8b, 4
+  0x5ab5e: movaps    xmmword ptr [rsp + 0x60], xmm9
+  0x5ab64: and       r8b, 1
+  0x5ab68: movaps    xmmword ptr [rsp + 0x50], xmm10
+  0x5ab6e: call      0x8d00
+  0x5ab73: movzx     r8d, byte ptr [rbp - 0x25]
+  0x5ab78: mov       edx, 0x279
+  0x5ab7d: shr       r8b, 5
+  0x5ab81: mov       rcx, rbx
+  0x5ab84: and       r8b, 1
+  0x5ab88: call      0x8d00
+  0x5ab8d: movzx     r8d, word ptr [rbp - 0x25]
+  0x5ab92: mov       edx, 0x27a
+  0x5ab97: shr       r8w, 0xe
+  0x5ab9c: mov       rcx, rbx
+  0x5ab9f: and       r8b, 1
+  0x5aba3: call      0x8d00
+  0x5aba8: movzx     r8d, word ptr [rbp - 0x25]
+  0x5abad: mov       edx, 0x27b
+  0x5abb2: shr       r8w, 0xd
+  0x5abb7: mov       rcx, rbx
+  0x5abba: and       r8b, 1
+  0x5abbe: call      0x8d00
+  0x5abc3: movzx     r8d, word ptr [rbp - 0x25]
+  0x5abc8: mov       edx, 0x27c
+  0x5abcd: shr       r8w, 0xf
+  0x5abd2: mov       rcx, rbx
+  0x5abd5: call      0x8d00
+  0x5abda: movzx     r8d, word ptr [rbp - 0x25]
+  0x5abdf: mov       edx, 0x27d
+  0x5abe4: shr       r8w, 0xc
+  0x5abe9: mov       rcx, rbx
+  0x5abec: and       r8b, 1
+  0x5abf0: call      0x8d00
+  0x5abf5: movzx     r8d, byte ptr [rbp - 0x25]
+  0x5abfa: mov       edx, 0x27e
+  0x5abff: shr       r8b, 2
+  0x5ac03: mov       rcx, rbx
+  0x5ac06: and       r8b, 1
+  0x5ac0a: call      0x8d00
+  0x5ac0f: movzx     r8d, byte ptr [rbp - 0x25]
+  0x5ac14: mov       edx, 0x27f
+  0x5ac19: shr       r8b, 3
+  0x5ac1d: mov       rcx, rbx
+  0x5ac20: and       r8b, 1
+  0x5ac24: call      0x8d00
+  0x5ac29: movzx     r8d, byte ptr [rbp - 0x25]
+  0x5ac2e: mov       edx, 0x280
+  0x5ac33: and       r8b, 1
+  0x5ac37: mov       rcx, rbx
+  0x5ac3a: call      0x8d00
+  0x5ac3f: movzx     r8d, byte ptr [rbp - 0x25]
+  0x5ac44: mov       edx, 0x281
+  0x5ac49: shr       r8b, 1
+  0x5ac4c: mov       rcx, rbx
+  0x5ac4f: and       r8b, 1
+  0x5ac53: call      0x8d00
+  0x5ac58: movzx     r8d, word ptr [rbp - 0x25]
+  0x5ac5d: mov       edx, 0x282
+  0x5ac62: shr       r8w, 8
+  0x5ac67: mov       rcx, rbx
+  0x5ac6a: and       r8b, 1
+  0x5ac6e: call      0x8d00
+  0x5ac73: movzx     r8d, word ptr [rbp - 0x25]
+  0x5ac78: mov       edx, 0x283
+  0x5ac7d: shr       r8w, 9
+  0x5ac82: mov       rcx, rbx
+  0x5ac85: and       r8b, 1
+  0x5ac89: call      0x8d00
+  0x5ac8e: movzx     eax, byte ptr [rbp - 0x23]
+  0x5ac92: movss     xmm9, dword ptr [0x92dc4]
+  0x5ac9b: sub       eax, 0x1e
+  0x5ac9e: movd      xmm0, eax
+  0x5aca2: cvtdq2ps  xmm0, xmm0
+  0x5aca5: movss     xmm7, dword ptr [0x88544]
+  0x5acad: xorps     xmm6, xmm6
+  0x5acb0: divss     xmm0, xmm9
+  0x5acb5: comiss    xmm6, xmm0
+  0x5acb8: jbe       0x5acbf
+  0x5acba: xorps     xmm3, xmm3
+  0x5acbd: jmp       0x5acc6
+  0x5acbf: movaps    xmm3, xmm7
+  0x5acc2: minss     xmm3, xmm0
+  0x5acc6: movss     xmm8, dword ptr [0x88620]
+  0x5accf: mov       edx, 0x284
+  0x5acd4: comiss    xmm0, xmm8
+  0x5acd8: mov       rcx, rbx
+  0x5acdb: seta      r8b
+  0x5acdf: call      0x8b80
+  0x5ace4: movzx     eax, byte ptr [rbp - 0x22]
+  0x5ace8: sub       eax, 0x1e
+  0x5aceb: movd      xmm0, eax
+  0x5acef: cvtdq2ps  xmm0, xmm0
+  0x5acf2: divss     xmm0, xmm9
+  0x5acf7: comiss    xmm6, xmm0
+  0x5acfa: jbe       0x5ad01
+  0x5acfc: xorps     xmm3, xmm3
+  0x5acff: jmp       0x5ad08
+  0x5ad01: movaps    xmm3, xmm7
+  0x5ad04: minss     xmm3, xmm0
+  0x5ad08: comiss    xmm0, xmm8
+  0x5ad0c: mov       edx, 0x285
+  0x5ad11: mov       rcx, rbx
+  0x5ad14: seta      r8b
+  0x5ad18: call      0x8b80
+  0x5ad1d: movzx     r8d, byte ptr [rbp - 0x25]
+  0x5ad22: mov       edx, 0x286
+  0x5ad27: shr       r8b, 6
+  0x5ad2b: mov       rcx, rbx
+  0x5ad2e: and       r8b, 1
+  0x5ad32: call      0x8d00
+  0x5ad37: movzx     r8d, byte ptr [rbp - 0x25]
+  0x5ad3c: mov       edx, 0x287
+  0x5ad41: shr       r8b, 7
+  0x5ad45: mov       rcx, rbx
+  0x5ad48: and       r8b, 1
+  0x5ad4c: call      0x8d00
+  0x5ad51: movsx     eax, word ptr [rbp - 0x21]
+  0x5ad55: movss     xmm10, dword ptr [0x92dcc]
+  0x5ad5e: add       eax, 0x1ea9
+  0x5ad63: movd      xmm0, eax
+  0x5ad67: cvtdq2ps  xmm0, xmm0
+  0x5ad6a: divss     xmm0, xmm10
+  0x5ad6f: comiss    xmm6, xmm0
+  0x5ad72: jbe       0x5ad79
+  0x5ad74: xorps     xmm3, xmm3
+  0x5ad77: jmp       0x5ad80
+  0x5ad79: movaps    xmm3, xmm7
+  0x5ad7c: minss     xmm3, xmm0
+  0x5ad80: comiss    xmm0, xmm8
+  0x5ad84: mov       edx, 0x288
+  0x5ad89: mov       rcx, rbx
+  0x5ad8c: seta      r8b
+  0x5ad90: call      0x8b80
+  0x5ad95: movsx     eax, word ptr [rbp - 0x21]
+  0x5ad99: movss     xmm9, dword ptr [0x92dc8]
+  0x5ada2: sub       eax, 0x1ea9
+  0x5ada7: movd      xmm0, eax
+  0x5adab: cvtdq2ps  xmm0, xmm0
+  0x5adae: divss     xmm0, xmm9
+  0x5adb3: comiss    xmm6, xmm0
+  0x5adb6: jbe       0x5adbd
+  0x5adb8: xorps     xmm3, xmm3
+  0x5adbb: jmp       0x5adc4
+  0x5adbd: movaps    xmm3, xmm7
+  0x5adc0: minss     xmm3, xmm0
+  0x5adc4: comiss    xmm0, xmm8
+  0x5adc8: mov       edx, 0x289
+  0x5adcd: mov       rcx, rbx
+  0x5add0: seta      r8b
+  0x5add4: call      0x8b80
+  0x5add9: movsx     eax, word ptr [rbp - 0x1f]
+  0x5addd: sub       eax, 0x1ea9
+  0x5ade2: movd      xmm0, eax
+  0x5ade6: cvtdq2ps  xmm0, xmm0
+  0x5ade9: divss     xmm0, xmm9
+  0x5adee: comiss    xmm6, xmm0
+  0x5adf1: jbe       0x5adf8
+  0x5adf3: xorps     xmm3, xmm3
+  0x5adf6: jmp       0x5adff
+  0x5adf8: movaps    xmm3, xmm7
+  0x5adfb: minss     xmm3, xmm0
+  0x5adff: comiss    xmm0, xmm8
+  0x5ae03: mov       edx, 0x28a
+  0x5ae08: mov       rcx, rbx
+  0x5ae0b: seta      r8b
+  0x5ae0f: call      0x8b80
+  0x5ae14: movsx     eax, word ptr [rbp - 0x1f]
+  0x5ae18: add       eax, 0x1ea9
+  0x5ae1d: movd      xmm0, eax
+  0x5ae21: cvtdq2ps  xmm0, xmm0
+  0x5ae24: divss     xmm0, xmm10
+  0x5ae29: comiss    xmm6, xmm0
+  0x5ae2c: jbe       0x5ae33
+  0x5ae2e: xorps     xmm3, xmm3
+  0x5ae31: jmp       0x5ae3a
+  0x5ae33: movaps    xmm3, xmm7
+  0x5ae36: minss     xmm3, xmm0
+  0x5ae3a: comiss    xmm0, xmm8
+  0x5ae3e: mov       edx, 0x28b
+  0x5ae43: mov       rcx, rbx
+  0x5ae46: seta      r8b
+  0x5ae4a: call      0x8b80
+  0x5ae4f: movsx     eax, word ptr [rbp - 0x1d]
+  0x5ae53: add       eax, 0x1ea9
+  0x5ae58: movd      xmm0, eax
+  0x5ae5c: cvtdq2ps  xmm0, xmm0
+  0x5ae5f: divss     xmm0, xmm10
+  0x5ae64: comiss    xmm6, xmm0
+  0x5ae67: jbe       0x5ae6e
+  0x5ae69: xorps     xmm3, xmm3
+  0x5ae6c: jmp       0x5ae75
+  0x5ae6e: movaps    xmm3, xmm7
+  0x5ae71: minss     xmm3, xmm0
+  0x5ae75: comiss    xmm0, xmm8
+  0x5ae79: mov       edx, 0x28c
+  0x5ae7e: mov       rcx, rbx
+  0x5ae81: seta      r8b
+  0x5ae85: call      0x8b80
+  0x5ae8a: movsx     eax, word ptr [rbp - 0x1d]
+  0x5ae8e: sub       eax, 0x1ea9
+  0x5ae93: movd      xmm0, eax
+  0x5ae97: cvtdq2ps  xmm0, xmm0
+  0x5ae9a: divss     xmm0, xmm9
+  0x5ae9f: comiss    xmm6, xmm0
+  0x5aea2: jbe       0x5aea9
+  0x5aea4: xorps     xmm3, xmm3
+  0x5aea7: jmp       0x5aeb0
+  0x5aea9: movaps    xmm3, xmm7
+  0x5aeac: minss     xmm3, xmm0
+  0x5aeb0: comiss    xmm0, xmm8
+  0x5aeb4: mov       edx, 0x28d
+  0x5aeb9: mov       rcx, rbx
+  0x5aebc: seta      r8b
+  0x5aec0: call      0x8b80
+  0x5aec5: movsx     eax, word ptr [rbp - 0x1b]
+  0x5aec9: sub       eax, 0x1ea9
+  0x5aece: movd      xmm0, eax
+  0x5aed2: cvtdq2ps  xmm0, xmm0
+  0x5aed5: divss     xmm0, xmm9
+  0x5aeda: movaps    xmm9, xmmword ptr [rsp + 0x60]
+  0x5aee0: comiss    xmm6, xmm0
+  0x5aee3: jbe       0x5aeea
+  0x5aee5: xorps     xmm3, xmm3
+  0x5aee8: jmp       0x5aef1
+  0x5aeea: movaps    xmm3, xmm7
+  0x5aeed: minss     xmm3, xmm0
+  0x5aef1: comiss    xmm0, xmm8
+  0x5aef5: mov       edx, 0x28e
+  0x5aefa: mov       rcx, rbx
+  0x5aefd: seta      r8b
+  0x5af01: call      0x8b80
+  0x5af06: movsx     eax, word ptr [rbp - 0x1b]
+  0x5af0a: add       eax, 0x1ea9
+  0x5af0f: movd      xmm0, eax
+  0x5af13: cvtdq2ps  xmm0, xmm0
+  0x5af16: divss     xmm0, xmm10
+  0x5af1b: movaps    xmm10, xmmword ptr [rsp + 0x50]
+  0x5af21: comiss    xmm6, xmm0
+  0x5af24: ja        0x5af2d
+  0x5af26: minss     xmm7, xmm0
+  0x5af2a: movaps    xmm6, xmm7
+  0x5af2d: comiss    xmm0, xmm8
+  0x5af31: mov       edx, 0x28f
+  0x5af36: mov       rcx, rbx
+  0x5af39: movaps    xmm3, xmm6
+  0x5af3c: seta      r8b
+  0x5af40: call      0x8b80
+  0x5af45: movaps    xmm8, xmmword ptr [rsp + 0x70]
+  0x5af4b: movaps    xmm7, xmmword ptr [rsp + 0x80]
+  0x5af53: movaps    xmm6, xmmword ptr [rsp + 0x90]
+  0x5af5b: mov       rcx, qword ptr [rbp - 1]
+  0x5af5f: xor       rcx, rsp
+  0x5af62: call      0x5dbe0
+  0x5af67: lea       r11, [rsp + 0xa0]
+  0x5af6f: mov       rbx, qword ptr [r11 + 0x18]
+  0x5af73: mov       rdi, qword ptr [r11 + 0x20]
+  0x5af77: mov       rsp, r11
+  0x5af7a: pop       rbp
+  0x5af7b: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_0005aa90 @ 0x5aa90  size=1260 */
+/* xrefs: called by fun_0005a730 (1 site) */
+/* confidence: MEDIUM - 1 residual goto */
+#include <stdbool.h>
+struct s_fun_0005aa90_a1;
+struct s_fun_0005aa90_a1_90;
+struct s_fun_0005aa90_s1;
+struct s_fun_0005aa90_s3;
+struct s_fun_0005aa90_s4;
+#pragma pack(push, 1)
+struct s_fun_0005aa90_a1 {
+    char _pad_0[4];
+    int32_t field_4;
+    char _pad_8[136];
+    struct s_fun_0005aa90_a1_90* field_90;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_0005aa90_a1_90 {
+    char _pad_0[48];
+    int8_t field_30;
+    int8_t field_31;
+    char _pad_32[14];
+    int64_t field_40;
+    int64_t field_48;
+    int32_t field_50;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_0005aa90_s1 {
+    int64_t field_0;
+    int64_t field_8;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_0005aa90_s3 {
+    int32_t field_0;
+    char _pad_4[2];
+    uint8_t field_6;
+    uint8_t field_7;
+    int16_t field_8;
+    int16_t field_a;
+    int16_t field_c;
+    int16_t field_e;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_0005aa90_s4 {
+    char _pad_0[16];
+    int32_t field_10;
+    char _pad_14[4];
+    int64_t field_18;
+};
+#pragma pack(pop)
+#define qword_1733c0 (*(int64_t*)0x1733c0)
+#ifndef __min
+#define __min(a,b) ((a)<(b)?(a):(b))
+#endif
+int32_t fun_00008b80();
+int32_t fun_00008d00();
+int32_t fun_0005aa90(struct s_fun_0005aa90_a1*a1) {
+    char s1[16];
+    char s3[16];
+    char s4[256];
+    int64_t result;
+    bool v1;
+    float v3;
+    float v4;
+    float v5;
+    float v6;
+    float v7;
+    float v8;
+    float v9;
+    float v10;
+    float v11;
+    int8_t*v2;
+
+    ((struct s_fun_0005aa90_s4*)s4)->field_18 = qword_1733c0;
+    result = qword_1733c0;
+    if (a1->field_90->field_31) {
+        ((struct s_fun_0005aa90_s4*)s4)->field_10 = 0;
+        ((struct s_fun_0005aa90_s1*)s1)->field_0 = 0;
+        ((struct s_fun_0005aa90_s1*)s1)->field_8 = 0;
+        result = a1->field_90->field_40;
+        v1 = 0;
+        if (result) {
+            result = ((int64_t(*)())(a1->field_90->field_40))(0, 1, s1);
+            v1 = (int32_t)result == 0;
+        }
+        v2 = (int8_t*)a1->field_90;
+        v2[0x30] = (int8_t)v1;
+        v2[0x31] = 0;
+    }
+    a1->field_4 &= 0xfffffffe;
+    if (!a1->field_90->field_30) {
+        return (int32_t)result;
+    }
+    result = a1->field_90->field_48;
+    if (!result) {
+        return (int32_t)result;
+    }
+    result = ((int64_t(*)())(a1->field_90->field_48))(0, s3, s1);
+    if ((int32_t)result) {
+        return (int32_t)result;
+    }
+    a1->field_4 |= 1;
+    if (!a1->field_90->field_50) {
+L_5ab34:;
+        a1->field_90->field_50 = ((struct s_fun_0005aa90_s3*)s3)->field_0;
+        fun_00008d00(a1, 0x278, ((uint32_t)s3[4] & 0xffffff00) | (((uint32_t)(s3[4]) >> 4) & 1));
+        fun_00008d00(a1, 0x279, ((uint32_t)s3[4] & 0xffffff00) | (((uint32_t)(s3[4]) >> 5) & 1));
+        fun_00008d00(a1, 0x27a, ((((uint32_t)*(uint16_t*)((char*)s3 + 4) & 0xffff0000) | (((uint32_t)(*(uint16_t*)((char*)s3 + 4)) >> 0xe) & 0xffff)) & 0xffffff00) | (((uint32_t)(*(uint16_t*)((char*)s3 + 4)) >> 0xe) & 1));
+        fun_00008d00(a1, 0x27b, ((((uint32_t)*(uint16_t*)((char*)s3 + 4) & 0xffff0000) | (((uint32_t)(*(uint16_t*)((char*)s3 + 4)) >> 0xd) & 0xffff)) & 0xffffff00) | (((uint32_t)(*(uint16_t*)((char*)s3 + 4)) >> 0xd) & 1));
+        fun_00008d00(a1, 0x27c, ((uint32_t)*(uint16_t*)((char*)s3 + 4) & 0xffff0000) | (((uint32_t)(*(uint16_t*)((char*)s3 + 4)) >> 0xf) & 0xffff));
+        fun_00008d00(a1, 0x27d, ((((uint32_t)*(uint16_t*)((char*)s3 + 4) & 0xffff0000) | (((uint32_t)(*(uint16_t*)((char*)s3 + 4)) >> 0xc) & 0xffff)) & 0xffffff00) | (((uint32_t)(*(uint16_t*)((char*)s3 + 4)) >> 0xc) & 1));
+        fun_00008d00(a1, 0x27e, ((uint32_t)s3[4] & 0xffffff00) | (((uint32_t)(s3[4]) >> 2) & 1));
+        fun_00008d00(a1, 0x27f, ((uint32_t)s3[4] & 0xffffff00) | (((uint32_t)(s3[4]) >> 3) & 1));
+        fun_00008d00(a1, 0x280, ((uint32_t)s3[4] & 0xffffff00) | (s3[4] & 1));
+        fun_00008d00(a1, 0x281, ((uint32_t)s3[4] & 0xffffff00) | (((uint32_t)(s3[4]) >> 1) & 1));
+        fun_00008d00(a1, 0x282, ((((uint32_t)*(uint16_t*)((char*)s3 + 4) & 0xffff0000) | (((uint32_t)(*(uint16_t*)((char*)s3 + 4)) >> 8) & 0xffff)) & 0xffffff00) | (((uint32_t)(*(uint16_t*)((char*)s3 + 4)) >> 8) & 1));
+        fun_00008d00(a1, 0x283, ((((uint32_t)*(uint16_t*)((char*)s3 + 4) & 0xffff0000) | (((uint32_t)(*(uint16_t*)((char*)s3 + 4)) >> 9) & 0xffff)) & 0xffffff00) | (((uint32_t)(*(uint16_t*)((char*)s3 + 4)) >> 9) & 1));
+        if (!((float)((uint32_t)((struct s_fun_0005aa90_s3*)s3)->field_6 - 0x1e) / 225.0f < 0.0f)) {
+            v3 = __min(1.0f, (float)((uint32_t)((struct s_fun_0005aa90_s3*)s3)->field_6 - 0x1e) / 225.0f);
+        } else {
+            v3 = 0.0f;
+        }
+        fun_00008b80(a1, 0x284, (float)((uint32_t)((struct s_fun_0005aa90_s3*)s3)->field_6 - 0x1e) / 225.0f > 0.1f, v3);
+        if (!((float)((uint32_t)((struct s_fun_0005aa90_s3*)s3)->field_7 - 0x1e) / 225.0f < 0.0f)) {
+            v4 = __min(1.0f, (float)((uint32_t)((struct s_fun_0005aa90_s3*)s3)->field_7 - 0x1e) / 225.0f);
+        } else {
+            v4 = 0.0f;
+        }
+        fun_00008b80(a1, 0x285, (float)((uint32_t)((struct s_fun_0005aa90_s3*)s3)->field_7 - 0x1e) / 225.0f > 0.1f, v4);
+        fun_00008d00(a1, 0x286, ((uint32_t)s3[4] & 0xffffff00) | (((uint32_t)(s3[4]) >> 6) & 1));
+        fun_00008d00(a1, 0x287, ((uint32_t)s3[4] & 0xffffff00) | (((uint32_t)(s3[4]) >> 7) & 1));
+        if (!((float)((int32_t)((struct s_fun_0005aa90_s3*)s3)->field_8 + 0x1ea9) / -24919.0f < 0.0f)) {
+            v5 = __min(1.0f, (float)((int32_t)((struct s_fun_0005aa90_s3*)s3)->field_8 + 0x1ea9) / -24919.0f);
+        } else {
+            v5 = 0.0f;
+        }
+        fun_00008b80(a1, 0x288, (float)((int32_t)((struct s_fun_0005aa90_s3*)s3)->field_8 + 0x1ea9) / -24919.0f > 0.1f, v5);
+        if (!((float)((int32_t)((struct s_fun_0005aa90_s3*)s3)->field_8 - 0x1ea9) / 24918.0f < 0.0f)) {
+            v6 = __min(1.0f, (float)((int32_t)((struct s_fun_0005aa90_s3*)s3)->field_8 - 0x1ea9) / 24918.0f);
+        } else {
+            v6 = 0.0f;
+        }
+        fun_00008b80(a1, 0x289, (float)((int32_t)((struct s_fun_0005aa90_s3*)s3)->field_8 - 0x1ea9) / 24918.0f > 0.1f, v6);
+        if (!((float)((int32_t)((struct s_fun_0005aa90_s3*)s3)->field_a - 0x1ea9) / 24918.0f < 0.0f)) {
+            v7 = __min(1.0f, (float)((int32_t)((struct s_fun_0005aa90_s3*)s3)->field_a - 0x1ea9) / 24918.0f);
+        } else {
+            v7 = 0.0f;
+        }
+        fun_00008b80(a1, 0x28a, (float)((int32_t)((struct s_fun_0005aa90_s3*)s3)->field_a - 0x1ea9) / 24918.0f > 0.1f, v7);
+        if (!((float)((int32_t)((struct s_fun_0005aa90_s3*)s3)->field_a + 0x1ea9) / -24919.0f < 0.0f)) {
+            v8 = __min(1.0f, (float)((int32_t)((struct s_fun_0005aa90_s3*)s3)->field_a + 0x1ea9) / -24919.0f);
+        } else {
+            v8 = 0.0f;
+        }
+        fun_00008b80(a1, 0x28b, (float)((int32_t)((struct s_fun_0005aa90_s3*)s3)->field_a + 0x1ea9) / -24919.0f > 0.1f, v8);
+        if (!((float)((int32_t)((struct s_fun_0005aa90_s3*)s3)->field_c + 0x1ea9) / -24919.0f < 0.0f)) {
+            v9 = __min(1.0f, (float)((int32_t)((struct s_fun_0005aa90_s3*)s3)->field_c + 0x1ea9) / -24919.0f);
+        } else {
+            v9 = 0.0f;
+        }
+        fun_00008b80(a1, 0x28c, (float)((int32_t)((struct s_fun_0005aa90_s3*)s3)->field_c + 0x1ea9) / -24919.0f > 0.1f, v9);
+        if (!((float)((int32_t)((struct s_fun_0005aa90_s3*)s3)->field_c - 0x1ea9) / 24918.0f < 0.0f)) {
+            v10 = __min(1.0f, (float)((int32_t)((struct s_fun_0005aa90_s3*)s3)->field_c - 0x1ea9) / 24918.0f);
+        } else {
+            v10 = 0.0f;
+        }
+        fun_00008b80(a1, 0x28d, (float)((int32_t)((struct s_fun_0005aa90_s3*)s3)->field_c - 0x1ea9) / 24918.0f > 0.1f, v10);
+        if (!((float)((int32_t)((struct s_fun_0005aa90_s3*)s3)->field_e - 0x1ea9) / 24918.0f < 0.0f)) {
+        } else {
+        }
+        fun_00008b80(a1, 0x28e, (float)((int32_t)((struct s_fun_0005aa90_s3*)s3)->field_e - 0x1ea9) / 24918.0f > 0.1f);
+        v11 = 0.0f;
+        if ((float)((int32_t)((struct s_fun_0005aa90_s3*)s3)->field_e + 0x1ea9) / -24919.0f < 0.0f) {
+            result = fun_00008b80(a1, 0x28f, (float)((int32_t)((struct s_fun_0005aa90_s3*)s3)->field_e + 0x1ea9) / -24919.0f > 0.1f, v11);
+            return (int32_t)result;
+        }
+        v11 = __min(1.0f, (float)((int32_t)((struct s_fun_0005aa90_s3*)s3)->field_e + 0x1ea9) / -24919.0f);
+        result = fun_00008b80(a1, 0x28f, (float)((int32_t)((struct s_fun_0005aa90_s3*)s3)->field_e + 0x1ea9) / -24919.0f > 0.1f, v11);
+        return (int32_t)result;
+    } else {
+        result = a1->field_90->field_50;
+        if (result != ((struct s_fun_0005aa90_s3*)s3)->field_0) {
+            goto L_5ab34;
+        }
+        return (int32_t)result;
+    }
+}
+

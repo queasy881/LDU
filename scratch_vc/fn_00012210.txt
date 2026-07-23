@@ -1,0 +1,33 @@
+=== fun_00012210 @ 0x12210 size=58 blocks=3 calls=0 ===
+--- DISASM ---
+  0x12210: mov       rax, qword ptr [0x174148]
+  0x12217: mulss     xmm1, dword ptr [rax + 0xc6c]
+  0x1221f: mov       eax, ecx
+  0x12221: comiss    xmm1, dword ptr [0x88544]
+  0x12228: jae       0x12249
+  0x1222a: shr       eax, 0x18
+  0x1222d: xorps     xmm0, xmm0
+  0x12230: and       ecx, 0xffffff
+  0x12236: cvtsi2ss  xmm0, rax
+  0x1223b: mulss     xmm0, xmm1
+  0x1223f: cvttss2si rax, xmm0
+  0x12244: shl       eax, 0x18
+  0x12247: or        eax, ecx
+  0x12249: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_00012210 @ 0x12210  size=58 */
+/* xrefs: called by fun_00052750 (1 site) */
+/* confidence: HIGH */
+#define qword_174148 (*(int64_t*)0x174148)
+uint32_t fun_00012210(uint32_t a1, float a2) {
+    uint32_t result;
+
+    result = a1;
+    if (a2 * *(float*)(qword_174148 + 0xc6c) >= 1.0f) {
+        return result;
+    }
+    result = ((int32_t)((float)((uint32_t)(a1) >> 0x18) * (a2 * *(float*)(qword_174148 + 0xc6c))) << 0x18) | (a1 & 0xffffff);
+    return result;
+}
+

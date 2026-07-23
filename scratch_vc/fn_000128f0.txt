@@ -1,0 +1,117 @@
+=== fun_000128f0 @ 0x128f0 size=197 blocks=16 calls=1 ===
+--- DISASM ---
+  0x128f0: sub       rsp, 0x48
+  0x128f4: movaps    xmmword ptr [rsp + 0x30], xmm6
+  0x128f9: movaps    xmm6, xmm1
+  0x128fc: movaps    xmmword ptr [rsp + 0x20], xmm7
+  0x12901: movaps    xmm7, xmm2
+  0x12904: call      0x127b0
+  0x12909: cmp       byte ptr [rax], 0
+  0x1290c: je        0x12945
+  0x1290e: movss     xmm0, dword ptr [rax + 4]
+  0x12913: xorps     xmm2, xmm2
+  0x12916: ucomiss   xmm0, xmm2
+  0x12919: jp        0x12931
+  0x1291b: jne       0x12931
+  0x1291d: mov       eax, 1
+  0x12922: movaps    xmm6, xmmword ptr [rsp + 0x30]
+  0x12927: movaps    xmm7, xmmword ptr [rsp + 0x20]
+  0x1292c: add       rsp, 0x48
+  0x12930: ret       
+  0x12931: mov       rax, qword ptr [0x174148]
+  0x12938: movaps    xmm1, xmm0
+  0x1293b: subss     xmm1, dword ptr [rax + 0x40]
+  0x12940: comiss    xmm1, xmm0
+  0x12943: jb        0x12956
+  0x12945: xor       eax, eax
+  0x12947: movaps    xmm6, xmmword ptr [rsp + 0x30]
+  0x1294c: movaps    xmm7, xmmword ptr [rsp + 0x20]
+  0x12951: add       rsp, 0x48
+  0x12955: ret       
+  0x12956: comiss    xmm2, xmm7
+  0x12959: jb        0x12979
+  0x1295b: comiss    xmm6, xmm1
+  0x1295e: jbe       0x12945
+  0x12960: comiss    xmm0, xmm6
+  0x12963: jb        0x12945
+  0x12965: mov       eax, 1
+  0x1296a: movaps    xmm6, xmmword ptr [rsp + 0x30]
+  0x1296f: movaps    xmm7, xmmword ptr [rsp + 0x20]
+  0x12974: add       rsp, 0x48
+  0x12978: ret       
+  0x12979: comiss    xmm6, xmm1
+  0x1297c: mov       eax, 0xffffffff
+  0x12981: jbe       0x12987
+  0x12983: mov       ecx, eax
+  0x12985: jmp       0x12993
+  0x12987: subss     xmm1, xmm6
+  0x1298b: divss     xmm1, xmm7
+  0x1298f: cvttss2si ecx, xmm1
+  0x12993: comiss    xmm6, xmm0
+  0x12996: ja        0x129a4
+  0x12998: subss     xmm0, xmm6
+  0x1299c: divss     xmm0, xmm7
+  0x129a0: cvttss2si eax, xmm0
+  0x129a4: movaps    xmm6, xmmword ptr [rsp + 0x30]
+  0x129a9: sub       eax, ecx
+  0x129ab: movaps    xmm7, xmmword ptr [rsp + 0x20]
+  0x129b0: add       rsp, 0x48
+  0x129b4: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_000128f0 @ 0x128f0  size=197 */
+/* xrefs: called by fun_000129f0 (2 sites), fun_00014fc0 (1 site) */
+/* confidence: HIGH */
+struct s_fun_000128f0_v1;
+#pragma pack(push, 1)
+struct s_fun_000128f0_v1 {
+    int8_t field_0;
+    char _pad_1[3];
+    float field_4;
+};
+#pragma pack(pop)
+#define qword_174148 (*(int64_t*)0x174148)
+int64_t fun_000127b0();
+int32_t fun_000128f0(int64_t a1, float a2, float a3) {
+    int32_t v3;
+    int32_t v4;
+    struct s_fun_000128f0_v1*v1 = 0;
+    int32_t v2;
+
+    v2 = 0;
+    v1 = (struct s_fun_000128f0_v1*)fun_000127b0(a1);
+    if (v1->field_0) {
+        if (v1->field_4 != 0.0f) {
+            if (!(v1->field_4 - *(float*)(qword_174148 + 0x40) >= v1->field_4)) {
+                if (!(a3 <= 0.0f)) {
+                    v2 = 2;
+                } else if (a2 > v1->field_4 - *(float*)(qword_174148 + 0x40) && v1->field_4 >= a2) {
+                    v2 = 3;
+                }
+            }
+        } else {
+            v2 = 1;
+        }
+    }
+    if (!v2) {
+        return 0;
+    }
+    if (v2 == 1) {
+        return 1;
+    }
+    if (v2 != 2) {
+        return 1;
+    }
+    if (!(a2 > v1->field_4 - *(float*)(qword_174148 + 0x40))) {
+        v3 = (int32_t)((v1->field_4 - *(float*)(qword_174148 + 0x40) - a2) / a3);
+    } else {
+        v3 = -1;
+    }
+    v4 = -1;
+    if (a2 > v1->field_4) {
+        return v4 - v3;
+    }
+    v4 = (int32_t)((v1->field_4 - a2) / a3);
+    return v4 - v3;
+}
+

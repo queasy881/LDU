@@ -1,0 +1,36 @@
+=== fun_0004b2d0 @ 0x4b2d0 size=57 blocks=3 calls=1 ===
+--- DISASM ---
+  0x4b2d0: push      rbx
+  0x4b2d2: sub       rsp, 0x20
+  0x4b2d6: movsxd    r8, dword ptr [rcx + 0x18]
+  0x4b2da: movsxd    rbx, edx
+  0x4b2dd: cmp       ebx, r8d
+  0x4b2e0: jl        0x4b2ec
+  0x4b2e2: lea       eax, [r8 + 1]
+  0x4b2e6: add       rsp, 0x20
+  0x4b2ea: pop       rbx
+  0x4b2eb: ret       
+  0x4b2ec: add       r8, qword ptr [rcx + 0x20]
+  0x4b2f0: mov       rdx, rbx
+  0x4b2f3: add       rdx, qword ptr [rcx + 0x20]
+  0x4b2f7: lea       rcx, [rsp + 0x38]
+  0x4b2fc: call      0x14040
+  0x4b301: add       eax, ebx
+  0x4b303: add       rsp, 0x20
+  0x4b307: pop       rbx
+  0x4b308: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_0004b2d0 @ 0x4b2d0  size=57 */
+/* xrefs: called by fun_00057760 (3 sites), fun_00056b00 (1 site) */
+/* confidence: HIGH */
+int32_t fun_00014040();
+int32_t fun_0004b2d0(int64_t*a1, int32_t a2) {
+    char s1[256];
+
+    if (a2 < *(int32_t*)((char*)a1 + 0x18)) {
+        return fun_00014040(s1, (int64_t)a2 + a1[4], (int64_t)*(int32_t*)((char*)a1 + 0x18) + a1[4]) + a2;
+    }
+    return (int32_t)((int64_t)*(int32_t*)((char*)a1 + 0x18) + 1);
+}
+

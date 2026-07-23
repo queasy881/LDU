@@ -1,0 +1,20 @@
+=== fun_000122c0 @ 0x122c0 size=30 blocks=1 calls=0 ===
+--- DISASM ---
+  0x122c0: mov       rax, qword ptr [0x174148]
+  0x122c7: mov       rcx, qword ptr [rax + 0x1fc0]
+  0x122ce: mov       rax, qword ptr [rcx]
+  0x122d1: xor       ecx, ecx
+  0x122d3: add       rax, 0x58
+  0x122d7: cmp       byte ptr [rax], cl
+  0x122d9: cmove     rax, rcx
+  0x122dd: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_000122c0 @ 0x122c0  size=30 */
+/* xrefs: called by fun_00001e10 (1 site) */
+/* confidence: HIGH */
+#define qword_174148 (*(int64_t*)0x174148)
+int64_t fun_000122c0(void) {
+    return *(int8_t*)(*(int64_t*)(*(int64_t*)(qword_174148 + 0x1fc0)) + 0x58) == 0 ? 0 : *(int64_t*)(*(int64_t*)(qword_174148 + 0x1fc0)) + 0x58;
+}
+

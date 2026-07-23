@@ -1,0 +1,138 @@
+=== fun_00028580 @ 0x28580 size=278 blocks=5 calls=4 ===
+--- DISASM ---
+  0x28580: mov       qword ptr [rsp + 0x10], rbx
+  0x28585: mov       qword ptr [rsp + 0x18], rsi
+  0x2858a: push      rdi
+  0x2858b: sub       rsp, 0x50
+  0x2858f: movaps    xmmword ptr [rsp + 0x40], xmm6
+  0x28594: movaps    xmmword ptr [rsp + 0x30], xmm7
+  0x28599: movaps    xmmword ptr [rsp + 0x20], xmm8
+  0x2859f: mov       rdi, rcx
+  0x285a2: xor       esi, esi
+  0x285a4: mov       qword ptr [rcx], rsi
+  0x285a7: mov       qword ptr [rcx + 0x38], rsi
+  0x285ab: mov       qword ptr [rcx + 0x40], rsi
+  0x285af: mov       qword ptr [rcx + 0x48], rsi
+  0x285b3: mov       qword ptr [rcx + 0x50], rsi
+  0x285b7: mov       qword ptr [rcx + 0x58], rsi
+  0x285bb: mov       qword ptr [rcx + 0x60], rsi
+  0x285bf: lea       rax, [rcx + 0x70]
+  0x285c3: mov       ecx, 0x30
+  0x285c8: nop       dword ptr [rax + rax]
+  0x285d0: mov       qword ptr [rax], rsi
+  0x285d3: lea       rax, [rax + 8]
+  0x285d7: sub       rcx, 1
+  0x285db: jne       0x285d0
+  0x285dd: xor       edx, edx
+  0x285df: mov       r8d, 0x238
+  0x285e5: mov       rcx, rdi
+  0x285e8: call      0x85240
+  0x285ed: mov       dword ptr [rdi + 0x30], 0x3f800000
+  0x285f4: movss     xmm7, dword ptr [0x88584]
+  0x285fc: movss     xmm8, dword ptr [0x92044]
+  0x28605: nop       word ptr [rax + rax]
+  0x28610: movd      xmm6, esi
+  0x28614: cvtdq2ps  xmm6, xmm6
+  0x28617: addss     xmm6, xmm6
+  0x2861b: mulss     xmm6, xmm7
+  0x2861f: divss     xmm6, xmm8
+  0x28624: mov       ebx, esi
+  0x28626: movaps    xmm0, xmm6
+  0x28629: call      0x68200
+  0x2862e: movss     dword ptr [rdi + rbx*8 + 0x70], xmm0
+  0x28634: movaps    xmm0, xmm6
+  0x28637: call      0x69060
+  0x2863c: movss     dword ptr [rdi + rbx*8 + 0x74], xmm0
+  0x28642: inc       esi
+  0x28644: cmp       esi, 0x30
+  0x28647: jl        0x28610
+  0x28649: movss     xmm0, dword ptr [0x9201c]
+  0x28651: call      0x68200
+  0x28656: movss     xmm1, dword ptr [0x88544]
+  0x2865e: subss     xmm1, xmm0
+  0x28662: movss     xmm0, dword ptr [rdi + 0x2c]
+  0x28667: divss     xmm0, xmm1
+  0x2866b: movss     dword ptr [rdi + 0x1f0], xmm0
+  0x28673: mov       rax, rdi
+  0x28676: mov       rbx, qword ptr [rsp + 0x68]
+  0x2867b: mov       rsi, qword ptr [rsp + 0x70]
+  0x28680: movaps    xmm6, xmmword ptr [rsp + 0x40]
+  0x28685: movaps    xmm7, xmmword ptr [rsp + 0x30]
+  0x2868a: movaps    xmm8, xmmword ptr [rsp + 0x20]
+  0x28690: add       rsp, 0x50
+  0x28694: pop       rdi
+  0x28695: ret       
+--- DECOMPILED ---
+#include <stdint.h>
+/* fun_00028580 @ 0x28580  size=278 */
+/* xrefs: called by fun_00006aa0 (1 site) */
+/* confidence: HIGH */
+#include <stdbool.h>
+struct s_fun_00028580_a1;
+struct s_fun_00028580_v5;
+#pragma pack(push, 1)
+struct s_fun_00028580_a1 {
+    int64_t field_0;
+    char _pad_8[36];
+    float field_2c;
+    int32_t field_30;
+    char _pad_34[4];
+    int64_t field_38;
+    int64_t field_40;
+    int64_t field_48;
+    int64_t field_50;
+    int64_t field_58;
+    int64_t field_60;
+    char _pad_68[392];
+    float field_1f0;
+};
+#pragma pack(pop)
+#pragma pack(push, 1)
+struct s_fun_00028580_v5 {
+    char _pad_0[112];
+    float field_70;
+    double field_74;
+};
+#pragma pack(pop)
+int32_t fun_00068200();
+float fun_00069060();
+float fun_00085240();
+struct s_fun_00028580_a1* fun_00028580(struct s_fun_00028580_a1*a1) {
+    int64_t*v1;
+    int64_t v2;
+    int32_t v3;
+    float v4;
+    struct s_fun_00028580_v5*v5;
+
+    a1->field_0 = 0;
+    a1->field_38 = 0;
+    a1->field_40 = 0;
+    a1->field_48 = 0;
+    a1->field_50 = 0;
+    a1->field_58 = 0;
+    a1->field_60 = 0;
+    v1 = (int64_t*)((char*)a1 + 0x70);
+    v2 = 0x30;
+    while (true) {
+        *v1 = 0;
+        v1 = (int64_t*)((char*)v1 + 8);
+        --v2;
+        if (!v2) break;
+    }
+    fun_00085240(a1, 0, 0x238);
+    a1->field_30 = 0x3f800000;
+    v3 = 0;
+    while (true) {
+        fun_00068200(2.0f * (float)v3 * 3.1415927f / 48.0f);
+        v4 = 2.0f * (float)v3 * 3.1415927f / 48.0f;
+        v5 = (struct s_fun_00028580_v5*)((char*)a1 + v3 * 8);
+        v5->field_70 = v4;
+        v5->field_74 = fun_00069060(v4, 0);
+        ++v3;
+        if (v3 >= 0x30) break;
+    }
+    fun_00068200(0.06544985f);
+    a1->field_1f0 = a1->field_2c / (1.0f - 0.06544985f);
+    return a1;
+}
+
