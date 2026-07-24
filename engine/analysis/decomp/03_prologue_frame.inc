@@ -123,7 +123,29 @@
                 map_reg(x.operands[0].reg, d, wd);
                 map_reg(x.operands[1].reg, s, ws);
                 if (d == R_RBP && s == R_RSP) {
-                    uses_rbp_frame = true; rbp_offset_known = true; rbp_minus_rsp = 0;
+                    uses_rbp_frame = true;
+                    if (sub_seen) {
+                        rbp_offset_known = true; rbp_minus_rsp = 0;
+                    } else {
+                        /* `mov rbp,rsp` BEFORE `sub rsp,Y`: rbp is the frame base and
+                         * every offset must be measured against the FINAL rsp, so the
+                         * distance is Y — not 0. Recording 0 here shifted every
+                         * rbp-relative slot by the whole frame, which pushed the
+                         * incoming stack arguments out of the range detect_stack_params
+                         * scans: kernel32 fn_00050938 reads its 5th/6th args at
+                         * [rbp+0x80]/[rbp+0x88], and they were instead recovered as
+                         * fresh zero-initialised locals, emitting
+                         *     int32_t*v6 = 0; ... *v6 = 0;
+                         * i.e. a guaranteed null-pointer write where the disassembly
+                         * stores through a real parameter.
+                         *
+                         * This is the same deferral the `lea rbp,[rsp-X]` branch below
+                         * already does; the mov form simply never got it. MSVC emits
+                         * `push rbp; <more pushes>; mov rbp,rsp; sub rsp,N` routinely,
+                         * so this is a common shape, not a corner case. */
+                        rbp_lea_pre_sub = true;
+                        rbp_lea_disp = 0;
+                    }
                 } else if (s == R_RSP && d != R_RSP && d != R_RBP) {
                     /* `mov r11,rsp` — r11 now holds the (push-adjusted) frame base */
                     rsp_alias = d; alias_push_at_capture = prologue_push_bytes;
