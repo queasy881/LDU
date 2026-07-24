@@ -9,6 +9,24 @@
      * as `T*` so `base[i]` subscripts compile; otherwise pointers fall back to
      * the 64-bit-int model (`long long`). */
     std::string decl_type(const std::string& nm) {
+        /* THE USER'S OWN TYPE WINS OVER EVERY INFERENCE.
+         *
+         * Everything below reconstructs a type from how the bits were used; this one
+         * was stated outright by the person reading the code, who can see things the
+         * binary does not record. Honouring it is what makes the decompiler
+         * interactive instead of a one-shot renderer: set `a1` to `struct Foo*` and
+         * the field accesses resolve on the next decompile.
+         *
+         * Keyed on the DISPLAY name, because that is what the user typed — so it is
+         * checked against both the canonical id and its autoname alias. */
+        if (!var_user_type.empty()) {
+            auto ui = var_user_type.find(nm);
+            if (ui == var_user_type.end()) {
+                auto ai = autoname.find(nm);
+                if (ai != autoname.end()) ui = var_user_type.find(ai->second);
+            }
+            if (ui != var_user_type.end() && !ui->second.empty()) return ui->second;
+        }
         /* A Win32 type recovered from an API CONTRACT (propagate_api_types): the variable was
          * returned by an API with a named return type, or handed to a parameter with one.
          * That is what the API says the value IS, so it outranks every inference below --

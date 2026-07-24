@@ -293,6 +293,35 @@ impl Engine {
     }
 
     /// Rename a displayed local of the function at `rva` (`from` as printed).
+    /// `set_var_type` through a SHARED handle.
+    ///
+    /// Every other engine mutator takes `&mut self`, which the shell cannot get:
+    /// the session holds the engine behind an `Arc` so N threads can decompile at
+    /// once. That is fine here and nowhere else, because the annotation store is
+    /// the one piece of engine state with its own lock: `ds_engine_set_var_type`
+    /// takes it to write, and `ds_engine_get_var_types` takes it to COPY out, so a
+    /// write that reallocates the store cannot be observed half-done by a
+    /// concurrent `decompile()`. Without that lock this would violate the `Sync`
+    /// justification above and be a data race.
+    pub fn set_var_type_shared(&self, rva: u64, var: &str, ty: &str) {
+        if !self.raw.is_null() {
+            let v = cstring(var);
+            let t = cstring(ty);
+            unsafe { ffi::ds_engine_set_var_type(self.raw, rva, v.as_ptr(), t.as_ptr()) };
+        }
+    }
+
+    /// Set the C type of a display variable. Unlike `set_var_annotation` this
+    /// changes decompilation: re-decompile the function to see the effect.
+    /// An empty `ty` clears the override.
+    pub fn set_var_type(&mut self, rva: u64, var: &str, ty: &str) {
+        if self.ok() {
+            let v = cstring(var);
+            let t = cstring(ty);
+            unsafe { ffi::ds_engine_set_var_type(self.raw, rva, v.as_ptr(), t.as_ptr()) };
+        }
+    }
+
     pub fn set_var_annotation(&mut self, rva: u64, from: &str, to: &str) {
         if !self.ok() {
             return;

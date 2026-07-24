@@ -38,6 +38,28 @@
         auto it = autoname.find(n); return it == autoname.end() ? n : it->second;
     }
 
+    /* User-declared types for this function's variables (ds_engine_set_var_type),
+     * keyed by the DISPLAY name the user saw. Unlike `autoname` this is NOT a
+     * display alias — decl_type returns it ahead of every inference, so it changes
+     * what the output means. Empty for the overwhelming majority of functions, and
+     * decl_type early-outs on that. */
+    std::map<std::string, std::string> var_user_type;
+    /* Load the overrides recorded for THIS function. Annotations bind by content
+     * hash (see annotations.cpp), and ds_anno_resolve has already published the
+     * answer in `bound`, so this just reads it. */
+    void load_user_types() {
+        var_user_type.clear();
+        if (!e || !f) return;
+        /* COPY under the annotation lock: a concurrent ds_engine_set_var_type may
+         * reallocate the store while this decompile is reading it, and bridge's
+         * `unsafe impl Sync for Engine` lets N threads decompile at once. */
+        size_t n = ds_engine_get_var_types(e, f->rva, nullptr, 0);
+        if (!n) return;
+        std::vector<ds_var_type> tmp(n);
+        n = ds_engine_get_var_types(e, f->rva, tmp.data(), tmp.size());
+        for (size_t i = 0; i < n; ++i) var_user_type[tmp[i].var] = tmp[i].type;
+    }
+
     bool used_return = false;
     int  ret_width = 4;
     bool ret_byte_return = false;   /* return is a byte (bool/char) — mask to al */

@@ -193,6 +193,28 @@ void ds_engine_set_func_annotation(ds_engine* e, uint64_t rva, const char* name,
  * the decompiler printed it (v3, result). Pure display alias, zero semantics. */
 void ds_engine_set_var_annotation(ds_engine* e, uint64_t rva, const char* from,
                                   const char* to);
+/* Set the C TYPE of a display variable of the function at `rva`. Unlike the rename
+ * above this is NOT cosmetic: the decompiler returns it ahead of every inference, so
+ * casts collapse against it and `struct Foo*` resolves `->field` accesses. This is
+ * what makes decompilation interactive — set a type, decompile again, read better
+ * code. NULL/"" clears the override. Persisted in the annotation sidecar, so it
+ * survives re-analysis; the caller must re-decompile to see the effect. */
+void ds_engine_set_var_type(ds_engine* e, uint64_t rva, const char* var,
+                            const char* type);
+/* The user type for `var`, or NULL when none is set. `rva` is the CURRENT rva
+ * (annotations are matched by content hash, so call after ds_engine_resolve_symbols). */
+const char* ds_engine_get_var_type(ds_engine* e, uint64_t rva, const char* var);
+
+/* One variable's user-declared type. */
+typedef struct {
+    char var[64];
+    char type[64];
+} ds_var_type;
+/* Copy the type overrides recorded for the function at `rva` into `out` (up to
+ * `max`); returns how many exist. Pass out=NULL to just count. Taken under the
+ * annotation lock and COPIED, because a concurrent ds_engine_set_var_type may
+ * reallocate the underlying store while a decompile is reading it. */
+size_t ds_engine_get_var_types(ds_engine* e, uint64_t rva, ds_var_type* out, size_t max);
 
 /* ---- queries -------------------------------------------------------------- */
 

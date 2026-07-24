@@ -5513,6 +5513,7 @@ struct Decompiler {
         if (!std::getenv("DS_NO_IDIOM")) recognize_idioms();
         detect_for_loops();   /* after idioms so H.cond matches the emitted condition */
         compute_autonames();  /* after for-loops (consumes induction_var_of_header) */
+        load_user_types();    /* after autoname: overrides are keyed by DISPLAY name */
         scrub_in_placeholders();     /* HARD GUARANTEE: no in_<X> phantom ever reaches output */
         narrow_temp_widths();        /* D1: long long -> int for provably-32-bit-value temps */
         compute_display_renumber();  /* v#/t# -> contiguous v1,v2,... (Hex-Rays naming) */

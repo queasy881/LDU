@@ -56,6 +56,12 @@ typedef struct {
 typedef struct {
     uint64_t hash, rva, bound;
     char     from[64], to[64];
+    /* User-declared C type for this variable ("" = keep the recovered one). Unlike
+     * `to`, which is a pure display alias, this one CHANGES DECOMPILATION: decl_type
+     * returns it ahead of every inference, so casts collapse against it and a struct
+     * pointer resolves its fields. Setting it is what makes the decompiler
+     * interactive rather than a one-shot renderer. */
+    char     type[64];
 } ds_anno_var;
 
 #define DS_ANNO_UNBOUND UINT64_MAX

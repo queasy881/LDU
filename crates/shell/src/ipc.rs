@@ -402,6 +402,55 @@ fn dispatch_disasm(ctx: &RoleCtx, win: WindowId, id: &Value, cmd: &str, msg: &Va
             }
             reply_ok(ctx, win, id, Value::Array(arr));
         }
+        // Retype one variable and hand back the re-decompiled function.
+        //
+        // The invalidation is deliberately a SINGLE `remove`, not a `clear`: a type
+        // override is scoped to one function (decl_type reads only that function's
+        // overrides), so nothing else can have changed, and dropping the whole cache
+        // would turn a keystroke into a re-decompile of the entire binary. Measured
+        // by tests/retype.rs: 3ms to retype+re-decompile one function against 10.4s
+        // for the 120-function pass it replaces.
+        "set_var_type" => {
+            let r = rva();
+            let var = msg.get("var").and_then(Value::as_str).unwrap_or("").to_string();
+            let ty = msg.get("type").and_then(Value::as_str).unwrap_or("").to_string();
+            if var.is_empty() {
+                reply_err(ctx, win, id, "set_var_type: missing 'var'");
+                return;
+            }
+            let engine = lock(&session).engine.clone();
+            let engine = match engine {
+                Some(e) => e,
+                None => {
+                    reply_err(ctx, win, id, "no analysis loaded");
+                    return;
+                }
+            };
+            engine.set_var_type_shared(r, &var, &ty);
+            {
+                let mut s = lock(&session);
+                s.decomp_cache.remove(&r); // exactly one function is affected
+            }
+            let session2 = session.clone();
+            let proxy = ctx.proxy().clone();
+            let id = id.clone();
+            std::thread::spawn(move || {
+                let _guard = ondemand_guard();
+                std::env::set_var("DS_LINE_ADDR", "1");
+                match engine.decompile(r) {
+                    Some(code) if !code.trim().is_empty() => {
+                        lock(&session2).decomp_cache.insert(r, code.clone());
+                        send_reply(&proxy, win, &id, Ok(json!({ "code": code })));
+                    }
+                    _ => send_reply(
+                        &proxy,
+                        win,
+                        &id,
+                        Err(format!("re-decompilation failed for {r:#x}")),
+                    ),
+                }
+            });
+        }
         "get_pseudocode" => {
             let r = rva();
             // Per-function state-machine toggle: the UI's inline "0 gotos" button sends

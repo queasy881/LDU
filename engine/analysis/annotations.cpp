@@ -52,6 +52,7 @@
 #include <cstring>
 #include <cstdint>
 #include <map>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -370,9 +371,41 @@ extern "C" void ds_engine_set_func_annotation(ds_engine* e, uint64_t rva,
     a->bound = DS_ANNO_UNBOUND;         /* re-derived by ds_anno_resolve */
 }
 
-extern "C" void ds_engine_set_var_annotation(ds_engine* e, uint64_t rva,
-                                             const char* from, const char* to) {
-    if (!e || !from || !from[0] || !to || !to[0]) return;
+/* Guards the anno_vars VECTOR against a concurrent decompile.
+ *
+ * bridge's `unsafe impl Sync for Engine` is justified by "ds_decompile never
+ * mutates the engine, so many threads may hold &Engine and decompile at once".
+ * Interactive retyping is the first thing that writes to a live engine, and the
+ * write can REALLOC the vector while another thread is reading it — so every
+ * access goes through this lock, and readers take a COPY rather than a pointer
+ * into the vector. Once per decompile, so the cost is nothing. */
+static std::mutex& anno_var_mtx() { static std::mutex m; return m; }
+
+/* Copy this function's variable TYPE overrides out under the lock. Returns the
+ * number written (never more than `max`). */
+extern "C" size_t ds_engine_get_var_types(ds_engine* e, uint64_t rva,
+                                          ds_var_type* out, size_t max) {
+    if (!e || anno_disabled()) return 0;
+    std::lock_guard<std::mutex> lk(anno_var_mtx());
+    size_t n = 0;
+    /* `out == NULL` is the COUNT query — it must not be bounded by `max`, or the
+     * usual count-then-fetch call (max = 0) always answers "none". */
+    for (size_t i = 0; i < e->anno_var_len && (!out || n < max); ++i) {
+        const ds_anno_var& v = e->anno_vars[i];
+        if (v.bound != rva || !v.type[0] || !v.from[0]) continue;
+        if (out) {
+            ds_strlcpy(out[n].var,  v.from, sizeof(out[n].var));
+            ds_strlcpy(out[n].type, v.type, sizeof(out[n].type));
+        }
+        ++n;
+    }
+    return n;
+}
+
+/* Find-or-create the annotation record for one display variable of one function.
+ * Shared by the rename and the retype setters, which differ only in which field
+ * they write. Caller holds anno_var_mtx(). */
+static ds_anno_var* anno_var_upsert(ds_engine* e, uint64_t rva, const char* from) {
     uint64_t hash = 0;
     const ds_func* f = func_at(e, rva);
     if (f) hash = hash_func(e, f);
@@ -384,15 +417,40 @@ extern "C" void ds_engine_set_var_annotation(ds_engine* e, uint64_t rva,
     if (!v) {
         if (!ds_vec_reserve((void**)&e->anno_vars, &e->anno_var_cap,
                             e->anno_var_len + 1, sizeof(ds_anno_var)))
-            return;
+            return NULL;
         v = &e->anno_vars[e->anno_var_len++];
         std::memset(v, 0, sizeof(*v));
         v->rva = rva;
         ds_strlcpy(v->from, from, sizeof(v->from));
     }
     v->hash = hash;
-    v->bound = DS_ANNO_UNBOUND;
-    ds_strlcpy(v->to, to, sizeof(v->to));
+    /* Bind IMMEDIATELY to the function that is at this rva right now, instead of
+     * leaving it UNBOUND for the next ds_anno_resolve. The caller just pointed at
+     * this function interactively, so its identity is not in question — and
+     * requiring a re-resolve would mean a rename/retype could only take effect
+     * after re-running analysis over every function, which is precisely what an
+     * interactive edit must not cost. A later load_annotations still re-derives
+     * the binding by content hash, so persistence is unaffected. */
+    v->bound = f ? rva : DS_ANNO_UNBOUND;
+    return v;
+}
+
+extern "C" void ds_engine_set_var_annotation(ds_engine* e, uint64_t rva,
+                                             const char* from, const char* to) {
+    if (!e || !from || !from[0] || !to || !to[0]) return;
+    std::lock_guard<std::mutex> lk(anno_var_mtx());
+    ds_anno_var* v = anno_var_upsert(e, rva, from);
+    if (v) ds_strlcpy(v->to, to, sizeof(v->to));
+}
+
+extern "C" void ds_engine_set_var_type(ds_engine* e, uint64_t rva,
+                                       const char* var, const char* type) {
+    if (!e || !var || !var[0]) return;
+    std::lock_guard<std::mutex> lk(anno_var_mtx());
+    ds_anno_var* v = anno_var_upsert(e, rva, var);
+    if (!v) return;
+    /* NULL/"" clears the override and restores the recovered type */
+    ds_strlcpy(v->type, type ? type : "", sizeof(v->type));
 }
 
 extern "C" int ds_engine_load_annotations(ds_engine* e, const char* path) {
@@ -441,8 +499,9 @@ extern "C" int ds_engine_load_annotations(ds_engine* e, const char* path) {
         for (size_t k = 0; k < vars->arr.size(); ++k) {
             const JVal& vv = vars->arr[k];
             if (vv.t != JVal::OBJ) return 2;
-            std::string from = vv.str("from"), to = vv.str("to");
-            if (from.empty() || to.empty()) continue;
+            std::string from = vv.str("from"), to = vv.str("to"), ty = vv.str("type");
+            /* a var entry may carry a rename, a TYPE, or both */
+            if (from.empty() || (to.empty() && ty.empty())) continue;
             if (!ds_vec_reserve((void**)&e->anno_vars, &e->anno_var_cap,
                                 e->anno_var_len + 1, sizeof(ds_anno_var)))
                 return 1;
@@ -453,6 +512,7 @@ extern "C" int ds_engine_load_annotations(ds_engine* e, const char* path) {
             v->bound = DS_ANNO_UNBOUND;
             ds_strlcpy(v->from, from.c_str(), sizeof(v->from));
             ds_strlcpy(v->to, to.c_str(), sizeof(v->to));
+            ds_strlcpy(v->type, ty.c_str(), sizeof(v->type));
         }
     }
 
@@ -503,7 +563,9 @@ extern "C" int ds_engine_save_annotations(ds_engine* e, const char* path) {
             for (size_t j = 0; j < vi->second.size(); ++j) {
                 const ds_anno_var& v = e->anno_vars[vi->second[j]];
                 if (j) o += ", ";
-                o += "{ \"from\": " + jstr(v.from) + ", \"to\": " + jstr(v.to) + " }";
+                o += "{ \"from\": " + jstr(v.from) + ", \"to\": " + jstr(v.to);
+                if (v.type[0]) o += ", \"type\": " + jstr(v.type);
+                o += " }";
             }
             o += " ]\n    }";
         } else {
