@@ -847,7 +847,7 @@
              * xmm_f[..][4]. A 256-bit ymm operand is 32 bytes, so it FAILS that gate, skips
              * the packed-store block entirely, and falls through to the bare `do_dst` at the
              * bottom of the case — which commits a NARROW store of an unmapped (backstop)
-             * register. Measured, before this guard, on _qa/ymm/ymmtest.c:
+             * register. Measured, before this guard, on _qa/fixtures/ymm/ymmtest.c:
              *
              *   void ymm_copy32(char* dst, const char* src)   <- the truth: 32 bytes copied
              *   void ymm_copy32(int32_t*a1) { *a1 = 0; }      <- what we emitted
@@ -964,8 +964,22 @@
          * flags. Every set_flags_* does `flags = FlagSrc()` with freshly built a/b
          * expressions, so an unchanged (valid, kind, a-ptr, b-ptr, width) after the switch
          * means the handler left the flags untouched. */
-        const void* _flg_a = flags.a.get();
-        const void* _flg_b = flags.b.get();
+        /* Hold OWNING references, not bare addresses. A handler that models the
+         * flags overwrites flags.a/flags.b, which can drop the old node's last
+         * reference and free it — and the allocator is then free to hand that exact
+         * address back for one of the NEW flag expressions. The post-switch compare
+         * would see `flags.a.get() == _flg_a`, conclude the handler left the flags
+         * alone, and invalidate a perfectly good condition (cc_to_expr then emits
+         * `if (1)`). Whether the address gets recycled depends on the allocator's
+         * free list, i.e. on everything decompiled earlier in the process — which is
+         * why the same function decompiled alone was stable but drifted inside a
+         * full run. Keeping the shared_ptrs alive across the window makes the
+         * addresses un-reusable, so identity means what the check assumes it means.
+         * (Found by diffing DS_PASS_TRACE fingerprints across two runs.) */
+        const ExprP _flg_a_hold = flags.a;
+        const ExprP _flg_b_hold = flags.b;
+        const void* _flg_a = _flg_a_hold.get();
+        const void* _flg_b = _flg_b_hold.get();
         const bool  _flg_v = flags.valid;
         const unsigned _flg_k = (flags.is_cmp ? 1u : 0u) | (flags.is_test ? 2u : 0u) |
                                 (flags.is_arith ? 4u : 0u) | (flags.is_bt ? 8u : 0u) |

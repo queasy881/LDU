@@ -50,6 +50,7 @@
 #include <memory>
 #include <functional>
 #include <array>
+#include <chrono>
 
 #ifdef DS_USE_CAPSTONE
 #include <capstone/capstone.h>
@@ -1188,6 +1189,7 @@ struct FuncSig {
 
 /* forward decl: defined after the class; used by detect_stack_params/detect_float_params */
 static int fp_scalar_width(unsigned id);
+
 
 struct Decompiler {
     /* ---- class body: topical sections (pure text partition, see decomp/) ---- */
@@ -4795,7 +4797,42 @@ struct Decompiler {
         auto _ph_t0 = std::chrono::steady_clock::now();
         auto _ph_last = _ph_t0;
         const bool _ph_dbg = std::getenv("DS_PHASE_TIMING") != nullptr;
+        /* DS_PASS_TRACE — DETERMINISTIC per-pass fingerprint (no timings). Run the
+         * same binary twice, diff the two logs, and the FIRST differing line names
+         * the pass that introduced a run-to-run difference. Built for hunting
+         * nondeterminism (pointer-ordered iteration reorders temp minting), which
+         * is invisible to the timing profiler. */
+        const bool _ph_trace = std::getenv("DS_PASS_TRACE") != nullptr;
         auto _phase = [&](const char* nm) {
+            if (_ph_trace) {
+                uint64_t h = 1469598103934665603ull;
+                size_t nstmt = 0;
+                /* Structural hash of the whole expression forest — NO pointers, so
+                 * it is comparable across processes. */
+                std::function<void(const ExprP&)> hx = [&](const ExprP& e) {
+                    if (!e) { h ^= 0x9ull; h *= 1099511628211ull; return; }
+                    auto mix = [&](uint64_t v){ h ^= v + 0x9e3779b97f4a7c15ull; h *= 1099511628211ull; };
+                    mix((uint64_t)e->kind); mix((uint64_t)e->width);
+                    mix((uint64_t)e->cval); mix(e->is_float ? 1 : 2);
+                    for (char c : e->op)     mix((uint64_t)(unsigned char)c);
+                    for (char c : e->name)   mix((uint64_t)(unsigned char)c);
+                    for (char c : e->callee) mix((uint64_t)(unsigned char)c);
+                    hx(e->a); hx(e->b); hx(e->c);
+                    for (auto& a : e->args) hx(a);
+                };
+                for (auto& b : blocks) {
+                    nstmt += b.stmts.size();
+                    for (auto& s : b.stmts) {
+                        h ^= (uint64_t)s.kind + 0x9e3779b9u; h *= 1099511628211ull;
+                        h ^= (uint64_t)s.addr;               h *= 1099511628211ull;
+                        hx(s.lhs); hx(s.rhs);
+                    }
+                    hx(b.cond); hx(b.ret_value); hx(b.switch_var); hx(b.tail_call);
+                }
+                fprintf(stderr, "TRACE %-24s rva=%llx temp_seq=%d blocks=%zu stmts=%zu h=%016llx\n",
+                        nm, (unsigned long long)(f ? f->rva : 0), temp_seq,
+                        blocks.size(), nstmt, (unsigned long long)h);
+            }
             if (!_ph_dbg) return;
             auto n = std::chrono::steady_clock::now();
             fprintf(stderr, "PHASE %-22s %7lld ms   (cum %7lld)\n", nm,
@@ -4810,6 +4847,9 @@ struct Decompiler {
                 fprintf(stderr, "  %llx: %-8s %s\n",
                         (unsigned long long)in.addr, in.mnem.c_str(), in.ops.c_str());
         }
+        /* Arm the per-function deadline now that the instruction list exists (the
+         * cap scales with function size). Everything above this point is linear. */
+        budget_init();
         scan_prologue();
         detect_param_homes();
         scan_addressed_stack();
@@ -5035,7 +5075,7 @@ struct Decompiler {
          * Measured cost of removing it, whole-binary A/B: gotos 142 -> 637 across 53 -> 154
          * of 1497 functions, chars +0.4% (10,526,333 -> 10,567,583). So ~120 functions of
          * invented control flow become ~101 functions with honest gotos, at no size cost.
-         * The GOTO_TOTAL gate threshold moved with it — see _qa/fast_gate.sh. That metric
+         * The GOTO_TOTAL gate threshold moved with it — see _qa/scripts/fast_gate.sh. That metric
          * was always a readability PROXY, and this is the case where the proxy and the goal
          * disagree: optimising it further meant printing flags instead of edges. */
         cross_joins.clear();
@@ -5056,6 +5096,15 @@ struct Decompiler {
             auto reset_emit = [&]{
                 structured.clear(); threaded.clear(); struct_guard = 0; struct_bailed = false;
                 eff_join_cache.clear(); loop_pd.clear(); active_loop_sinks.clear();   /* per-function */
+                /* Both reset PER PASS, not per function. The discovery pass and the
+                 * real pass must make IDENTICAL emission decisions (pass 1 exists
+                 * only to learn which blocks become goto targets); if pass 1 could
+                 * leave the budget/memo depleted, pass 2 would structure differently
+                 * and its gotos would dangle. Same starting state -> same
+                 * deterministic sequence -> same exhaustion point in both. */
+                trial_failed.clear();   /* trial memo is scoped to one emit pass */
+                dup_work = 0;
+                emit_work = 0;
                 /* loop_fwd_sink is populated by flag_dispatch (pre-emit) and must survive reset_emit's
                  * retries; it is cleared at flag_dispatch start, not here. */
                 dup_budget = std::getenv("DS_NO_DUP") ? 0 : 160;   /* tail-duplication budget (kept modest: raising it bloats diamonds exponentially — the effective-join trial emits shared joins ONCE instead of duplicating). */
@@ -5077,17 +5126,24 @@ struct Decompiler {
                 std::string scratch;
                 emit_region(entry_block(), -1, scratch, -1);
                 for (auto& b : blocks) {
+                    if (budget_tripped) break;   /* deadline: stop driving new regions */
                     if (structured.count(b.id) || b.insn_idx.empty()) continue;
                     need_label.insert(b.id);
                     emit_region(b.id, -1, scratch, -1);
                 }
             }
             _phase("emit-pass1(discover)");
+            /* NOTE: a pass-1 bailout must NOT skip pass 2. reset_emit() clears
+             * struct_bailed on purpose — pass 2 runs with the labels pass 1
+             * discovered, which is different (and better) input, so it frequently
+             * structures cleanly where pass 1 gave up. Short-circuiting here to
+             * "save" the work silently reverted those functions to the goto-CFG. */
             /* PASS 2 (real): need_label now holds all goto targets from pass 1. */
             reset_emit();
             std::string tmp;
             emit_region(entry_block(), -1, tmp, -1);
             for (auto& b : blocks) {
+                if (budget_tripped) break;   /* deadline: stop driving new regions */
                 if (structured.count(b.id)) continue;
                 if (b.insn_idx.empty()) continue;
                 need_label.insert(b.id);
@@ -5095,7 +5151,7 @@ struct Decompiler {
             }
             /* Repair pass: catch any residual dangling target (a block reached only
              * via duplication, so pass 1 didn't canonically label it). */
-            for (size_t guard = 0; guard <= blocks.size(); ++guard) {
+            for (size_t guard = 0; guard <= blocks.size() && !budget_tripped; ++guard) {
                 std::vector<int> dang = dangling_label_blocks(tmp);
                 bool progress = false;
                 for (int id : dang) {
@@ -5125,7 +5181,11 @@ struct Decompiler {
              * and must NOT be accepted, however label-consistent the truncated text
              * looks. Force the complete goto-CFG fallback (linear, no recursion
              * guard, never loses a block) instead of silently emitting partial code. */
-            ok_struct = labels_consistent(body) && !struct_bailed;
+            /* A deadline trip also invalidates the attempt: the drivers stopped
+             * early, so the body may be missing whole regions even when what DID
+             * get emitted happens to be label-consistent. Fall through to the
+             * complete goto-CFG, which never loses a block. */
+            ok_struct = labels_consistent(body) && !struct_bailed && !budget_tripped;
         } catch (...) {
             ok_struct = false;
         }
@@ -7220,7 +7280,7 @@ void build_sig_table(ds_engine* e, std::map<uint64_t, FuncSig>& tab) {
      * its own. A function that sometimes returns a handle and sometimes an error code has
      * saw_real_value_ret and is left alone.
      * NOTE: measured ZERO sites on NullWare (no local fn there returns an API result), so the
-     * gate binary cannot validate this -- _qa/features/feat_c.c f_get_base/f_use_base is the
+     * gate binary cannot validate this -- _qa/fixtures/features/feat_c.c f_get_base/f_use_base is the
      * oracle. DS_NO_APITYPES. */
     if (!std::getenv("DS_NO_APITYPES")) {
         /* seed: ret_call_target is an IAT slot whose API has a known return type */

@@ -1278,6 +1278,13 @@
          * address order; the early-break handles the common case. The cap is a
          * backstop for pathological CFGs (kept low so huge functions stay fast). */
         for (int iter = 0; iter < 12; ++iter) {
+            /* Deadline check at the ITERATION BOUNDARY only. Stopping here is the
+             * same thing the `iter < 12` cap already does — the analysis is
+             * optimistic and every consumer already tolerates a non-converged
+             * result (a register keeps a less precise value). Checking INSIDE the
+             * sweep would be unsafe: it would leave half the blocks updated and
+             * half stale, which is wrong dataflow rather than imprecise dataflow. */
+            if (iter > 0 && !budget_ok()) break;
             bool changed = false;
             for (auto& b : blocks) {
                 if ((int)b.id != eb &&

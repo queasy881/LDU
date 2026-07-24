@@ -1,6 +1,7 @@
-//! Engine verification harness. Runs the full pipeline on the controlled
-//! _qa/testdll.dll and dumps every analysis dimension to _qa/engine_dump.txt so
-//! it can be diffed against ground truth (llvm-objdump / dumpbin).
+//! Engine verification harness. Runs the full pipeline on a controlled binary
+//! (`DS_REAL_BIN`, else a corpus DLL) and dumps every analysis dimension to
+//! `_qa/out/engine_dump.txt` so it can be diffed against ground truth
+//! (llvm-objdump / dumpbin).
 //!
 //! Run: cargo test -p disasmstudio --test verify_engine -- --nocapture
 
@@ -8,6 +9,8 @@ use std::fmt::Write as _;
 
 use binparser::{Arch as PArch, BinaryMeta};
 use bridge::{Arch as BArch, Engine};
+
+mod common;
 
 fn map_arch(a: PArch) -> BArch {
     match a {
@@ -19,15 +22,21 @@ fn map_arch(a: PArch) -> BArch {
     }
 }
 
-const DLL: &str = r"C:\Users\User\Downloads\sd\_qa\testdll.dll";
-
 #[test]
 fn dump_engine() {
-    if !std::path::Path::new(DLL).exists() {
-        eprintln!("[skip] {DLL} not built");
+    // The controlled fixture, or DS_REAL_BIN / a corpus DLL as a fallback.
+    let dll = match common::real_bin() {
+        Some(b) => b,
+        None => {
+            eprintln!("{}", common::NO_REAL_BIN);
+            return;
+        }
+    };
+    if !std::path::Path::new(&dll).exists() {
+        eprintln!("[skip] {dll} not built");
         return;
     }
-    let bytes = std::fs::read(DLL).expect("read dll");
+    let bytes = std::fs::read(&dll).expect("read dll");
     let parsed = BinaryMeta::parse(&bytes).expect("parse");
     let image = parsed.build_image(&bytes);
     let mut engine = Engine::new(image, parsed.base, map_arch(parsed.arch));
@@ -155,7 +164,7 @@ fn dump_engine() {
     }
     eprintln!("strings: {}", strs.len());
 
-    std::fs::write(r"C:\Users\User\Downloads\sd\_qa\engine_dump.txt", &o).expect("write dump");
+    std::fs::write(common::qa_out_dir("out").join("engine_dump.txt"), &o).expect("write dump");
     eprintln!(
         "engine dump: {} insns, {} funcs, {} exports, {} imports",
         n,

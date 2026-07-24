@@ -11,7 +11,7 @@ echo === DisasmStudio recompile ===
 echo(
 
 REM --- libclang for the C++ analysis bridge (engine/analysis/*.cpp) ---
-set "LIBCLANG_PATH=%LOCALAPPDATA%\disasmstudio-tools\LLVM\bin"
+set "LIBCLANG_PATH=C:\Program Files\LLVM\bin"
 if not exist "%LIBCLANG_PATH%\libclang.dll" (
     echo [!] libclang.dll not found at %LIBCLANG_PATH%
     echo     The C++ bridge will fail to build. Adjust LIBCLANG_PATH in this file.

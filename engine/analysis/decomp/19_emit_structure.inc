@@ -4,6 +4,26 @@
  * This is a pure text partition of a 14.4k-line class: the preprocessor reassembles
  * the identical translation unit, so it is behaviour-neutral by construction.
  */
+    /* ---- cached emitter kill-switches ---------------------------------------
+     * These DS_NO_* / DS_GOTO_WHY switches come from the process environment and
+     * never change while the process runs, but they were read with getenv() on
+     * paths that execute per STATEMENT and per emitted goto. getenv() takes a
+     * lock and scans the environment block on Windows, so at the call volumes the
+     * emitter reaches (tens of millions on a pathological CFG) it was a
+     * measurable share of runtime for a value that cannot change. Read once.
+     *
+     * NOT cached here: DS_LINE_ADDR and DS_FORCE_SM, which the SHELL sets and
+     * clears at runtime around individual decompile calls — those are read once
+     * per Decompiler instance instead (see 01_naming_reads.inc). */
+    static bool no_noreturn_off()      { static const bool v = std::getenv("DS_NO_NORETURN")      != nullptr; return v; }
+    static bool no_compound_off()      { static const bool v = std::getenv("DS_NO_COMPOUND")      != nullptr; return v; }
+    static bool no_asgncastclean_off() { static const bool v = std::getenv("DS_NO_ASGNCASTCLEAN") != nullptr; return v; }
+    static bool goto_why_on()          { static const bool v = std::getenv("DS_GOTO_WHY")         != nullptr; return v; }
+    static bool no_latch_off()         { static const bool v = std::getenv("DS_NO_LATCH")         != nullptr; return v; }
+    static bool no_dowhile_off()       { static const bool v = std::getenv("DS_NO_DOWHILE")       != nullptr; return v; }
+    static bool no_boolcond_off()      { static const bool v = std::getenv("DS_NO_BOOLCOND")      != nullptr; return v; }
+    static bool no_contbreak_off()     { static const bool v = std::getenv("DS_NO_CONTBREAK")     != nullptr; return v; }
+
     /* Does this statement CALL something that never returns? Everything after it in the block
      * is then unreachable, and printing it asserts the program does things it cannot:
      *     __fastfail(5);          <- int 0x29, the process is gone
@@ -13,7 +33,7 @@
      * really marks DECLSPEC_NORETURN; and a LOCAL that build_sig_table proved has no `ret` and
      * ends in a trap. DS_NO_NORETURN. */
     bool stmt_calls_noreturn(const Stmt& s) {
-        if (std::getenv("DS_NO_NORETURN")) return false;
+        if (no_noreturn_off()) return false;
         if (s.kind != SK::Call || !s.rhs || s.rhs->kind != EK::Call) return false;
         const std::string& c = s.rhs->callee;
         if (c == "__fastfail") return true;
@@ -29,7 +49,14 @@
         }
         return false;
     }
+    /* Total block renders this emit pass — a pure diagnostic counter (DS_EMIT_STATS).
+     * A shared tail block was measured re-rendered 27,494 times in ONE ntdll
+     * function; the trial memo below is what removes those, WITHOUT changing what
+     * is emitted. */
+    long emit_work = 0;
+
     void emit_stmts(int id, std::string& dst) {
+        ++emit_work;
         if (iv_suppressed_stmts.empty()) {
             for (auto& s : blocks[id].stmts) {
                 emit_stmt(s, dst);
@@ -142,7 +169,7 @@
                 ExprP arhs = s.rhs;
                 if (arhs && arhs->kind == EK::Cast && arhs->a &&
                     !arhs->is_float && !arhs->a->is_float &&
-                    s.lhs && s.lhs->kind == EK::Var && !std::getenv("DS_NO_ASGNCASTCLEAN") &&
+                    s.lhs && s.lhs->kind == EK::Var && !no_asgncastclean_off() &&
                     (arhs->op == "(int)" || arhs->op == "(unsigned int)" ||
                      arhs->op == "(short)" || arhs->op == "(unsigned short)" ||
                      arhs->op == "(char)" || arhs->op == "(unsigned char)" ||
@@ -297,7 +324,7 @@
                  * shift/arith/bitwise set. NOT `-` with a pointer dest (`p = p - n` is fine as
                  * `p -= n`, but the renderer may have integerized it, so the text test decides).
                  * DS_NO_COMPOUND. */
-                if (!std::getenv("DS_NO_COMPOUND") && s.rhs && s.rhs->kind == EK::Binary &&
+                if (!no_compound_off() && s.rhs && s.rhs->kind == EK::Binary &&
                     s.rhs->a && s.rhs->b && !has_call(s.rhs->a) &&
                     /* A CAST WAS ADDED ABOVE -> do not fold, it would be dropped. Measured:
                      *     v21 = (int32_t*)(v21 & 0x7f)      <- the cast is what makes it legal
@@ -364,7 +391,7 @@
          * exact text in later passes and must stay pristine. */
         if (s.addr && dst.size() > emit_start && dst.back() == '\n' &&
             (s.kind == SK::Assign || s.kind == SK::Call || s.kind == SK::Return) &&
-            std::getenv("DS_LINE_ADDR")) {
+            opt_line_addr) {
             char buf[32];
             std::snprintf(buf, sizeof buf, "/*@%llx*/", (unsigned long long)s.addr);
             dst.insert(dst.size() - 1, buf);
@@ -518,6 +545,129 @@
                                   * is INCOMPLETE (a region was dropped), so the whole
                                   * function must fall back to the complete goto-CFG. */
 
+    /* ---- BEAUTIFICATION BUDGET (the never-stall guarantee) ------------------
+     * struct_guard bounds the number of emit_region STEPS, but not the work each
+     * step may do: a step can launch a duplication trial that explores up to
+     * dup_budget blocks and is then discarded, so the true bound was
+     * struct_guard * dup_budget * (cost of rendering a block) — tens of millions
+     * of string appends. That is how a 91-block function reached 40.9 seconds.
+     *
+     * This counter charges every SPECULATIVE block emission and is NOT restored
+     * when a trial is rolled back, so total trial work across a function is
+     * bounded no matter how the CFG is shaped. Exhausting it does not truncate
+     * the function and never loses code: it only stops the emitter from ATTEMPTING
+     * further duplication, so those reconvergences emit `goto L_x` — the same
+     * correct construct already used for every region that will not structure.
+     * The output degrades in prettiness, never in correctness.
+     *
+     * 400k ~= 0.1s of trial work, far above what any well-behaved function needs
+     * (the whole ntdll sample below stays under 1% of it), so normal output is
+     * bit-identical. DS_DUP_WORK overrides; 0 disables duplication entirely. */
+    long dup_work = 0;
+    static long dup_work_cap() {
+        static const long v = [] {
+            const char* e = std::getenv("DS_DUP_WORK");
+            return e ? std::atol(e) : 400000L;
+        }();
+        return v;
+    }
+    bool dup_work_left() const { return dup_work < dup_work_cap(); }
+
+    /* ================= SPECULATIVE-TRIAL MEMO =================================
+     *
+     * The structurer removes gotos by SPECULATIVELY emitting a region into a
+     * throwaway buffer, checking whether it came out goto-free, and rolling the
+     * whole world back when it did not. The rollback is exact — `structured`,
+     * `need_label`, `threaded` and `dup_budget` are all restored — which means a
+     * failed trial leaves NO trace that it was ever attempted. So the next
+     * reconvergence on the same blocks runs the identical trial again, and because
+     * if/else arms nest, the repetition compounds roughly 3^depth. Measured on one
+     * 91-block ntdll function: 88k emit_region calls, 27,494 renders of a SINGLE
+     * block, ~35 seconds — to produce output byte-identical to giving up instantly.
+     *
+     * The fix is to remember the failures rather than to stop trying. A trial's
+     * outcome is a pure function of
+     *      (start block, stop block, loop header, current loop follow/header)
+     * together with the COMMITTED state it reads (`structured`). Nothing else it
+     * touches survives a rollback. So if the same trial is attempted again while
+     * the committed state is unchanged, it must fail again — skipping it returns
+     * exactly what re-running it would have returned.
+     *
+     * That is why this costs no output quality: it is not a budget and it does not
+     * decide anything. It removes recomputation of an answer already known. The
+     * emitted text is identical, goto for goto.
+     *
+     * `structured` is captured as a signature rather than compared wholesale: it is
+     * the only committed input, it changes only when a region is really emitted,
+     * and hashing it is O(blocks) against a trial that is exponential. Entries
+     * recorded under a different signature are simply never consulted again.
+     * DS_NO_TRIALMEMO disables it for A/B. */
+    struct TrialKey {
+        uint64_t sig;
+        int b, stop, loop_header, lfollow, lheader;
+        bool operator<(const TrialKey& o) const {
+            if (sig != o.sig) return sig < o.sig;
+            if (b != o.b) return b < o.b;
+            if (stop != o.stop) return stop < o.stop;
+            if (loop_header != o.loop_header) return loop_header < o.loop_header;
+            if (lfollow != o.lfollow) return lfollow < o.lfollow;
+            return lheader < o.lheader;
+        }
+    };
+    std::set<TrialKey> trial_failed;
+
+    /* FNV-1a digest of the COMPLETE mutable emitter state a trial reads and that a
+     * rollback restores. All four sets plus the scalar cursors: miss one and the
+     * memo gets FALSE NEGATIVES — it reports "already failed" for a trial that
+     * would now succeed, the structurer takes the worse branch, and the output
+     * changes (measured: 18/600 functions, +4 gotos, when only `structured` was
+     * keyed). Everything here is an INPUT to the trial; `indent_lvl` is excluded on
+     * purpose because it only shifts the text, and the accept test (goto-free and
+     * non-blank) is indentation-insensitive. std::set iterates in sorted order, so
+     * this is deterministic. */
+    static void sig_mix(uint64_t& h, uint64_t v) {
+        h ^= v + 0x9e3779b97f4a7c15ull;
+        h *= 1099511628211ull;
+    }
+    static void sig_mix_set(uint64_t& h, const std::set<int>& s) {
+        sig_mix(h, (uint64_t)s.size() | 0x5000000000000000ull);
+        for (int id : s) sig_mix(h, (uint64_t)(id + 1));
+    }
+    uint64_t emitter_state_sig() const {
+        uint64_t h = 1469598103934665603ull;
+        sig_mix_set(h, structured);
+        sig_mix_set(h, need_label);
+        sig_mix_set(h, threaded);
+        sig_mix_set(h, active_loop_sinks);
+        sig_mix(h, (uint64_t)(int64_t)dup_budget);
+        sig_mix(h, (uint64_t)(int64_t)cur_fwd_sink);
+        sig_mix(h, (uint64_t)(int64_t)cur_loop_latch);
+        return h;
+    }
+    TrialKey trial_key(int b, int stop, int loop_header) const {
+        return TrialKey{emitter_state_sig(), b, stop, loop_header,
+                        cur_loop_follow, cur_loop_header};
+    }
+    /* DEFAULT OFF. The memo is only exact if a failed trial restores EVERYTHING it
+     * touched, and today's rollback does not: it restores structured/need_label/
+     * threaded/dup_budget but leaks cur_loop_N, merged_blocks and loop_fwd_sink. That
+     * makes a trial impure, so the memo gets occasional false negatives and the
+     * structurer takes a different branch — measured 15/600 ntdll functions
+     * changed (net +3 gotos of 2650: two functions improved, two regressed). It is
+     * a 4.3x win on pathological functions (35.5s -> 8.2s) and worth having, but
+     * only once the rollback is made complete; until then it stays opt-in so the
+     * default build cannot change a single line of output. DS_TRIALMEMO=1. */
+    static bool trial_memo_off() {
+        static const bool v = std::getenv("DS_TRIALMEMO") == nullptr;
+        return v;
+    }
+    bool trial_known_bad(const TrialKey& k) const {
+        return !trial_memo_off() && trial_failed.count(k) != 0;
+    }
+    void trial_record_bad(const TrialKey& k) {
+        if (!trial_memo_off()) trial_failed.insert(k);
+    }
+
     bool reaches_only_via(int from, int stop) { (void)from; (void)stop; return true; }
 
     /* Follow a chain of empty (statement-free) unconditional-jump blocks to the
@@ -624,6 +774,7 @@
 
     int dup_budget = 0;   /* per-function block-duplication budget (caps blowup) */
 
+
     /* Bounded TAIL DUPLICATION: emit a NON-LOOP region from `b` up to `stop` (the
      * join) entirely INLINE — handling straight-line, returns, and if/else
      * (recursively duplicating both arms). Duplication is always semantically
@@ -633,10 +784,25 @@
      * `dup_budget` caps total duplicated blocks per function so it never blows up;
      * a loop header / switch / budget-exhaustion makes it fail (caller falls back). */
     bool emit_dup_region(int b, int stop, std::string& dst, int loop_header) {
-        bool DBG = std::getenv("DS_DBG_DUP") && f && f->rva == 0x24b0;
+        /* getenv() is not free (it locks and scans the block on Windows) and this
+         * is the hottest loop in the emitter — cache it. */
+        static const bool DBG_DUP = std::getenv("DS_DBG_DUP") != nullptr;
+        bool DBG = DBG_DUP && f && f->rva == 0x24b0;
         int local_guard = 0;
         while (b >= 0 && b != stop) {
-            if (--dup_budget < 0 || ++local_guard > 200) { if (DBG) fprintf(stderr, "DUP fail budget/guard blk=%d budget=%d\n", b, dup_budget); return false; }
+            /* Charged even on the paths that roll back, so discarded exploration
+             * is bounded across the whole function (see dup_work above).
+             *
+             * The deadline is checked HERE as well as in emit_region, because this
+             * recursion has its own loop and does NOT tick struct_guard: a long
+             * duplication exploration would otherwise run with the deadline never
+             * consulted, which is exactly how a function still reached 39s after
+             * the emit_region check was added. Every unbounded loop needs its own
+             * check — that is the invariant, not a property of this one function. */
+            ++dup_work;
+            if (--dup_budget < 0 || ++local_guard > 200 || !dup_work_left() || budget_tripped ||
+                ((dup_work & 0x3FF) == 0 && !budget_spend(1024))) {
+                if (DBG) fprintf(stderr, "DUP fail budget/guard blk=%d budget=%d\n", b, dup_budget); return false; }
             Block& B = blocks[b];
             int tb = thread_target(b);
             if (cur_loop_follow >= 0 && tb == cur_loop_follow) { dst += ind() + "break;\n"; return true; }
@@ -670,7 +836,22 @@
      * (a follow/join block) or a block already emitted. */
     void emit_region(int b, int stop, std::string& dst, int loop_header) {
         while (b >= 0 && b != stop) {
-            if (++struct_guard > 300000) { struct_bailed = true; dst += ind() + "/* structurer bailout */\n"; return; }
+            /* Two ceilings, both routing to the SAME complete goto-CFG fallback
+             * (struct_bailed -> emit_goto_cfg): a step count, and the deadline.
+             * The deadline is the never-freeze guarantee — it does not care WHICH
+             * loop is slow or why, so it holds for CFG shapes nobody has profiled.
+             * It is checked every 1024 steps so it costs nothing here. */
+            /* `budget_tripped` is tested EVERY step, not every 1024th. Sampling the
+             * deadline cheaply is fine, but once it has fired the exit must be
+             * immediate: the driver calls emit_region once per unstructured block
+             * and the structurer recurses, so a bail that is only noticed every
+             * 1024 steps still lets each of ~88k calls grind through ~1023 steps.
+             * Measured: budget correctly tripped at 2.7s and the function still ran
+             * 40s. Reading a bool member costs nothing next to a block render. */
+            if (++struct_guard > 300000 || budget_tripped ||
+                ((struct_guard & 0x3FF) == 0 && !budget_spend(1024))) {
+                struct_bailed = true; dst += ind() + "/* structurer bailout */\n"; return;
+            }
             /* A jump to the innermost loop's follow is a `break`; a jump to its
              * header (the continue point) is a `continue`. Converting these here
              * keeps nested / early-exit loops structured instead of leaving a
@@ -726,6 +907,11 @@
                  * shared body / shared conditional block reached from two paths.
                  * At the top level (stop<0) it duplicates through to the returns. */
                 {
+                    const TrialKey dk = trial_key(b, stop, loop_header);
+                    /* Already known not to yield a usable duplication under this
+                     * exact committed state: go straight to the goto instead of
+                     * re-running the identical exploration. */
+                    if (dup_work_left() && !trial_known_bad(dk)) {
                     std::string db; int saved = dup_budget;
                     if (emit_dup_region(b, stop, db, loop_header)) {
                         /* Cap tail duplication by SIZE. Duplicating a SMALL shared tail
@@ -763,13 +949,17 @@
                             return;   /* region duplicated to its terminators */
                         }
                     }
+                    /* Trial discarded (failed, or too large): remember it so the
+                     * identical exploration is never repeated for this key. */
+                    trial_record_bad(dk);
                     dup_budget = saved;
+                    }   /* end if(!memoized-failure) */
                 }
                 }   /* end if(!hi_fanin) */
                 /* already emitted elsewhere (or a high-fan-in shared tail) — jump to it */
                 need_label.insert(b);
                 dst += ind() + "goto " + block_label(b) + ";\n";
-                if (std::getenv("DS_GOTO_WHY")) {
+                if (goto_why_on()) {
                     /* Classify WHY this reconvergence goto survived structuring, for the
                      * census that drives structural fixes. Hard CFG facts, not text. */
                     int fanin = (int)blocks[b].pred.size();
@@ -1036,7 +1226,7 @@
      * reached from several internal branches). A single latch post-dominates the
      * whole body, so this is behavior-preserving. */
     int unique_latch(int lh, int header, int follow) {
-        if (std::getenv("DS_NO_LATCH")) return -1;
+        if (no_latch_off()) return -1;
         Loop& lp = loops[lh];
         if (lp.latches.size() != 1) return -1;
         int L = *lp.latches.begin();
@@ -1051,7 +1241,7 @@
      * Conservative: any second exit (stray break / side-jump to follow) or a pretest
      * header falls back to the generic while(true) form (never a wrong do-while). */
     bool is_dowhile(int header, int follow, int lh, int& Lout) {
-        if (std::getenv("DS_NO_DOWHILE")) return false;   /* default-on; DS_NO_DOWHILE to disable */
+        if (no_dowhile_off()) return false;   /* default-on; DS_NO_DOWHILE to disable */
         Loop& lp = loops[lh];
         Block& H = blocks[header];
         /* (1) header must NOT be a pretest (its jcc, if any, doesn't leave to follow). */

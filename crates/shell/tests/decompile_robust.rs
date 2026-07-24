@@ -8,6 +8,8 @@
 use binparser::{Arch as PArch, BinaryMeta};
 use bridge::{Arch as BArch, Engine};
 
+mod common;
+
 fn map_arch(a: PArch) -> BArch {
     match a {
         PArch::X86 => BArch::X86,
@@ -53,13 +55,15 @@ fn looks_like_raw_reg(code: &str) -> bool {
 
 #[test]
 fn decompile_everything_without_crashing() {
-    let qa = r"C:\Users\User\Downloads\sd\_qa";
-    let bins = [
-        format!("{qa}\\corpus\\math_ops.dll"),
-        format!("{qa}\\corpus\\array_ops.dll"),
-        format!("{qa}\\corpus\\string_ops.dll"),
-        format!("{qa}\\corpus\\control_flow.dll"),
-        format!("{qa}\\corpus\\struct_ops.dll"),
+    let corpus = common::corpus_dir();
+    let corpus_dll =
+        |n: &str| corpus.join(n).to_string_lossy().into_owned();
+    let mut bins = vec![
+        corpus_dll("math_ops.dll"),
+        corpus_dll("array_ops.dll"),
+        corpus_dll("string_ops.dll"),
+        corpus_dll("control_flow.dll"),
+        corpus_dll("struct_ops.dll"),
         r"C:\Windows\System32\kernel32.dll".to_string(),
         r"C:\Windows\System32\kernelbase.dll".to_string(),
         r"C:\Windows\System32\ntdll.dll".to_string(),
@@ -70,8 +74,13 @@ fn decompile_everything_without_crashing() {
         r"C:\Windows\System32\shell32.dll".to_string(),
         r"C:\Windows\System32\shlwapi.dll".to_string(),
         r"C:\Windows\System32\msvcrt.dll".to_string(),
-        r"C:\Users\User\Downloads\NullWare\NullWare\NullWare\build\bin\Release\NullWare.dll".to_string(),
     ];
+    // Opt-in extra target; the system DLLs above already exercise real-world code.
+    if let Ok(extra) = std::env::var("DS_REAL_BIN") {
+        if !extra.trim().is_empty() {
+            bins.push(extra);
+        }
+    }
 
     let mut grand_total = 0usize;
     let mut grand_raw = 0usize;

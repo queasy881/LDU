@@ -135,7 +135,7 @@
         return e;
     }
     std::string render_cond(const ExprP& e) {
-        if (std::getenv("DS_NO_BOOLCOND")) return render(e);
+        if (no_boolcond_off()) return render(e);
         return render(bool_simplify(e));
     }
 
@@ -291,7 +291,8 @@
         Block& B = blocks[b];
         int t = B.taken, fl = B.fall;
         ExprP cond = B.cond ? B.cond : mkConst(1, 4);
-        if (std::getenv("DS_DBG_IF") && f && f->rva == (getenv("DS_DBG_RVA") ? strtoull(getenv("DS_DBG_RVA"),0,16) : 0x1ab40)) {
+        static const bool dbg_if = std::getenv("DS_DBG_IF") != nullptr;
+        if (dbg_if && f && f->rva == (getenv("DS_DBG_RVA") ? strtoull(getenv("DS_DBG_RVA"),0,16) : 0x1ab40)) {
             int jj = (ipdom.size() > (size_t)b) ? ipdom[b] : -1;
             fprintf(stderr, "[IF] b=%d(0x%llx) t=%d fl=%d ipdom=%d stop=%d cur_lh=%d cur_fl=%d cur_latch=%d s(t)=%d s(fl)=%d s(join)=%d\n",
                     b, (unsigned long long)B.addr, t, fl, jj, stop, cur_loop_header, cur_loop_follow, cur_loop_latch,
@@ -361,7 +362,7 @@
              * fall-through to the loop tail — instead of `if(C) continue; break;`. Uses
              * the loop's own header/follow block ids, so it can never mis-target an inner
              * switch's break. Both edges are terminal, so nothing else is emitted here. */
-            bool c2 = !std::getenv("DS_NO_CONTBREAK");
+            bool c2 = !no_contbreak_off();
             if (c2 && tt == cur_loop_header && ff == follow && follow != stop) {
                 dst += ind() + "if (" + render_cond(negate_expr(cond)) + ") break;\n";
                 mark_threaded(t); mark_threaded(fl); return;
@@ -433,6 +434,15 @@
                 block_reaches(other, join) && block_reaches(follow, join)) continue;
             if (structured.count(follow) || structured.count(other)) continue;
             if (!block_reaches(other, follow)) continue;   /* not a re-convergence */
+            /* This trial is the emitter's exponential driver: it emits the whole
+             * `other` region speculatively just to ask "did that come out
+             * goto-free?", and on failure restores every input it touched. With no
+             * memory of the attempt, the identical trial reruns at each later
+             * reconvergence, and nested arms multiply it. If the committed state is
+             * unchanged since it last failed, it fails again — so skipping it emits
+             * exactly the same text (see TrialKey). */
+            const TrialKey tk = trial_key(other, follow, loop_header);
+            if (trial_known_bad(tk)) continue;
             auto s_struct = structured; auto s_label = need_label;
             auto s_thread = threaded;   int s_dup = dup_budget;
             std::string body;
@@ -449,6 +459,7 @@
             }
             structured = s_struct; need_label = s_label;
             threaded = s_thread;   dup_budget = s_dup;
+            trial_record_bad(tk);
         }
 
         /* Prefer the structured if/else only when the join is reachable and not

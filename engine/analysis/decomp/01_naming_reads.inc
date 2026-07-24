@@ -54,9 +54,115 @@
     /* whole-program PE tables (reloc pointer slots + .pdata), parsed once/engine */
     std::shared_ptr<const PeTables> petab;
 
+    /* Env flags the SHELL toggles at runtime (session.rs sets DS_LINE_ADDR around
+     * the eager pass; ipc.rs sets it per interactive call), so they cannot be
+     * cached in a process-lifetime static like the DS_NO_ / DS_DBG_ switches.
+     * They ARE stable for the duration of one ds_decompile call, so read them
+     * once per instance — emit_stmts otherwise called getenv() for every single
+     * statement it printed, on the hottest path in the emitter. */
+    bool opt_line_addr = false;
+
+    /* ================= THE WORK BUDGET (never-freeze guarantee) =================
+     *
+     * Decompiling is a pile of analyses whose cost depends on CFG SHAPE, not size:
+     * a dataflow fixpoint re-runs until it stops changing, the structurer explores
+     * alternative shapes and rolls back, duplication trials nest. Each is bounded
+     * "in practice" and unbounded in theory, so on an adversarial or merely unusual
+     * CFG any one of them can run for minutes. Capping them one at a time as they
+     * are discovered does not generalize: the next binary has a different worst
+     * case. So the guarantee is structural instead:
+     *
+     *   Every expensive loop spends from ONE budget. When it is gone, the
+     *   decompiler stops IMPROVING the output and finishes with what it has.
+     *
+     * That is safe because every pass past the lift is OPTIONAL — it makes the
+     * output nicer, never more correct. The required path (disassemble -> CFG ->
+     * lift -> emit) is linear in function size. So the ladder is:
+     *
+     *   budget available   full pipeline: all analyses, structured emission
+     *   budget spent       optional passes skipped; structured emission still tried
+     *   budget spent in    emission abandoned -> emit_goto_cfg(), the complete
+     *     the emitter      labeled goto form, one render per block, linear
+     *
+     * Each rung is correct and complete; they differ only in prettiness. Nothing
+     * is ever truncated and no code is ever dropped.
+     *
+     * The cap SCALES WITH THE FUNCTION so the rule is size-fair rather than a
+     * magic constant tuned to one binary: a function may spend a large multiple of
+     * its own linear size, which is far more than any well-behaved CFG needs and
+     * still a hard ceiling for a pathological one.
+     *
+     * Determinism: the meter counts WORK, not time, so a function decompiles
+     * identically whether it runs alone or on 16 threads (the throughput test
+     * asserts exactly this). The wall-clock deadline below is a separate last
+     * resort for a loop nobody instrumented; it is set high enough that reaching
+     * it means something is genuinely wrong, and it is what makes the promise
+     * "never freezes" hold even for code paths this budget does not yet cover.
+     *
+     * DS_WORK_BUDGET / DS_WALL_MS override; 0 disables that limb. */
+    long  budget_spent = 0;
+    long  budget_cap   = 0;
+    bool  budget_tripped = false;
+    long  budget_wall_ms = 0;
+    long  budget_calls = 0;
+    std::chrono::steady_clock::time_point budget_t0;
+
+    static long budget_scale() {
+        static const long v = [] {
+            const char* s = std::getenv("DS_WORK_BUDGET");
+            return s ? std::atol(s) : 2000L;   /* work units per instruction */
+        }();
+        return v;
+    }
+    static long budget_wall_default() {
+        static const long v = [] {
+            const char* s = std::getenv("DS_WALL_MS");
+            return s ? std::atol(s) : 5000L;   /* absolute per-function ceiling */
+        }();
+        return v;
+    }
+
+    /* Called once the instruction/block lists exist, so the cap can scale. */
+    void budget_init() {
+        long n = (long)insns.size() + 1;
+        long b = (long)blocks.size() + 1;
+        budget_cap = 100000L + budget_scale() * n + 4000L * b;
+        budget_spent = 0;
+        budget_tripped = false;
+        budget_wall_ms = budget_wall_default();
+        budget_t0 = std::chrono::steady_clock::now();
+    }
+
+    /* Spend `n` units. Returns false once the budget is gone. Cheap: the clock is
+     * consulted only every 4096th call so the deadline costs nothing in the hot
+     * loops it protects. */
+    bool budget_spend(long n) {
+        static const bool dbg = std::getenv("DS_DBG_BUDGET") != nullptr;
+        ++budget_calls;
+        if (dbg && (budget_calls % 25) == 0) {
+            auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                          std::chrono::steady_clock::now() - budget_t0).count();
+            fprintf(stderr, "[budget] calls=%ld spent=%ld wall=%ld elapsed=%lldms tripped=%d\n",
+                    budget_calls, budget_spent, budget_wall_ms, (long long)ms, (int)budget_tripped);
+        }
+        if (budget_tripped) return false;
+        budget_spent += n;
+        if (budget_cap > 0 && budget_spent >= budget_cap) { budget_tripped = true; return false; }
+        if (budget_wall_ms > 0 && (budget_spent & 0xFFF) < n) {
+            auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                          std::chrono::steady_clock::now() - budget_t0).count();
+            if (ms >= budget_wall_ms) { budget_tripped = true; return false; }
+        }
+        return true;
+    }
+    bool budget_ok() const { return !budget_tripped; }
+
     Decompiler(ds_engine* eng, const ds_func* fn,
                const std::map<uint64_t, FuncSig>* st)
-        : e(eng), f(fn), sigtab(st) { petab = get_pe_tables(eng); }
+        : e(eng), f(fn), sigtab(st) {
+        petab = get_pe_tables(eng);
+        opt_line_addr = std::getenv("DS_LINE_ADDR") != nullptr;
+    }
     ~Decompiler() { if (handle_ok) cs_close(&handle); }
 
     /* ---- image reads (bounds-checked) ---- */

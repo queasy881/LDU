@@ -2,7 +2,7 @@
  * dumptool.cpp — fast MULTITHREADED dumper for the DisasmStudio engine.
  *
  * Loads a PE (EXE/DLL), seeds + analyzes the engine ONCE, then decompiles every
- * function across N worker threads (default 10) into _qa/pairs/fn_<rva>.txt,
+ * function across N worker threads (default 10) into _qa/out/pairs/fn_<rva>.txt,
  * byte-compatible with the Rust `dump_pairs` test but ~N× faster.
  *
  * ds_decompile() is thread-safe on a shared engine: it only READS the (immutable
@@ -14,7 +14,7 @@
  *   DS_PAIRS_CAP   max functions (default 100000 = all)
  *   DS_PAIRS_RVAS  comma list of hex rvas; if set, ONLY these
  *   DS_DUMP_THREADS worker count (default 10)
- *   DS_DUMP_OUT    output dir (default C:\Users\User\Downloads\sd\_qa\pairs)
+ *   DS_DUMP_OUT    output dir (default "_qa/out/pairs", relative to the CWD)
  *
  * Build: see engine/tools/build_dumptool.sh
  */
@@ -171,8 +171,11 @@ static std::string getenv_s(const char* k) { const char* v = getenv(k); return v
 int main() {
     std::string bin = getenv_s("DS_REAL_BIN");
     if (bin.empty()) { fprintf(stderr, "set DS_REAL_BIN\n"); return 2; }
+    /* Output dir: DS_DUMP_OUT, else "_qa/out/pairs" RELATIVE to the current directory.
+     * Never an absolute path baked in at build time — that wrote every worktree's
+     * dump into one developer's checkout no matter which tree was running. */
     std::string outdir = getenv_s("DS_DUMP_OUT");
-    if (outdir.empty()) outdir = R"(C:\Users\User\Downloads\sd\_qa\pairs)";
+    if (outdir.empty()) outdir = "_qa/out/pairs";
     int nthreads = 10;
     if (auto e = getenv("DS_DUMP_THREADS")) nthreads = std::max(1, atoi(e));
     size_t cap = 100000;

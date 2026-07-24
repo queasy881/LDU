@@ -1,5 +1,5 @@
 //! Dumps decompiled pseudo-C for every exported function of each corpus DLL to
-//! _qa/decomp/<dll>.c, plus a manifest, for the behavioral-equivalence harness.
+//! _qa/out/decomp/<dll>.c, plus a manifest, for the behavioral-equivalence harness.
 //!
 //! Run: cargo test -p disasmstudio --test decompile_dump -- --nocapture
 
@@ -7,6 +7,8 @@ use std::fmt::Write as _;
 
 use binparser::{Arch as PArch, BinaryMeta};
 use bridge::{Arch as BArch, Engine};
+
+mod common;
 
 fn map_arch(a: PArch) -> BArch {
     match a {
@@ -20,11 +22,10 @@ fn map_arch(a: PArch) -> BArch {
 
 #[test]
 fn dump_decompiled_corpus() {
-    let base = r"C:\Users\User\Downloads\sd\_qa";
-    let outdir = format!("{base}\\decomp");
-    let _ = std::fs::create_dir_all(&outdir);
+    let outdir = common::qa_out_dir("decomp").to_string_lossy().into_owned();
+    let corpus = common::corpus_dir();
 
-    let mut dlls: Vec<String> = std::fs::read_dir(format!("{base}\\corpus"))
+    let mut dlls: Vec<String> = std::fs::read_dir(&corpus)
         .map(|rd| {
             rd.filter_map(|e| e.ok())
                 .filter_map(|e| {
@@ -40,7 +41,7 @@ fn dump_decompiled_corpus() {
         .unwrap_or_default();
     dlls.sort();
     for stem in &dlls {
-        let dll = format!("{base}\\corpus\\{stem}.dll");
+        let dll = corpus.join(format!("{stem}.dll")).to_string_lossy().into_owned();
         if !std::path::Path::new(&dll).exists() {
             continue;
         }

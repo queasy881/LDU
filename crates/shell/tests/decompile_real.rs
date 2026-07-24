@@ -6,6 +6,8 @@
 use binparser::{Arch as PArch, BinaryMeta};
 use bridge::{Arch as BArch, Engine};
 
+mod common;
+
 fn map_arch(a: PArch) -> BArch {
     match a {
         PArch::X86 => BArch::X86,
@@ -41,9 +43,13 @@ fn score(code: &str) -> Score {
 
 #[test]
 fn quality_scan_real() {
-    let bin = std::env::var("DS_REAL_BIN").unwrap_or_else(|_| {
-        r"C:\Users\User\Downloads\NullWare\NullWare\NullWare\build\bin\Release\NullWare.dll".into()
-    });
+    let bin = match common::real_bin() {
+        Some(b) => b,
+        None => {
+            eprintln!("{}", common::NO_REAL_BIN);
+            return;
+        }
+    };
     if !std::path::Path::new(&bin).exists() {
         eprintln!("[skip] {bin}");
         return;
@@ -118,6 +124,6 @@ fn quality_scan_real() {
             out.push_str(&format!("\n/* ===== (req) @ {r:#x} ===== */\n{}\n", engine.decompile(r).unwrap_or_default()));
         }
     }
-    let _ = std::fs::write(r"C:\Users\User\Downloads\sd\_qa\real_dump.c", &out);
-    eprintln!("  (worst 6 dumped to _qa/real_dump.c)");
+    let _ = std::fs::write(common::qa_out_dir("out").join("real_dump.c"), &out);
+    eprintln!("  (worst 6 dumped to _qa/out/real_dump.c)");
 }

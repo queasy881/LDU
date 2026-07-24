@@ -19,7 +19,7 @@
 //!
 //! Run: cargo test --release -p disasmstudio --test bindiff -- --nocapture
 //! Env: DS_DIFF_A, DS_DIFF_B  (binaries; B defaults to A, i.e. a self-diff)
-//!      DS_DIFF_OUT           (report path, default <repo>/_qa/bindiff_report.txt)
+//!      DS_DIFF_OUT           (report path, default <repo>/_qa/out/bindiff_<tag>.txt)
 //!      DS_DIFF_NOBODY        (skip tier C)
 //!      DS_DIFF_CAP           (max functions per binary, default 4000)
 //!      DS_DIFF_BODYCAP       (max tier-C decompiles per side, default 400)
@@ -29,6 +29,8 @@ use std::fmt::Write as _;
 
 use binparser::{Arch as PArch, BinaryMeta};
 use bridge::{Arch as BArch, Engine, Func};
+
+mod common;
 
 /* Fixed by the ABI (engine/include/disasm.h): DS_REF_CALL / DS_XREF_CALL == 1.
  * Compared as literals for the same reason lib.rs compares DS_REF_NONE to 0 —
@@ -680,12 +682,10 @@ fn run(a_path: &str, b_path: &str, tag: &str) -> Option<(usize, usize, usize, us
     let out = std::env::var("DS_DIFF_OUT").unwrap_or_else(|_| {
         // Resolved from the manifest, never hardcoded: a hardcoded absolute path
         // writes into the live repo no matter which checkout is running.
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .and_then(|p| p.parent())
-            .map(|p| p.to_path_buf())
-            .unwrap_or_default();
-        root.join("_qa").join(format!("bindiff_{tag}.txt")).to_string_lossy().into_owned()
+        common::qa_out_dir("out")
+            .join(format!("bindiff_{tag}.txt"))
+            .to_string_lossy()
+            .into_owned()
     });
     if let Some(d) = std::path::Path::new(&out).parent() {
         let _ = std::fs::create_dir_all(d);
@@ -700,14 +700,25 @@ fn run(a_path: &str, b_path: &str, tag: &str) -> Option<(usize, usize, usize, us
     Some((matches.len(), a.feats.len(), nt_matched, nt_a.len()))
 }
 
-const NULLWARE: &str = r"C:\Users\User\Downloads\NullWare\NullWare\NullWare\build\bin\Release\NullWare.dll";
+/// Default "side A" binary: `DS_DIFF_A`, else a corpus DLL this repo can build.
+fn diff_a() -> Option<String> {
+    if let Ok(a) = std::env::var("DS_DIFF_A") {
+        if !a.trim().is_empty() {
+            return Some(a);
+        }
+    }
+    common::real_bin()
+}
 
 /// NullWare vs itself. Because no key contains an rva, 100% here is a real
 /// statement about the matcher: it re-derived every identity from structure
 /// alone. Anything under 100% is a bug or nondeterminism in the matcher.
 #[test]
 fn bindiff_self_is_total() {
-    let a = std::env::var("DS_DIFF_A").unwrap_or_else(|_| NULLWARE.into());
+    let Some(a) = diff_a() else {
+        eprintln!("{}", common::NO_REAL_BIN);
+        return;
+    };
     let Some((m, t, _, _)) = run(&a, &a, "self") else { return };
     assert_eq!(m, t, "self-diff must match every function: {m}/{t}");
 }
@@ -718,14 +729,12 @@ fn bindiff_self_is_total() {
 /// matches across unrelated code.
 #[test]
 fn bindiff_unrelated_is_near_zero() {
-    let a = std::env::var("DS_DIFF_A").unwrap_or_else(|_| NULLWARE.into());
+    let Some(a) = diff_a() else {
+        eprintln!("{}", common::NO_REAL_BIN);
+        return;
+    };
     let b = std::env::var("DS_DIFF_B").unwrap_or_else(|_| {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .and_then(|p| p.parent())
-            .map(|p| p.to_path_buf())
-            .unwrap_or_default();
-        root.join("_qa").join("corpus").join("board.dll").to_string_lossy().into_owned()
+        common::corpus_dir().join("board.dll").to_string_lossy().into_owned()
     });
     let Some((_, _, ntm, ntt)) = run(&a, &b, "unrelated") else { return };
     let pct = if ntt == 0 { 0.0 } else { 100.0 * ntm as f64 / ntt as f64 };

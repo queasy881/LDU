@@ -1,12 +1,14 @@
 //! Overnight quality loop tooling: for each real-binary function, write a file
 //! pairing its DISASSEMBLY with its DECOMPILED C so they can be read side by
 //! side to find (and verify fixes for) real bugs. NOT a pass/fail test — it is a
-//! dump generator. Output: _qa/pairs/fn_<rva>.txt (one per function).
+//! dump generator. Output: _qa/out/pairs/fn_<rva>.txt (one per function).
 //! Env: DS_REAL_BIN, DS_PAIRS_CAP (max funcs, default 400),
 //!      DS_PAIRS_RVAS (comma list; if set, ONLY these).
 
 use binparser::{Arch as PArch, BinaryMeta};
 use bridge::{Arch as BArch, Engine};
+
+mod common;
 
 fn map_arch(a: PArch) -> BArch {
     match a {
@@ -20,9 +22,13 @@ fn map_arch(a: PArch) -> BArch {
 
 #[test]
 fn dump_pairs() {
-    let bin = std::env::var("DS_REAL_BIN").unwrap_or_else(|_| {
-        r"C:\Users\User\Downloads\NullWare\NullWare\NullWare\build\bin\Release\NullWare.dll".into()
-    });
+    let bin = match common::real_bin() {
+        Some(b) => b,
+        None => {
+            eprintln!("{}", common::NO_REAL_BIN);
+            return;
+        }
+    };
     if !std::path::Path::new(&bin).exists() {
         eprintln!("[skip] {bin}");
         return;
@@ -81,7 +87,7 @@ fn dump_pairs() {
         .and_then(|v| v.parse().ok())
         .unwrap_or(400);
 
-    // Output dir, in priority order: DS_PAIRS_DIR, else <crate's repo root>/_qa/pairs.
+    // Output dir, in priority order: DS_PAIRS_DIR, else <crate's repo root>/_qa/out/pairs.
     //
     // This used to hardcode the main checkout's absolute path, which quietly defeated git
     // worktree isolation: every agent working in its own worktree still dumped into the SAME
@@ -89,14 +95,8 @@ fn dump_pairs() {
     // everybody's binaries. (One agent worked around it by hardcoding ITS worktree path
     // instead -- which then silently broke dumping for the main tree.) CARGO_MANIFEST_DIR is
     // the crate being tested, so ../.. is that checkout's root -- correct in a worktree too.
-    let dir = std::env::var("DS_PAIRS_DIR").unwrap_or_else(|_| {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .and_then(|p| p.parent())
-            .map(|p| p.to_path_buf())
-            .unwrap_or_else(|| std::path::PathBuf::from("."));
-        root.join("_qa").join("pairs").to_string_lossy().into_owned()
-    });
+    let dir = std::env::var("DS_PAIRS_DIR")
+        .unwrap_or_else(|_| common::qa_out_dir("pairs").to_string_lossy().into_owned());
     let dir: &str = &dir;
     let _ = std::fs::create_dir_all(dir);
     let mut written = 0usize;

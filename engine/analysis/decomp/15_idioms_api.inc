@@ -297,19 +297,33 @@
         if (!root) return root;
         std::map<const Expr*, ExprP> node;
         std::map<const Expr*, int> refs;
+        /* DETERMINISM: `refs`/`node` are keyed by the node's HEAP ADDRESS, so
+         * iterating them walks the tree in pointer order — which changes on every
+         * process launch (ASLR + allocation history). Temps are minted inside that
+         * loop, so the same function produced DIFFERENT temp numbering, and hence
+         * different declarations and types, from one run to the next: measured
+         * 21/600 ntdll functions differing between two identical single-threaded
+         * runs of the unmodified engine. It also broke the parallel-vs-serial
+         * equality the throughput test asserts, and meant reopening a binary could
+         * show different pseudocode. Record first-visit (DFS pre-order) sequence
+         * and drive every later loop off THAT, so the traversal is a property of
+         * the expression tree instead of the allocator. */
+        std::vector<const Expr*> order;
         std::function<void(const ExprP&)> cnt = [&](const ExprP& e) {
             if (!e) return;
             node[e.get()] = e;
             if (refs[e.get()]++ > 0) return;   /* children already counted */
+            order.push_back(e.get());
             cnt(e->a); cnt(e->b); cnt(e->c);
             for (auto& ar : e->args) cnt(ar);
         };
         cnt(root);
         /* which shared nodes are worth binding: referenced >=2x and non-trivial. */
         std::map<const Expr*, ExprP> repl;
-        for (auto& kv : refs) {
-            if (kv.second < 2) continue;
-            const ExprP& e = node[kv.first];
+        for (const Expr* key : order) {
+            auto rf = refs.find(key);
+            if (rf == refs.end() || rf->second < 2) continue;
+            const ExprP& e = node[key];
             if (!e) continue;
             EK k = e->kind;
             if (k == EK::Const || k == EK::Var || k == EK::Reg || k == EK::Str) continue;
@@ -321,7 +335,7 @@
             var_width[tn] = w; if (w >= 8) var_is_ll[tn] = true;
             if (e->is_float) var_is_float[tn] = true;
             ExprP tv = mkVar(tn, w); if (e->is_float) tv->is_float = true;
-            repl[kv.first] = tv;
+            repl[key] = tv;
         }
         if (repl.empty()) return root;
         /* memoized pointer-subst: replace each shared node with its temp var; the
@@ -343,9 +357,15 @@
         /* emit temp DEFs; a def's RHS is the node with its OWN shared children
          * replaced by their temps (top=true so the node itself isn't self-replaced). */
         std::vector<std::pair<int,Stmt>> defs;  /* (depth-ish order via temp seq) */
-        for (auto& kv : repl) {
-            const ExprP& e = node[kv.first];
-            Stmt def; def.kind = SK::Assign; def.lhs = clone(kv.second);
+        /* Same reason as above: drive this off the recorded traversal order, not
+         * `repl`'s pointer-keyed order, so the emitted defs are in a stable
+         * sequence. The dependency sort below is stable, so its input order
+         * decides the output. */
+        for (const Expr* key : order) {
+            auto rp = repl.find(key);
+            if (rp == repl.end()) continue;
+            const ExprP& e = node[key];
+            Stmt def; def.kind = SK::Assign; def.lhs = clone(rp->second);
             def.rhs = rebuild(e, true);
             defs.push_back({0, std::move(def)});
         }

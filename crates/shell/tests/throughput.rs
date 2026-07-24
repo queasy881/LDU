@@ -14,6 +14,8 @@ use bridge::{Arch as BArch, Engine};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 
+mod common;
+
 fn map_arch(a: PArch) -> BArch {
     match a {
         PArch::X86 => BArch::X86,
@@ -26,9 +28,13 @@ fn map_arch(a: PArch) -> BArch {
 
 #[test]
 fn throughput() {
-    let bin = std::env::var("DS_REAL_BIN").unwrap_or_else(|_| {
-        r"C:\Users\User\Downloads\NullWare\NullWare\NullWare\build\bin\Release\NullWare.dll".into()
-    });
+    let bin = match common::real_bin() {
+        Some(b) => b,
+        None => {
+            eprintln!("{}", common::NO_REAL_BIN);
+            return;
+        }
+    };
     if !std::path::Path::new(&bin).exists() {
         eprintln!("[skip] {bin} not found");
         return;
