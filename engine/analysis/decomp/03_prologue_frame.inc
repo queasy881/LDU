@@ -269,6 +269,33 @@
                 Reg r; int w; map_reg(x.operands[0].reg, r, w);
                 if (r == R_RSP) { sub_done = true; continue; }
             }
+            /* SIGNEDNESS of a homed narrow param, read off how it is widened.
+             *
+             * On the /Od path the argument is spilled (`mov [rsp+8], cl`) and every
+             * use reads it BACK from memory, so the register-site evidence never
+             * fires: `movzx eax, byte ptr [rsp+0x20]` proves the value is unsigned
+             * and `movsx` proves it signed. Without this an `unsigned char`
+             * parameter recovered its width correctly and still declared int8_t.
+             * The homing store precedes the reads in program order, so
+             * param_home_off is already populated by the time we get here. */
+            if ((in.id == X86_INS_MOVZX || in.id == X86_INS_MOVSX || in.id == X86_INS_MOVSXD) &&
+                x.op_count == 2 && x.operands[1].type == X86_OP_MEM &&
+                x.operands[1].size && x.operands[1].size <= 2) {
+                const x86_op_mem& sm = x.operands[1].mem;
+                Reg bs; int bw;
+                if (sm.index == X86_REG_INVALID && sm.base != X86_REG_INVALID) {
+                    map_reg(sm.base, bs, bw);
+                    bool via_al = (frame_rsp_alias != R_NONE && bs == frame_rsp_alias && alias_valid);
+                    if (bs == R_RSP || bs == R_RBP || via_al) {
+                        int64_t nrm = via_al
+                            ? (sm.disp + frame_size + prologue_push_bytes - frame_alias_push)
+                            : (sm.disp + (sub_done ? 0 : (frame_size + prologue_push_bytes)));
+                        auto hit = param_home_off.find(nrm);
+                        if (hit != param_home_off.end())
+                            var_unsigned[hit->second] = (in.id == X86_INS_MOVZX);
+                    }
+                }
+            }
             if (in.id != X86_INS_MOV || x.op_count != 2) {
                 /* track clobbers of the arg registers so a later reuse-store of a
                  * different value to the same slot is NOT mistaken for homing. */
@@ -460,6 +487,7 @@
         bool written[4] = {false,false,false,false};
         bool used[4]    = {false,false,false,false};
         int  argw[4]    = {0,0,0,0};   /* max sub-register read width per arg */
+        int  argu[4]    = {0,0,0,0};   /* +1 unsigned (movzx), -1 signed (movsx), 0 unknown */
         auto argpos = [](Reg r)->int {
             return (r==R_RCX)?0:(r==R_RDX)?1:(r==R_R8)?2:(r==R_R9)?3:-1;
         };
@@ -500,6 +528,16 @@
                         /* record the sub-register width this arg is read at, so a
                          * param only ever touched as ecx/edx narrows to `int`. */
                         if (w > argw[p]) argw[p] = w;
+                        /* SIGNEDNESS comes free from HOW the narrow read is widened:
+                         * movzx zero-extends (the value is unsigned), movsx sign-
+                         * extends (it is signed). Without this a `unsigned char`
+                         * parameter recovered its width correctly and still declared
+                         * int8_t. Only the sub-register reads carry the evidence, so
+                         * a wider read leaves it alone. */
+                        if (w <= 2 && o == 1) {
+                            if (in.id == X86_INS_MOVZX) argu[p] = 1;
+                            else if (in.id == X86_INS_MOVSX || in.id == X86_INS_MOVSXD) argu[p] = -1;
+                        }
                     }
                 } else if (op.type == X86_OP_MEM) {
                     const x86_op_mem& m = op.mem;
@@ -571,8 +609,20 @@
          * read (rcx) or any address-base use (a pointer) already set argw[p]=8 and
          * is left wide. Only narrows the un-homed /O2 path; /Od returned above. */
         for (int p = 0; p <= maxp; ++p) {
-            if ((used[p] || param_used[p]) && argw[p] >= 1 && argw[p] <= 4)
-                var_width["a" + std::to_string(p + 1)] = 4;
+            if (!((used[p] || param_used[p]) && argw[p] >= 1 && argw[p] <= 4)) continue;
+            /* Keep the ACTUAL width, do not flatten 1 and 2 up to 4.
+             *
+             * argw is the widest sub-register the callee ever reads for this
+             * argument, and under the x64 ABI a `char`/`short` parameter arrives
+             * with the rest of the register undefined — so a callee that only ever
+             * reads CL is being handed a byte, and one that reads ECX is not.
+             * Rounding every narrow argument to 4 declared 8 of the corpus's
+             * `char`/`unsigned char` parameters as int32_t (measured by
+             * _qa/sigdiff.py against the original sources). */
+            int w = argw[p];
+            std::string nm = "a" + std::to_string(p + 1);
+            var_width[nm] = (w == 1 || w == 2) ? w : 4;
+            if ((w == 1 || w == 2) && argu[p] != 0) var_unsigned[nm] = argu[p] > 0;
         }
     }
 

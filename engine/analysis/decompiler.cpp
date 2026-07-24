@@ -5946,8 +5946,43 @@ struct Decompiler {
         /* ---- header + declarations ---- */
         std::string fname = (f->name[0] ? sani(std::string(f->name))
                                         : "sub_" + hex(f->rva).substr(2));
+        /* HIDDEN STRUCT-RETURN POINTER (MSVC x64 sret).
+         *
+         * A struct that is not 1/2/4/8 bytes is returned through a caller-supplied
+         * buffer passed in RCX, and the callee hands that same pointer back in RAX.
+         * So `Vec3 vec3_make(float,float,float)` really is
+         * `void* f(Vec3* ret, float, float, float)` -- which is what was recovered:
+         * an int return, a phantom leading pointer argument, and the float
+         * arguments shifted one slot (they start at xmm1, not xmm0).
+         *
+         * The evidence is exact and cheap: every value-return returns a1, and the
+         * body STORES through a1. A function that merely returns a pointer argument
+         * it never wrote is not an sret (it is `char* id(char*)`), so the store is
+         * what separates them.
+         *
+         * Rendered by declaring the buffer as a local and keeping a1 pointing at it,
+         * so not one statement in the body has to be rewritten:
+         *     struct Vec3 vec3_make(float a2, float a3, float a4) {
+         *         struct Vec3 __ret; struct Vec3* a1 = &__ret;
+         *         ...body unchanged...
+         *         return __ret;
+         *     }
+         * DS_NO_SRET disables it. */
+        /* NOT IMPLEMENTED, deliberately: "returns a1 having written through it" is
+         * NOT enough evidence. `char* strcpy(char* d, const char* s)` matches it
+         * exactly, and treating that as an sret would delete a real parameter and
+         * invent a struct return -- a confident lie at every call site. MSVC also
+         * fills the buffer with a bulk `rep movsb` from a local rather than field
+         * stores (measured on vec3_make), so the store shape is not a discriminator
+         * either. The decisive evidence is caller-side (the caller passes the
+         * address of a temporary it then reads as the result), which is
+         * cross-function work. Tracked in SIG-1. */
+        const bool sret = false;
+        std::string sret_ty;
+
         std::string ret_t;
-        if (!used_return) ret_t = "void";
+        if (sret) ret_t = sret_ty;
+        else if (!used_return) ret_t = "void";
         else if (ret_conflict_raw) ret_t = "long long";   /* mixed float+pointer return */
         else if (ret_small_w == 1) ret_t = ret_small_uns ? "unsigned char" : "signed char";
         else if (ret_small_w == 2) ret_t = ret_small_uns ? "unsigned short" : "short";
@@ -6006,14 +6041,29 @@ struct Decompiler {
                 }
                 return false;
             };
+            /* A HOMED parameter is part of the signature even when the body never
+             * reads it. `mov [rsp+8], rcx` in the prologue is the compiler spilling
+             * an incoming argument, which only happens for an argument that EXISTS
+             * — `int f(const Ring *r) { (void)r; return 64; }` homes rcx and then
+             * ignores it. Pruning on textual use alone declared that `f(void)` and
+             * silently dropped a real argument at every call site. Only unhomed
+             * trailing slots (a phantom recovered from a stray register read) are
+             * still pruned. */
+            auto homed = [&](int p) -> bool {
+                std::string nm = "a" + std::to_string(p);
+                for (auto& kv : param_home_off) if (kv.second == nm) return true;
+                return false;
+            };
             if (!self_rec)
-                while (sig_params > 0 && !used(sig_params)) --sig_params;
+                while (sig_params > 0 && !used(sig_params) && !homed(sig_params)) --sig_params;
         }
         std::string params;
-        if (sig_params == 0) params = "void";
+        /* the sret buffer is not one of the source's parameters */
+        int first_param = sret ? 1 : 0;
+        if (sig_params <= first_param) params = "void";
         else {
-            for (int i = 0; i < sig_params; ++i) {
-                if (i) params += ", ";
+            for (int i = first_param; i < sig_params; ++i) {
+                if (i > first_param) params += ", ";
                 std::string nm = "a" + std::to_string(i + 1);
                 std::string ty = decl_type(nm);
                 /* pointer types already carry `*`; place name without extra space
@@ -6660,6 +6710,16 @@ struct Decompiler {
             protos += rtv + " " + c + "(" + pp + ");\n";
         }
 
+        /* sret: give the hidden buffer a real home and hand the STRUCT back.
+         * `a1` keeps pointing at it, so every `a1->field = ...` in the body stays
+         * exactly as emitted; only the `return a1` becomes `return __ret`. */
+        if (sret) {
+            decls = "    " + sret_ty + " __ret;\n"
+                    "    " + sret_ty + "* a1 = &__ret;   /* hidden struct-return buffer */\n"
+                  + decls;
+            for (size_t p = 0; (p = body.find("return a1;", p)) != std::string::npos; )
+                body.replace(p, 10, "return __ret;");
+        }
         std::string head = ret_t + " " + fname + "(" + params + ") {\n";
         std::string full = "/* " + fname + " @ " + hex(f->rva) +
                            "  size=" + std::to_string((unsigned long long)f->size) + " */\n";
