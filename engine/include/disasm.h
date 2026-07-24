@@ -132,6 +132,12 @@ void ds_engine_scan_format_fns(ds_engine* e);
  * a still-unnamed function whose only clean label string is "Enable ESP" becomes
  * s_EnableESP. Runs after scan_format_fns, before resolve_symbols. Gated DS_NO_STRNAME. */
 void ds_engine_scan_string_names(ds_engine* e);
+/* name a global data object after the C++ class it is an instance of, recovered
+ * from the `lea reg,[<Class>__vftable]; mov [<abs>],reg` store its constructor
+ * performs (a dynamically-constructed global has no vtable pointer in the image).
+ * Names are <Class>_<addr> so two objects of one class stay distinct. Runs after
+ * scan_rtti, before resolve_symbols. Gated by DS_NO_CLASSGLOBAL. */
+void ds_engine_scan_class_globals(ds_engine* e);
 /* recover real function names from the PDB named by the PE debug directory's
  * CodeView RSDS record, and seed them as symbols. Runs at build_cfg start,
  * before scan_rtti, so the PDB name wins. Windows-only (dbghelp), gated by

@@ -698,6 +698,176 @@ extern "C" void ds_engine_scan_rtti(ds_engine* e) {
  * re-store the vtable). Name them `<Class>__ctor` / `<Class>__dtor` so call sites read as
  * such instead of fun_XXXX. Runs after scan_rtti (vtable symbols seeded) and before
  * resolve_symbols. Naming-only; DS_NO_CTORDTOR. */
+/* ---- CLASS-TYPED GLOBALS -------------------------------------------------
+ * Name a global data object after the class it is an instance of.
+ *
+ * The vtable pointer at offset 0 is what makes an object an instance, but for a
+ * DYNAMICALLY constructed global it is not in the image: std::cin / std::cout
+ * are built by the CRT at startup, so .data holds zero and the pointer is only
+ * written at runtime. Reading the image therefore recovers nothing for exactly
+ * the objects worth naming.
+ *
+ * The evidence that DOES exist statically is the STORE the constructor performs:
+ *     lea  rax, [<Class>__vftable]
+ *     mov  qword ptr [<abs>], rax        <- <abs> is an instance of <Class>
+ * which is the same fact scan_ctor_dtor already uses for `[this+0]`, with an
+ * absolute destination instead of a register one. That turns
+ *     fun_00001df0(&byte_4e020, &v1)
+ * into
+ *     fun_00001df0(&std__istream_4e020, &v1)
+ *
+ * NAMING RULE (unambiguity first): <SimplifiedClass>_<addr>. The address is kept
+ * so two objects of the same class — cout, cerr and clog are all
+ * basic_ostream<char> — can never collapse into one identifier. We deliberately
+ * do NOT guess which standard stream a given ostream is: distinguishing them
+ * needs construction-order reasoning that would be a guess printed as a fact.
+ * The class plus the address is something we can actually prove.
+ *
+ * Gated by DS_NO_CLASSGLOBAL. */
+extern "C" void ds_engine_scan_class_globals(ds_engine* e) {
+    if (std::getenv("DS_NO_CLASSGLOBAL")) return;
+    if (!e || e->arch != DS_ARCH_X64 || !e->image || !e->insn_len) return;
+
+    /* vtable rva -> class base name, from the "<Class>__vftable" symbols the RTTI
+     * scan already seeded. */
+    std::map<uint64_t, std::string> vt_class;
+    for (size_t i = 0; i < e->symbol_len; ++i) {
+        const char* nm = e->symbols[i].name;
+        if (!nm[0]) continue;
+        size_t L = std::strlen(nm);
+        for (const char* suf : { "__vftable", "__vfstruct" }) {
+            size_t sl = std::strlen(suf);
+            if (L > sl && std::strcmp(nm + L - sl, suf) == 0)
+                vt_class[e->symbols[i].rva] = std::string(nm, L - sl);
+        }
+    }
+    if (vt_class.empty()) return;
+
+    /* first register token of an operand string ("rax, ..." -> "rax") */
+    auto first_reg = [](const char* ops, char* out, size_t cap) {
+        size_t i = 0;
+        while (ops[i] == ' ') ++i;
+        size_t o = 0;
+        while (ops[i] && (std::isalnum((unsigned char)ops[i]) || ops[i] == '_') && o + 1 < cap)
+            out[o++] = ops[i++];
+        out[o] = 0;
+        return o > 0;
+    };
+
+    size_t named = 0;
+    for (size_t i = 0; i + 1 < e->insn_len; ++i) {
+        const ds_insn* lea = &e->insns[i];
+        if (std::strcmp(lea->mnemonic, "lea") != 0) continue;
+        if (lea->ref_type != DS_REF_DATA || !lea->ref_target) continue;
+        uint64_t vrva = (lea->ref_target >= e->base) ? lea->ref_target - e->base : lea->ref_target;
+        auto vc = vt_class.find(vrva);
+        if (vc == vt_class.end()) continue;
+        char reg[16];
+        if (!first_reg(lea->operands, reg, sizeof reg)) continue;
+
+        /* the store of that register to an absolute address, close behind */
+        for (size_t j = i + 1; j < e->insn_len && j - i <= 6; ++j) {
+            const ds_insn* st = &e->insns[j];
+            if (std::strcmp(st->mnemonic, "mov") != 0) {
+                if (!std::strcmp(st->mnemonic, "call") || st->mnemonic[0] == 'j') break;
+                continue;
+            }
+            /* destination must be MEMORY at an absolute address, source our reg */
+            const char* lb = std::strchr(st->operands, '[');
+            const char* comma = std::strchr(st->operands, ',');
+            if (!lb || !comma || lb > comma) continue;      /* `mov reg, [..]` = a load */
+            if (st->ref_type != DS_REF_DATA || !st->ref_target) continue;
+            const char* src = comma + 1;
+            while (*src == ' ') ++src;
+            if (std::strcmp(src, reg) != 0) continue;
+
+            uint64_t grva = (st->ref_target >= e->base) ? st->ref_target - e->base : st->ref_target;
+            if (already_seeded(e, grva)) break;
+            /* Collapse the standard-library template spellings a human never reads
+             * in full: basic_istream<char,char_traits<char> > IS istream. Only the
+             * char/wchar_t instantiations are folded — anything else keeps its exact
+             * name, since a wrong short name would be worse than a long right one. */
+            std::string cls = vc->second;
+            {
+                struct R { const char* from; const char* to; };
+                static const R T[] = {
+                    {"std::basic_istream<char,std::char_traits<char> >",       "std::istream"},
+                    {"std::basic_ostream<char,std::char_traits<char> >",       "std::ostream"},
+                    {"std::basic_iostream<char,std::char_traits<char> >",      "std::iostream"},
+                    {"std::basic_istream<wchar_t,std::char_traits<wchar_t> >", "std::wistream"},
+                    {"std::basic_ostream<wchar_t,std::char_traits<wchar_t> >", "std::wostream"},
+                    {"std::basic_streambuf<char,std::char_traits<char> >",     "std::streambuf"},
+                    {"std::basic_filebuf<char,std::char_traits<char> >",       "std::filebuf"},
+                    {nullptr, nullptr}
+                };
+                for (int t = 0; T[t].from; ++t) {
+                    size_t p;
+                    while ((p = cls.find(T[t].from)) != std::string::npos)
+                        cls.replace(p, std::strlen(T[t].from), T[t].to);
+                }
+            }
+            char nm[192];
+            std::snprintf(nm, sizeof nm, "%s_%llx", c_safe(cls).c_str(), (unsigned long long)grva);
+            ds_engine_add_symbol(e, grva, nm);
+            ++named;
+            break;
+        }
+    }
+    /* PATTERN 2 — construction through a CONSTRUCTOR CALL.
+     * The store above only fires when the compiler inlined the vtable write at an
+     * absolute address. For a real object the write happens INSIDE the ctor with
+     * `this` in rcx, so nothing absolute is stored and pattern 1 sees nothing —
+     * which is exactly the std::cin / std::cout case. What IS visible at the call
+     * site is the object's address being materialised into the `this` register:
+     *     lea  rcx, [<abs>]
+     *     call <Class>__ctor
+     * scan_ctor_dtor has already proven that callee constructs <Class> (it names
+     * it from the vtable IT stores), so this attributes the class to <abs> without
+     * any new inference — it just joins two facts we already have. */
+    std::map<uint64_t, std::string> ctor_class;
+    for (size_t i = 0; i < e->symbol_len; ++i) {
+        const char* nm = e->symbols[i].name;
+        if (!nm[0]) continue;
+        const char* p = std::strstr(nm, "__ctor");
+        if (!p) continue;
+        /* accept "<Class>__ctor" and the de-duplicated "<Class>__ctor_<rva>" */
+        if (p[6] != '\0' && p[6] != '_') continue;
+        if (p == nm) continue;
+        ctor_class[e->symbols[i].rva] = std::string(nm, p - nm);
+    }
+    for (size_t i = 0; i + 1 < e->insn_len && !ctor_class.empty(); ++i) {
+        const ds_insn* lea = &e->insns[i];
+        if (std::strcmp(lea->mnemonic, "lea") != 0) continue;
+        if (lea->ref_type != DS_REF_DATA || !lea->ref_target) continue;
+        if (std::strncmp(lea->operands, "rcx", 3) != 0) continue;      /* the `this` register */
+        uint64_t grva = (lea->ref_target >= e->base) ? lea->ref_target - e->base : lea->ref_target;
+        if (already_seeded(e, grva)) continue;
+        for (size_t j = i + 1; j < e->insn_len && j - i <= 6; ++j) {
+            const ds_insn* c = &e->insns[j];
+            if (c->mnemonic[0] == 'j') break;
+            if (std::strcmp(c->mnemonic, "call") != 0) {
+                /* another write to rcx means this lea was for something else */
+                if (std::strncmp(c->operands, "rcx", 3) == 0) break;
+                continue;
+            }
+            if (c->ref_type != DS_REF_CALL || !c->ref_target) break;
+            uint64_t F = (c->ref_target >= e->base) ? c->ref_target - e->base : c->ref_target;
+            auto cc = ctor_class.find(F);
+            if (cc != ctor_class.end()) {
+                char nm[192];
+                std::snprintf(nm, sizeof nm, "%s_%llx", c_safe(cc->second).c_str(),
+                              (unsigned long long)grva);
+                ds_engine_add_symbol(e, grva, nm);
+                ++named;
+            }
+            break;
+        }
+    }
+
+    if (std::getenv("DS_DBG_CLASSGLOBAL"))
+        fprintf(stderr, "[classglobal] named %zu class-typed globals\n", named);
+}
+
 extern "C" void ds_engine_scan_ctor_dtor(ds_engine* e) {
     if (std::getenv("DS_NO_CTORDTOR")) return;
     if (!e || e->arch != DS_ARCH_X64 || !e->image || !e->func_len || !e->insn_len) return;

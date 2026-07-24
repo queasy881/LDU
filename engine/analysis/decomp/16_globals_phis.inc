@@ -1993,6 +1993,18 @@
              * and telling them apart needs construction-order reasoning that would be
              * a guess dressed as a fact. DS_NO_STREAMNAME. */
             if (!std::getenv("DS_NO_STREAMNAME")) {
+                /* ds_engine_scan_class_globals seeded a symbol here when it found the
+                 * constructor storing a recovered vtable to this address. That covers
+                 * the dynamically-constructed case (std::cin/cout), which reading the
+                 * image cannot. */
+                std::string seeded = data_symbol_name((uint64_t)v);
+                if (!seeded.empty()) {
+                    char def[96];
+                    std::snprintf(def, sizeof def, "(*(int8_t*)0x%llx)", (unsigned long long)v);
+                    set_named_global(seeded, def);
+                    return "&" + seeded;
+                }
+                /* Statically-initialised object: the vtable pointer IS in the image. */
                 int64_t vt = 0;
                 if (read_i64((uint64_t)v, vt) && (uint64_t)vt > 0x1000) {
                     std::string cls = class_for_vtable((uint64_t)vt);

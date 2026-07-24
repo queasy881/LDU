@@ -179,6 +179,17 @@
     ~Decompiler() { if (handle_ok) cs_close(&handle); }
 
     /* ---- image reads (bounds-checked) ---- */
+    /* Name seeded for a DATA address (ds_engine_scan_class_globals seeds the
+     * class-typed globals here), or "" if none. Lives in this section because
+     * render_const's parameter is itself called `e` and shadows the engine. */
+    std::string data_symbol_name(uint64_t rva) const {
+        if (!e) return "";
+        for (size_t i = 0; i < e->symbol_len; ++i)
+            if (e->symbols[i].rva == rva && e->symbols[i].name[0])
+                return std::string(e->symbols[i].name);
+        return "";
+    }
+
     bool read_u8(uint64_t rva, uint8_t& out) {
         if (!e || !e->image || rva >= e->image_size) return false;
         out = e->image[rva]; return true;

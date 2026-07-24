@@ -385,6 +385,10 @@ extern "C" int ds_engine_build_cfg(ds_engine* e) {
     ds_engine_scan_ctor_dtor(e);
     /* name printf/scanf-family functions by their format-string call convention. */
     ds_engine_scan_format_fns(e);
+    /* name class-typed GLOBALS (std::cin/cout and friends) from the vtable store
+     * their constructor performs. Runs after scan_rtti has seeded the vtable
+     * symbols it reads, and before resolve_symbols consumes the names. */
+    ds_engine_scan_class_globals(e);
     /* name still-anonymous functions after a distinctive string they reference. */
     ds_engine_scan_string_names(e);
 
