@@ -2291,6 +2291,20 @@
                      * that decays to one)? Only these take a byte-offset addend. */
                     auto ptr_base = [&](const ExprP& x) -> bool {
                         if (!x) return false;
+                        /* A value the LIFTER proved floating-point, or a var DECLARED
+                         * float/double, is never a pointer — no matter what the pointer
+                         * heuristics below say. Without this, a plain `subsd xmm,[180.0]`
+                         * on a double local reached the mis-tagged-byte-offset branch and
+                         * came out as `*(float*)&v3 - 180.0`: a genuine double subtract
+                         * TRUNCATED to single precision, silently changing the arithmetic
+                         * (kernel32 fn_000668ec, a lat/long normalisation). The pointer
+                         * branch exists for an INT base wrongly carrying a float const;
+                         * a float base is exactly the case it must not touch. */
+                        if (x->is_float) return false;
+                        if (x->kind == EK::Var) {
+                            std::string dt = decl_type(x->name);
+                            if (dt == "float" || dt == "double") return false;
+                        }
                         if (rptr(x)) return true;
                         return x->kind == EK::Var && array_locals.count(x->name);
                     };
@@ -2410,6 +2424,17 @@
                         ExprP pc = nullptr, fc = nullptr;
                         if (e->b && e->b->kind == EK::Const && e->b->is_float) { pc = e->a; fc = e->b; }
                         else if (op == "+" && e->a && e->a->kind == EK::Const && e->a->is_float) { pc = e->b; fc = e->a; }
+                        /* ...but NOT when the base is itself floating-point. This branch
+                         * has no pointer test of its own, so a plain `subsd v3,[180.0]`
+                         * on a `double v3` fell straight into it and rendered
+                         * `*(float*)&v3 - 180.0` — a double subtract silently TRUNCATED
+                         * to single precision (kernel32 fn_000668ec). A float base needs
+                         * no reinterpretation: the const already prints as its value. */
+                        if (pc && (pc->is_float ||
+                                   (pc->kind == EK::Var &&
+                                    (decl_type(pc->name) == "float" ||
+                                     decl_type(pc->name) == "double"))))
+                            pc = nullptr;
                         if (pc && fc && !is_subnormal_float_const(fc)) {
                             ExprP fb = pc; while (fb && fb->kind == EK::Cast && fb->a) fb = fb->a;
                             if (fb && fb->kind == EK::Var)

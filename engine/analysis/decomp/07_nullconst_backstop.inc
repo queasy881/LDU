@@ -319,6 +319,26 @@
         /* only promote a leak that ACTUALLY survives into the emitted IR (a trailing
          * `in_R8`/`in_R9` trimmed off a call by trim_phantom_call_args still lingers
          * in unknown_reg_name but must NOT invent params a3/a4). */
+        /* A leak only counts as a FUNCTION INPUT if it is read on a path the
+         * function itself can take. A block unreachable from the entry — an SEH /
+         * C++ EH funclet placed inside the function's address range — is entered by
+         * the OS unwinder, and the registers live at its head are supplied by the
+         * unwinder, not by the caller. Promoting those invented a trailing
+         * parameter out of thin air: kernel32 s_AslpFileGetCrcChecksum's __except
+         * handler reads eax (the exception code) and the function grew a bogus
+         * third argument. Uses in unreachable blocks still reach
+         * scrub_in_placeholders, which gives them an ordinary declared local. */
+        std::vector<char> reach(blocks.size(), 0);
+        {
+            int eb = entry_block();
+            std::vector<int> st;
+            if (eb >= 0 && eb < (int)blocks.size()) { reach[eb] = 1; st.push_back(eb); }
+            while (!st.empty()) {
+                int b = st.back(); st.pop_back();
+                for (int s : blocks[b].succ)
+                    if (s >= 0 && s < (int)blocks.size() && !reach[s]) { reach[s] = 1; st.push_back(s); }
+            }
+        }
         std::set<std::string> used;
         std::function<void(const ExprP&)> mark = [&](const ExprP& e){
             if (!e) return;
@@ -327,6 +347,7 @@
             for (auto& ar : e->args) mark(ar);
         };
         for (auto& b : blocks) {
+            if (b.id >= 0 && b.id < (int)reach.size() && !reach[b.id]) continue;
             for (auto& s : b.stmts) { mark(s.lhs); mark(s.rhs); }
             mark(b.cond); mark(b.ret_value); mark(b.ret_raw); mark(b.switch_var); mark(b.tail_call);
         }
@@ -445,8 +466,19 @@
         }
     }
 
+    /* getenv on every register read is a syscall-ish lookup on the hottest path in
+     * the lifter; cache it once (mirrors the cached env accessors in the emitter). */
+    static bool dbg_regread() {
+        static const bool on = std::getenv("DS_DBG_REGREAD") != nullptr;
+        return on;
+    }
     ExprP reg_value(Reg r, int w) {
         ExprP v = regfile[r] ? clone(regfile[r]) : nullptr;
+        if (dbg_regread()) {
+            std::string s; dbg_expr(v, s);
+            fprintf(stderr, "[REGREAD] %llx r=%s w=%d -> %s\n",
+                    (unsigned long long)cur_insn_addr, reg_abi_name(r), w, s.c_str());
+        }
         if (!v) {
             /* Untracked read -> THE BACKSTOP (see unknown_reg_value): emit a clean
              * declared `in_<REG>` local for ANY register, callee-saved OR volatile.

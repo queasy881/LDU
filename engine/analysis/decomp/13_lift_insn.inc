@@ -2627,7 +2627,16 @@
                     (id==X86_INS_MULSS||id==X86_INS_MULSD) ? "*" : "/";
                 int w = (id==X86_INS_ADDSD||id==X86_INS_SUBSD||
                          id==X86_INS_MULSD||id==X86_INS_DIVSD) ? 8 : 4;
-                ExprP r = mkBinary(fop, fp_src(OP(0), w), fp_src(OP(1), w), w);
+                ExprP fa = fp_src(OP(0), w), fb = fp_src(OP(1), w);
+                if (std::getenv("DS_DBG_FPARG")) {
+                    std::string sa, sb, sr;
+                    dbg_expr(fa, sa); dbg_expr(fb, sb);
+                    dbg_expr(rvalue(OP(0)), sr);
+                    fprintf(stderr, "[FPARG] %llx %s w=%d\n  raw0=%s\n  a=%s\n  b=%s\n",
+                            (unsigned long long)in.addr, fop, w,
+                            sr.c_str(), sa.c_str(), sb.c_str());
+                }
+                ExprP r = mkBinary(fop, fa, fb, w);
                 r->is_float = true;
                 do_dst(b, OP(0), r, in.addr);
                 break;

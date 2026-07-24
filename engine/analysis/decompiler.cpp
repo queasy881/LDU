@@ -471,6 +471,33 @@ struct Expr {
                                  * position -> render `&<named_global>` (address-of a global) */
 };
 
+/* DEBUG ONLY: a structural dump of an Expr tree (kind/width/float/name), used by
+ * the DS_DBG_* instrumentation probes. Never called on a normal path. */
+static const char* ek_name(EK k) {
+    switch (k) {
+        case EK::Const: return "Const"; case EK::Reg: return "Reg";
+        case EK::Var:   return "Var";   case EK::Mem: return "Mem";
+        case EK::Unary: return "Unary"; case EK::Binary: return "Binary";
+        case EK::Cast:  return "Cast";  case EK::Call: return "Call";
+        case EK::AddrOf:return "AddrOf";case EK::Ternary: return "Ternary";
+        default: return "Str";
+    }
+}
+static void dbg_expr(const ExprP& e, std::string& out, int d = 0) {
+    if (!e) { out += "<null>"; return; }
+    if (d > 6) { out += "..."; return; }
+    out += ek_name(e->kind);
+    out += "(w=" + std::to_string(e->width) + (e->is_float ? ",F" : "");
+    if (!e->name.empty())   out += ",nm=" + e->name;
+    if (!e->op.empty())     out += ",op=" + e->op;
+    if (!e->callee.empty()) out += ",cal=" + e->callee;
+    if (e->kind == EK::Const) out += ",v=" + std::to_string(e->cval);
+    out += ")";
+    if (e->a) { out += "["; dbg_expr(e->a, out, d + 1); }
+    if (e->b) { out += " "; dbg_expr(e->b, out, d + 1); }
+    if (e->a) out += "]";
+}
+
 ExprP mkConst(int64_t v, int w = 4, bool u = false) {
     auto e = new_expr(); e->kind = EK::Const; e->cval = v;
     e->width = w; e->is_unsigned = u; return e;
@@ -1604,11 +1631,43 @@ struct Decompiler {
      * jp block empty but still labeled) and from join blocks that ended up reached
      * only by fall-through. Removing an unreferenced label is always valid C, so
      * this is a safe, general cosmetic cleanup applied to the final body. */
+    /* Labels that are ENTERED FROM OUTSIDE the emitted control flow, so no `goto`
+     * in the body ever references them and the dead-code passes must not treat
+     * them as dead. Today this is exactly the SEH funclet entries recovered from
+     * .xdata: an __except handler / __except filter is jumped to by the OS
+     * unwinder, not by the function. Without this, the whole handler body sat
+     * after the function's last `return` with an unreferenced label and
+     * strip_unreachable_after_terminator deleted it — kernel32
+     * s_AslpFileGetCrcChecksum silently lost its entire error path (a call to
+     * fun_0001f314 and its message string appeared NOWHERE in the output). */
+    std::set<std::string> extern_entry_labels;
+
+    void mark_eh_entry_labels() {
+        extern_entry_labels.clear();
+        if (!petab) return;
+        auto it = petab->eh.find(f->rva);
+        if (it == petab->eh.end()) return;
+        uint64_t lo = f->rva, hi = f->rva + (f->size ? f->size : 0);
+        if (hi <= lo && !insns.empty()) hi = insns.back().addr + insns.back().size;
+        auto note = [&](uint64_t rva) {
+            if (!rva || rva < lo || rva >= hi) return;
+            auto b = block_by_addr.find(rva);
+            if (b != block_by_addr.end()) {
+                extern_entry_labels.insert(block_label(b->second));
+                need_label.insert(b->second);
+            }
+        };
+        for (const auto& sc : it->second.seh) { note(sc.target); note(sc.filter); }
+        for (const auto& tb : it->second.cpp)
+            for (const auto& c : tb.catches) note(c.handler);
+    }
+
     std::string prune_dead_labels(const std::string& body) {
         std::set<std::string> defined, referenced;
         scan_labels(body, defined, referenced);
         std::set<std::string> dead;
-        for (auto& d : defined) if (!referenced.count(d)) dead.insert(d);
+        for (auto& d : defined)
+            if (!referenced.count(d) && !extern_entry_labels.count(d)) dead.insert(d);
         if (dead.empty()) return body;
         std::string out; out.reserve(body.size());
         size_t i = 0;
@@ -1669,7 +1728,11 @@ struct Decompiler {
             if (t.rfind("case ", 0) == 0 || t == "default:") return true;
             if (t.rfind("L_", 0) == 0) {
                 size_t c = t.find(':');
-                if (c != std::string::npos) return referenced.count(t.substr(0, c)) > 0;
+                if (c != std::string::npos) {
+                    std::string nm = t.substr(0, c);
+                    /* an unwinder entry point is reachable even with no `goto` */
+                    return referenced.count(nm) > 0 || extern_entry_labels.count(nm) > 0;
+                }
             }
             return false;
         };
@@ -5324,12 +5387,20 @@ struct Decompiler {
              * between the passes; emission decisions do not depend on it, so the two
              * passes produce identical structure. */
             need_label.clear();
+            /* Seed the labels the OS unwinder enters (SEH/C++ funclets) BEFORE
+             * pass 1, so their regions are emitted with a real label and survive
+             * the dead-code passes. Must follow the clear above. */
+            mark_eh_entry_labels();
             reset_emit();
             std::string scratch;
             {
                 emit_region(entry_block(), -1, scratch, -1);
                 for (auto& b : blocks) {
                     if (budget_tripped) break;   /* deadline: stop driving new regions */
+                    if (std::getenv("DS_DBG_UNEMIT"))
+                        fprintf(stderr, "[UNEMIT] blk%d @%llx insns=%zu structured=%d\n",
+                                b.id, (unsigned long long)b.addr, b.insn_idx.size(),
+                                (int)structured.count(b.id));
                     if (structured.count(b.id) || b.insn_idx.empty()) continue;
                     need_label.insert(b.id);
                     emit_region(b.id, -1, scratch, -1);
@@ -5496,6 +5567,16 @@ struct Decompiler {
             body = dbg + tmp;
         }
         body = prune_dead_labels(body);
+        /* Say WHY a label with no `goto` is here: it is the entry the OS unwinder
+         * jumps to. Without the note the region reads as unreachable dead code. */
+        for (const std::string& L : extern_entry_labels) {
+            size_t p = body.find(L + ":;");
+            if (p == std::string::npos) continue;
+            size_t bol = body.rfind('\n', p);
+            bol = (bol == std::string::npos) ? 0 : bol + 1;
+            body.insert(bol, "    /* EH funclet entry (unwinder target, not reached "
+                             "by this function's control flow): */\n");
+        }
         body = dedupe_label_defs(body);   /* guarantee no duplicate label survives -> always compiles */
         /* MINIMAL-GOTO policy (Hex-Rays / IDA style). The recursive structurer tries
          * as hard as it can — two-pass label discovery, short-circuit &&/|| merging,
