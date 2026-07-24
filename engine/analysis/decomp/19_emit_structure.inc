@@ -287,6 +287,21 @@
                              * authority — a `(long long)`/`(int)` operand cast means the
                              * result is an integer and a pointer dest needs the cast. */
                             bool isnull = s.rhs->kind == EK::Const && s.rhs->cval == 0 && !s.rhs->is_float;
+                            /* A POINTER-TYPED DESTINATION proves the constant is an
+                             * address, so name the global instead of printing hex.
+                             * The cast here is added as TEXT around an already-rendered
+                             * RHS, so the EK::Cast handler in render() never sees this
+                             * form and 510 kernel32 uses stayed numeric — `v6 =
+                             * (uint16_t*)0xbf340;` and then `*(uint16_t*)((char*)v8 +
+                             * v6)`, a table lookup whose table had no name anywhere. */
+                            if (!isnull && s.rhs->kind == EK::Const && !s.rhs->is_float &&
+                                !s.rhs->addr_hint && (uint64_t)s.rhs->cval > 0x1000 &&
+                                in_data_rva((uint64_t)s.rhs->cval)) {
+                                ExprP c = new_expr(*s.rhs);
+                                c->addr_hint = true;
+                                std::string g = render_const(c);
+                                if (!g.empty() && g[0] == '&') r = g;
+                            }
                             bool render_intized = (s.rhs->kind == EK::Binary) &&
                                 (r.find("(long long)") != std::string::npos ||
                                  r.find("(int)") != std::string::npos) &&

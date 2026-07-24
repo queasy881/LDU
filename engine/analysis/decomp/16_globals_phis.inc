@@ -1839,6 +1839,14 @@
         if ((uint64_t)e->cval < 0x1000) return "";
         std::string s;
         if (read_cstring((uint64_t)e->cval, s)) return "\"" + s + "\"";
+        /* WIDE literals too. This path only ever runs on a constant already PROVEN
+         * to be a pointer (see above), and read_wstring is at least as strict as
+         * read_cstring, so the same safety argument covers it. Omitting it meant a
+         * UTF-16 literal reached the output as a bare address whenever it arrived
+         * here rather than through the call-argument resolver — visible as
+         * `a3 == 0x10 ? 0x904cc : L"-w"`, where one arm of a single ternary is a
+         * string and the other is a magic number for the same kind of value. */
+        if (read_wstring((uint64_t)e->cval, s)) return "L\"" + s + "\"";
         return "";
     }
 
@@ -2145,6 +2153,26 @@
                      e->op == "(const char*)" || e->op == "(unsigned char*)")) {
                     std::string sl = try_string_lit(e->a);
                     if (!sl.empty()) return sl;
+                }
+                /* A CAST TO A POINTER is itself proof that the operand is a pointer —
+                 * the strongest possible evidence, and it is right here in the
+                 * expression rather than inferred from a callee signature. So a
+                 * constant static-data address under one is `&<global>`, exactly as
+                 * it already is when the call-argument resolver stamps addr_hint from
+                 * a ptr_param_mask. Only that one narrow producer existed, so 510
+                 * uses across 227 kernel32 functions still printed as magic numbers:
+                 * `v6 = (uint16_t*)0xbf340;` followed by `*(uint16_t*)((char*)v8 +
+                 * v6)` is a table lookup whose table has no name. Naming it makes the
+                 * same address read the same way everywhere it appears. */
+                if (e->a && e->a->kind == EK::Const && !e->a->is_float &&
+                    !e->a->addr_hint && e->op.size() >= 3 &&
+                    e->op.back() == ')' && e->op[e->op.size() - 2] == '*' &&
+                    (uint64_t)e->a->cval > 0x1000 &&
+                    in_data_rva((uint64_t)e->a->cval)) {
+                    ExprP c = new_expr(*e->a);
+                    c->addr_hint = true;
+                    std::string g = render_const(c);
+                    if (!g.empty() && g[0] == '&') return e->op + g;
                 }
                 return e->op + rsub(e->a, 14, true);
             }

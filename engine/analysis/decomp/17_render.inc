@@ -207,7 +207,20 @@
                     std::string istr = (gidx->is_float || (gidx->kind == EK::Var &&
                                         var_is_float.count(gidx->name) && var_is_float[gidx->name]))
                                        ? "(long long)" + rsub(gidx, 14) : rsub(gidx, 15);
-                    out = "((" + ety + "*)" + hex((uint64_t)gaddr->cval) + ")[" + istr + "]";
+                    /* NAME THE TABLE. Recovering the array SHAPE but leaving the base
+                     * a bare address gives `((uint8_t*)0x8dcb0)[i]` — you can see it
+                     * is a table lookup but not which table, and the same table reads
+                     * differently in every function that touches it. The index form is
+                     * itself the proof that the constant is a pointer, so reuse the
+                     * addr_hint naming that render_const already does. */
+                    std::string bstr = hex((uint64_t)gaddr->cval);
+                    if ((uint64_t)gaddr->cval > 0x1000 && in_data_rva((uint64_t)gaddr->cval)) {
+                        ExprP c = new_expr(*gaddr);
+                        c->addr_hint = true;
+                        std::string g = render_const(c);
+                        if (!g.empty() && g[0] == '&') bstr = g;
+                    }
+                    out = "((" + ety + "*)" + bstr + ")[" + istr + "]";
                     return true;
                 }
             }

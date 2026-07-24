@@ -311,6 +311,53 @@
         }
         return true;
     }
+    /* Is `rva` a position INSIDE the .rdata string pool — i.e. do the bytes right
+     * before it terminate a genuine literal of the same width?
+     *
+     * This exists so the EMPTY string can be recovered. `""` / `L""` is a real,
+     * extremely common literal (the canonical "no value" default: `AslPathCombine(
+     * dst, arg ? arg : L"", ...)`), but it is a lone NUL, so every length-based
+     * filter rejects it — and a NUL is also what every other kind of binary data is
+     * full of, which is exactly why the filter has to exist. Length alone cannot
+     * tell the two apart, so use POSITION instead: an address is the empty string
+     * only if it sits immediately after the terminator of a well-formed literal, so
+     * it is provably in a run of string data. A NUL inside a pointer table or a
+     * relocation array has binary bytes before it and is rejected.
+     *
+     * Without this, kernel32 rendered `L""` as the bare integer 0x904cc in 17
+     * functions — including `*a3 = 0x904cc;` and `wcslen(a3 ? a3 : 0x904cc)`, where
+     * the SAME address is obviously a wide string from its use — and `""` as
+     * 0x91085 in 5 more. The same constant printing as a literal in one function
+     * and a magic number in the next is precisely the ambiguity to avoid. */
+    bool in_string_pool(uint64_t rva, bool wide) {
+        const int step = wide ? 2 : 1;
+        const int MAXBACK = 512;
+        auto unit = [&](uint64_t at, uint32_t& w) -> bool {
+            uint8_t lo, hi = 0;
+            if (!read_u8(at, lo)) return false;
+            if (wide && !read_u8(at + 1, hi)) return false;
+            w = (uint32_t)lo | ((uint32_t)hi << 8);
+            return true;
+        };
+        if (rva < (uint64_t)step) return false;
+        uint32_t w;
+        /* the unit immediately before must be a terminator */
+        if (!unit(rva - step, w) || w != 0) return false;
+        /* walk further back over the literal it terminates; it must be printable
+         * and at least CSTR_MINLEN long before its own terminator (or the start of
+         * the readable region) is reached. */
+        int n = 0;
+        for (uint64_t at = rva - 2 * (uint64_t)step;
+             n < MAXBACK && at + step > at; at -= (uint64_t)step) {
+            if (!in_data_rva(at) || !unit(at, w)) break;
+            if (w == 0) break;                       /* found the literal's start */
+            if (w < 0x20 || w > 0x7e) return false;  /* binary before us -> not a pool */
+            ++n;
+            if (at < (uint64_t)step) break;
+        }
+        return n >= CSTR_MINLEN;
+    }
+
     bool read_cstring(uint64_t rva, std::string& out) {
         if (!in_data_rva(rva) || addr_writable(rva)) return false;   /* read-only data only */
         const int MINLEN = CSTR_MINLEN, MAXLEN = 4096;
@@ -325,7 +372,9 @@
             if (b < 0x20 && b != '\n' && b != '\t' && b != '\r') return false;  /* control -> data */
             raw.push_back(b);
         }
-        if (!terminated || (int)raw.size() < MINLEN) return false;
+        if (!terminated) return false;
+        if (raw.empty()) { if (!in_string_pool(rva, false)) return false; out.clear(); return true; }
+        if ((int)raw.size() < MINLEN) return false;
         bool any_high = false;
         for (uint8_t b : raw) if (b >= 0x7f) { any_high = true; break; }
         if (any_high && !valid_utf8(raw.data(), raw.size())) return false;
@@ -359,7 +408,11 @@
             if (!read_u8(rva + (uint64_t)i * 2, lo)) return false;
             if (!read_u8(rva + (uint64_t)i * 2 + 1, hi)) return false;
             uint16_t w = (uint16_t)lo | ((uint16_t)hi << 8);
-            if (w == 0) { if ((int)s.size() < MINLEN) return false; out.swap(s); return true; }
+            if (w == 0) {
+                if (s.empty()) return in_string_pool(rva, true) ? (out.clear(), true) : false;
+                if ((int)s.size() < MINLEN) return false;
+                out.swap(s); return true;
+            }
             if (w > 0x7f) return false;                  /* not representable as a plain escape */
             if (!cstr_escape_byte((uint8_t)w, s)) return false;
         }
