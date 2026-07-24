@@ -16,8 +16,11 @@
 extern "C" {
 #endif
 
-/* Open a capstone decode handle (x86-64 if is64, else x86-32). Returns an opaque
- * pointer, or NULL on failure (caller should fall back to the built-in decoder). */
+/* Open a capstone decode handle for `arch` (a ds_arch ordinal: X86=0, X64=1,
+ * ARM=2, ARM64=3); `is64` selects the x86 mode. Returns an opaque pointer, or
+ * NULL on failure (caller should fall back to the built-in decoder). */
+void* ds_cs_open_arch(int arch, int is64);
+/* x86-only shorthand, kept for callers that predate multi-arch support. */
 void* ds_cs_open(int is64);
 
 /* Close a handle from ds_cs_open. */

@@ -253,7 +253,7 @@ int ds_engine_disassemble(ds_engine* e) {
     if (!rvaset_init(&visited, e->image_size / 3 + 64)) return 2;
 
     /* Open the capstone decode handle for this run (NULL -> built-in decoder). */
-    void* dec = ds_cs_open(is64);
+    void* dec = ds_cs_open_arch((int)e->arch, is64);
 
     worklist wl;
     memset(&wl, 0, sizeof(wl));

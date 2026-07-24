@@ -54,9 +54,32 @@ if(DS_USE_CAPSTONE)
     set(CAPSTONE_BUILD_SHARED   OFF CACHE BOOL "" FORCE)
     set(CAPSTONE_BUILD_STATIC   ON  CACHE BOOL "" FORCE)
     set(CAPSTONE_INSTALL        OFF CACHE BOOL "" FORCE)
-    # Only the x86 architecture is vendored, so disable all the others.
+    # Build only the architectures whose capstone backend is actually vendored.
+    #
+    # The tree carries the X86 backend only: arch/AArch64 and arch/ARM hold a
+    # Module.h stub and no sources, so turning their flags on unconditionally
+    # fails the CMake generate step ("Cannot find source file
+    # arch/ARM/ARMDisassembler.c"). The decoder itself is already arch-aware
+    # (ds_cs_open_arch), so dropping the backend sources in is all that is needed
+    # to enable them -- hence the probe rather than a hard-coded OFF.
     set(CAPSTONE_ARCHITECTURE_DEFAULT OFF CACHE BOOL "" FORCE)
     set(CAPSTONE_X86_SUPPORT    ON  CACHE BOOL "" FORCE)
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/capstone/arch/AArch64/AArch64Disassembler.c")
+        set(CAPSTONE_AARCH64_SUPPORT ON CACHE BOOL "" FORCE)
+        set(CAPSTONE_ARM64_SUPPORT   ON CACHE BOOL "" FORCE)  # older capstone spelling
+        message(STATUS "capstone: AArch64 backend present -> ARM64 decoding enabled")
+    else()
+        # FORCE the OFF too: these are cache entries, so a stale ON from an
+        # earlier configure would survive and fail the generate step again.
+        set(CAPSTONE_AARCH64_SUPPORT OFF CACHE BOOL "" FORCE)
+        set(CAPSTONE_ARM64_SUPPORT   OFF CACHE BOOL "" FORCE)
+        message(STATUS "capstone: AArch64 backend NOT vendored -> ARM64 images will not decode")
+    endif()
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/capstone/arch/ARM/ARMDisassembler.c")
+        set(CAPSTONE_ARM_SUPPORT ON  CACHE BOOL "" FORCE)
+    else()
+        set(CAPSTONE_ARM_SUPPORT OFF CACHE BOOL "" FORCE)
+    endif()
     add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/third_party/capstone" EXCLUDE_FROM_ALL)
     target_compile_definitions(disasmengine PRIVATE DS_USE_CAPSTONE=1)
     target_link_libraries(disasmengine PUBLIC capstone)

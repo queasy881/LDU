@@ -17,18 +17,29 @@
 typedef struct {
     csh      h;
     cs_insn* insn; /* reused across cs_disasm_iter calls */
+    int      arch; /* ds_arch: which operand union the detail lives in */
 } ds_cs;
 
-void* ds_cs_open(int is64) {
+/* `arch` is a ds_arch ordinal (X86=0, X64=1, ARM=2, ARM64=3). It used to be
+ * hardcoded to CS_ARCH_X86, so an AArch64 image was decoded as x86 and produced
+ * a listing of plausible-looking garbage rather than an honest failure. */
+void* ds_cs_open_arch(int arch, int is64) {
     ds_cs* c = (ds_cs*)malloc(sizeof(ds_cs));
+    cs_arch  cs_a;
+    cs_mode  mode;
     if (!c) return NULL;
-    cs_mode mode = is64 ? CS_MODE_64 : CS_MODE_32;
-    if (cs_open(CS_ARCH_X86, mode, &c->h) != CS_ERR_OK) {
+    switch (arch) {
+        case 3:  cs_a = CS_ARCH_ARM64; mode = CS_MODE_ARM;   break;
+        case 2:  cs_a = CS_ARCH_ARM;   mode = CS_MODE_ARM;   break;
+        default: cs_a = CS_ARCH_X86;   mode = is64 ? CS_MODE_64 : CS_MODE_32; break;
+    }
+    c->arch = arch;
+    if (cs_open(cs_a, mode, &c->h) != CS_ERR_OK) {
         free(c);
         return NULL;
     }
     cs_option(c->h, CS_OPT_DETAIL, CS_OPT_ON);
-    cs_option(c->h, CS_OPT_SYNTAX, CS_OPT_SYNTAX_INTEL);
+    if (cs_a == CS_ARCH_X86) cs_option(c->h, CS_OPT_SYNTAX, CS_OPT_SYNTAX_INTEL);
     c->insn = cs_malloc(c->h);
     if (!c->insn) {
         cs_close(&c->h);
@@ -37,6 +48,8 @@ void* ds_cs_open(int is64) {
     }
     return c;
 }
+
+void* ds_cs_open(int is64) { return ds_cs_open_arch(is64 ? 1 : 0, is64); }
 
 void ds_cs_close(void* dec) {
     ds_cs* c = (ds_cs*)dec;
@@ -109,6 +122,32 @@ uint8_t ds_cs_decode(void* dec, const uint8_t* bytes, size_t max_len,
     out->ref_target = 0;
 
     cs_detail* d = in->detail;
+    /* AArch64: the branch GROUPS are arch-neutral, but the operand union is not,
+     * so the immediate has to be read out of d->arm64. Direct branches are all
+     * PC-relative and capstone has already resolved them to an absolute address
+     * in our rva space. An indirect `br`/`blr` has no static target, which is
+     * reported honestly as no reference rather than guessed. */
+    if (d && c->arch == 3) {
+        cs_arm64* a = &d->arm64;
+        int is_call = cs_insn_group(c->h, in, CS_GRP_CALL);
+        int is_jump = cs_insn_group(c->h, in, CS_GRP_JUMP);
+        if (is_call || is_jump) {
+            int i;
+            for (i = 0; i < a->op_count; i++) {
+                if (a->operands[i].type == ARM64_OP_IMM) {
+                    out->ref_target = (uint64_t)a->operands[i].imm;
+                    /* `b` is the only unconditional plain jump; b.cond / cbz /
+                     * cbnz / tbz / tbnz all fall through when not taken. */
+                    out->ref_type = is_call ? DS_REF_CALL
+                                            : (in->id == ARM64_INS_B && a->cc == ARM64_CC_AL
+                                                   ? DS_REF_JMP
+                                                   : DS_REF_BRANCH);
+                    break;
+                }
+            }
+        }
+        return len;
+    }
     if (d) {
         cs_x86* x = &d->x86;
         int is_call = cs_insn_group(c->h, in, CS_GRP_CALL);
@@ -181,6 +220,7 @@ uint8_t ds_cs_decode(void* dec, const uint8_t* bytes, size_t max_len,
 
 #else /* !DS_USE_CAPSTONE — stubs (sweep uses the built-in decoder) */
 
+void* ds_cs_open_arch(int arch, int is64) { (void)arch; (void)is64; return NULL; }
 void* ds_cs_open(int is64) { (void)is64; return NULL; }
 void ds_cs_close(void* dec) { (void)dec; }
 uint8_t ds_cs_decode(void* dec, const uint8_t* bytes, size_t max_len,
