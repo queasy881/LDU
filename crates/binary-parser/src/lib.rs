@@ -8,6 +8,7 @@
 //! `pe` and `elf` submodules and is re-exported through [`BinaryMeta::parse`].
 
 mod elf;
+mod macho;
 mod pe;
 
 /// Target instruction-set architecture. Ordinals match the engine `ds_arch`
@@ -41,6 +42,8 @@ pub enum Format {
     Pe32Plus,
     Elf32,
     Elf64,
+    MachO32,
+    MachO64,
 }
 
 /// A named symbol at an RVA (relative to `BinaryMeta::base`).
@@ -95,8 +98,10 @@ impl BinaryMeta {
             pe::parse(bytes)
         } else if bytes.starts_with(&[0x7F, b'E', b'L', b'F']) {
             elf::parse(bytes)
+        } else if macho::is_macho(bytes) {
+            macho::parse(bytes)
         } else {
-            Err("unrecognized binary format (expected PE 'MZ' or ELF magic)".to_string())
+            Err("unrecognized binary format (expected PE 'MZ', ELF, or Mach-O magic)".to_string())
         }
     }
 

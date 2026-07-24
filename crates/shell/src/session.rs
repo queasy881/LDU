@@ -388,6 +388,8 @@ pub fn format_label(f: &Format) -> &'static str {
         Format::Pe32Plus => "PE32+",
         Format::Elf32 => "ELF32",
         Format::Elf64 => "ELF64",
+        Format::MachO32 => "Mach-O 32",
+        Format::MachO64 => "Mach-O 64",
     }
 }
 

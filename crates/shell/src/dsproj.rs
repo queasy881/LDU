@@ -387,6 +387,8 @@ pub fn format_label(f: binparser::Format) -> &'static str {
         F::Pe32Plus => "PE32+",
         F::Elf32 => "ELF32",
         F::Elf64 => "ELF64",
+        F::MachO32 => "Mach-O 32",
+        F::MachO64 => "Mach-O 64",
     }
 }
 
