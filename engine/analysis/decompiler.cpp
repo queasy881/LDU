@@ -1435,6 +1435,22 @@ struct FuncSig {
      * WRONG BOUNDS looks like, and claiming that one never returns would delete live code.
      * Filled by build_sig_table; consumed by emit_stmts. */
     bool is_noreturn = false;
+    /* CALLER-SIDE evidence that this function returns a struct through a hidden
+     * buffer (MSVC x64 sret): some call site loaded RCX with the ADDRESS OF ONE OF
+     * ITS OWN LOCALS (`lea rcx,[rsp+X]` / `[rbp-X]`) immediately before the call.
+     * That is what separates an sret callee from `char* strcpy(char*, const
+     * char*)`, which also writes through arg0 and returns it but is handed a
+     * pointer the caller already had. Filled by the second pass at the end of
+     * build_sig_table; see _qa/fixtures/corpus/sretcall.cpp for the oracle.
+     *
+     * INSUFFICIENT ON ITS OWN -- measured, do not build on it as-is: passing the
+     * address of a local is simply common (`GetSystemTime(&st)`), so this alone
+     * marks 201 of kernel32's 2590 functions. The missing conjunct is the
+     * callee-side fact that it RETURNS THAT SAME POINTER (rax == incoming rcx at
+     * every ret), which is what excludes GetSystemTime-shaped callees and is
+     * still to be computed in the main loop. NOTHING CONSUMES THIS YET, so no
+     * output depends on it. */
+    bool sret_hint = false;
     /* The Win32 type this function RETURNS, propagated across the call graph. A local wrapper
      * that hands back an API's result returns that API's type, and so does a wrapper of that
      * wrapper -- which is the only way `HMODULE dll = GetDllBase();` can be recovered, since
@@ -8015,6 +8031,76 @@ void build_sig_table(ds_engine* e, std::map<uint64_t, FuncSig>& tab) {
                 fwd_thunk_of[f.rva] = tail_target;
         }
         (void)writes_eax; (void)writes_rax; (void)saw_call_result;
+    }
+
+    /* ---- CALLER-SIDE sret evidence -------------------------------------- *
+     *
+     * Whether a callee returns a struct through a hidden buffer cannot be decided
+     * from the callee: "writes through arg0 and returns it" is also exactly
+     * `char* strcpy(char*, const char*)`. The caller settles it -- for an sret it
+     * hands over the address of ONE OF ITS OWN LOCALS:
+     *
+     *     lea  rcx, [rsp+0x20]        <- &local
+     *     call mk3
+     *
+     * whereas strcpy's dst is a pointer the caller already had (a parameter, a
+     * malloc result, a global). So: scan every function again, and when a `call`
+     * to a known target is immediately preceded by `lea rcx,[rsp/rbp+disp]` with
+     * no intervening write to rcx, mark the TARGET. Bounded to a short window so
+     * this stays linear.
+     *
+     * Records the hint only; nothing consumes it yet, so output cannot move. See
+     * _qa/fixtures/corpus/sretcall.cpp, which also plants the two traps a naive
+     * detector fails: an 8-byte Vec2 returned in RAX, and copy_bytes. */
+    {
+        const int kWindow = 6;   /* lea..call distance in real MSVC output is 1-3 */
+        for (size_t fi = 0; fi < e->func_len; ++fi) {
+            const ds_func& f = e->funcs[fi];
+            if (f.rva >= e->image_size) continue;
+            uint64_t avail = e->image_size - f.rva;
+            size_t n = (size_t)((f.size && f.size <= avail) ? f.size : avail);
+            if (n == 0 || n > 0x8000) n = n ? 0x8000 : 0;
+            if (n == 0) continue;
+            cs_insn* ci = nullptr;
+            size_t count = cs_disasm(h, e->image + f.rva, n, f.rva, 0, &ci);
+            if (!count) { if (ci) cs_free(ci, count); continue; }
+            if (count > 4000) count = 4000;
+            for (size_t i = 0; i < count; ++i) {
+                if (ci[i].id != X86_INS_CALL) continue;
+                cs_x86& cx = ci[i].detail->x86;
+                if (cx.op_count < 1 || cx.operands[0].type != X86_OP_IMM) continue;
+                uint64_t tgt = (uint64_t)cx.operands[0].imm;
+                auto ti = tab.find(tgt);
+                if (ti == tab.end()) continue;
+                /* An sret callee HANDS THE BUFFER BACK in rax. Without this the
+                 * scan matches every `lea rcx,[local]; call` -- i.e. passing the
+                 * address of any local to anything, `GetSystemTime(&st)` included
+                 * -- which measured 233 of kernel32's 2590 functions. A void
+                 * callee cannot be returning a struct. */
+                if (ti->second.ret_kind == 0) continue;
+                if (ti->second.ret_kind == 3 || ti->second.ret_kind == 4) continue;  /* float in xmm0 */
+                /* walk back for `lea rcx,[rsp/rbp+d]`, stopping at any other rcx write */
+                for (size_t k = i, step = 0; k-- > 0 && step < (size_t)kWindow; ++step) {
+                    cs_x86& px = ci[k].detail->x86;
+                    if (px.op_count < 1 || px.operands[0].type != X86_OP_REG) continue;
+                    if (px.operands[0].reg != X86_REG_RCX) continue;
+                    if (ci[k].id == X86_INS_LEA && px.op_count == 2 &&
+                        px.operands[1].type == X86_OP_MEM &&
+                        (px.operands[1].mem.base == X86_REG_RSP ||
+                         px.operands[1].mem.base == X86_REG_RBP) &&
+                        px.operands[1].mem.index == X86_REG_INVALID)
+                        tab[tgt].sret_hint = true;
+                    break;   /* first rcx writer decides; anything else is not a &local */
+                }
+            }
+            cs_free(ci, count);
+        }
+        if (std::getenv("DS_DBG_SRET")) {
+            size_t nh = 0;
+            for (auto& kv : tab) if (kv.second.sret_hint) ++nh;
+            std::fprintf(stderr, "[sret] %zu of %zu functions have caller-side sret evidence\n",
+                         nh, tab.size());
+        }
     }
     cs_close(&h);
 
