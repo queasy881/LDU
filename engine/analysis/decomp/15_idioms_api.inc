@@ -133,7 +133,24 @@
          * every binary, so it overrides the pc=4 default and skips the reaching-def
          * heuristic (which cannot see a 1-arg `GetSystemMetrics` when the caller's
          * own params still sit in rdx/r8/r9). */
-        if (!cc_pc_from_sig && !indirect && !callee.empty()) {
+        /* known_api WINS over the sig table, including when the sig table already
+         * spoke. It used to be gated on `!cc_pc_from_sig`, which sounds harmless and
+         * is not: a call that reaches an API through a LOCAL JMP-THUNK gets a sigtab
+         * entry for the thunk, and a thunk's body is one `jmp`, so its recovered
+         * param_count is 0. That 0 then set cc_pc_from_sig and locked out the very
+         * override meant to fix it, so the call lifted with NO arguments —
+         *     0x5f3de  movzx r8d,[rsp+0x116]
+         *     0x5f3e7  mov   rdx,[rsp+0xb0]
+         *     0x5f3ef  mov   rcx,[rbx+0x28]
+         *     0x5f3f3  call  0x56cb0
+         * lifted as zero args, and the renderer then PADDED the call back out to the
+         * declared 3-parameter prototype with literal `0`s, printing
+         * `RtlMoveMemory(0, 0, 0)`: three real operands replaced by a confident lie
+         * about NULL. (kernel32 fn_0005ed50, 11 sites; the audit's top finding.)
+         *
+         * The API's arity is a fixed SDK fact and the thunk's is an artifact of the
+         * thunk having no body, so the fact must win. */
+        if (!indirect && !callee.empty()) {
             int aargc, ark;
             if (known_api(callee, aargc, ark)) {
                 pc = aargc; ret_kind = ark; cc_float_mask = 0;
