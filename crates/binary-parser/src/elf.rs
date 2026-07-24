@@ -76,6 +76,7 @@ struct Section {
     sh_offset: u64,
     sh_size: u64,
     sh_entsize: u64,
+    sh_name: u32,
 }
 
 pub(crate) fn parse(bytes: &[u8]) -> Result<BinaryMeta, String> {
@@ -239,15 +240,37 @@ pub(crate) fn parse(bytes: &[u8]) -> Result<BinaryMeta, String> {
                 r.u32(sh + 36).unwrap_or(0) as u64,
             )
         };
+        let sh_name = r.u32(sh).unwrap_or(0);
         sections.push(Section {
             sh_type,
             sh_link,
             sh_offset,
             sh_size,
             sh_entsize,
+            sh_name,
         });
     }
-    let _ = e_shstrndx; // section names not required for symbol recovery
+    /* Section NAMES are needed to find the .debug_* sections: DWARF sections have
+     * no distinguishing sh_type (they are SHT_PROGBITS like any other). */
+    let shstr: &[u8] = sections
+        .get(e_shstrndx)
+        .map(|s| {
+            let a = (s.sh_offset as usize).min(bytes.len());
+            let z = (s.sh_offset.saturating_add(s.sh_size) as usize).min(bytes.len());
+            bytes.get(a..z).unwrap_or(&[])
+        })
+        .unwrap_or(&[]);
+    let sec_by_name = |want: &str| -> &[u8] {
+        for s in &sections {
+            let nm = crate::rd_cstr(shstr, s.sh_name as usize, 64).unwrap_or_default();
+            if nm == want {
+                let a = (s.sh_offset as usize).min(bytes.len());
+                let z = (s.sh_offset.saturating_add(s.sh_size) as usize).min(bytes.len());
+                return bytes.get(a..z).unwrap_or(&[]);
+            }
+        }
+        &[]
+    };
 
     let mut exports: Vec<Symbol> = Vec::new();
     let mut imports: Vec<Symbol> = Vec::new();
@@ -329,6 +352,30 @@ pub(crate) fn parse(bytes: &[u8]) -> Result<BinaryMeta, String> {
         // If .symtab was found and produced results, that's the best source;
         // keep scanning .dynsym too so PLT/import names are also captured, but
         // exports from .symtab already cover defined functions. Dedup below.
+    }
+
+    /* DWARF names, when the binary was built with -g.
+     *
+     * .symtab has no entry for a `static` function that was inlined away from the
+     * dynamic table, and no parameter names at all, so a -g binary was decompiling
+     * as blind as a stripped one. Appended AFTER the symtab pass so dedup keeps
+     * the symtab name where both exist (it is the linker's own), and DWARF only
+     * fills the gaps. A DWARF low_pc is a link-time virtual address, so it is
+     * rebased through the same PT_LOAD mapping the segments used. */
+    {
+        let secs = crate::dwarf::Sections {
+            info: sec_by_name(".debug_info"),
+            abbrev: sec_by_name(".debug_abbrev"),
+            str_: sec_by_name(".debug_str"),
+            line_str: sec_by_name(".debug_line_str"),
+            str_offsets: sec_by_name(".debug_str_offsets"),
+        };
+        if !secs.info.is_empty() {
+            let base = base;
+            for s in crate::dwarf::functions(secs, |va| va.checked_sub(base)) {
+                exports.push(s);
+            }
+        }
     }
 
     dedup_symbols(&mut exports);

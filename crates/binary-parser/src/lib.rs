@@ -7,6 +7,7 @@
 //! Public API is the frozen contract; format-specific parsing lives in the
 //! `pe` and `elf` submodules and is re-exported through [`BinaryMeta::parse`].
 
+mod dwarf;
 mod elf;
 mod macho;
 mod pe;
