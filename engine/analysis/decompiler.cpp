@@ -598,8 +598,15 @@ ExprP mkTernary(ExprP cond, ExprP t, ExprP f, int w) {
     auto e = new_expr(); e->kind = EK::Ternary;
     e->a = cond; e->b = t; e->c = f; e->width = w; return e;
 }
-ExprP mkText(const std::string& t, int w = 8) {
+/* `src_rva` is the address the literal was read FROM, recorded so a later pass
+ * can re-read it. A Rust `&str` is a (ptr,len) pair and its literals are not
+ * NUL-terminated, so the read-to-the-next-NUL that produced `t` here may have
+ * over-read into the neighbouring literals; the call-argument renderer can only
+ * repair that if it can still see where the bytes came from (see
+ * try_rust_str_slice). 0 = unknown. cval is otherwise unused on a Str node. */
+ExprP mkText(const std::string& t, int w = 8, uint64_t src_rva = 0) {
     auto e = new_expr(); e->kind = EK::Str; e->text = t;
+    e->cval = (int64_t)src_rva;
     e->width = w; return e;
 }
 
@@ -873,6 +880,80 @@ static std::shared_ptr<const PeTables> get_pe_tables(const ds_engine* e) {
     auto t = compute_pe_tables(e);
     cache[e] = t;
     return t;
+}
+
+/* Literal byte-substring search over the whole image (memchr-accelerated on the
+ * first byte). Only ever run a handful of times per image — see is_rust_image. */
+static bool image_contains(const ds_engine* e, const char* pat, size_t n) {
+    if (!e || !e->image || e->image_size < n || n == 0) return false;
+    const uint8_t* p   = e->image;
+    const uint8_t* end = e->image + (e->image_size - n) + 1;
+    while (p < end) {
+        const uint8_t* q = (const uint8_t*)std::memchr(p, (unsigned char)pat[0], (size_t)(end - p));
+        if (!q) return false;
+        if (std::memcmp(q, pat, n) == 0) return true;
+        p = q + 1;
+    }
+    return false;
+}
+
+/* Is this image a RUST binary?
+ *
+ * Rust's `&str` is a (pointer, length) pair and its literals are packed into
+ * .rdata back-to-back WITHOUT NUL terminators, so the C `read to the next NUL`
+ * rule walks straight off the end of one literal into its neighbours. Fixing
+ * that needs a (ptr,len) slice rule — but the same rule applied to C would
+ * start rendering `strncmp(s, "hello", 3)` as `"hel"`, which is wrong in the
+ * other direction. The two shapes are locally indistinguishable, so the slice
+ * interpretation is gated on the IMAGE being Rust and nothing about C output
+ * can change.
+ *
+ * The markers are `core::panic::Location` payloads — the source paths rustc
+ * bakes into panic sites. They live in .rdata, are referenced by code rather
+ * than being debug info, and so survive a fully stripped release build (this
+ * project's own exe has NumberOfSymbols=0 and still carries 84 of them).
+ * Measured counts:
+ *
+ *   marker                disasmstudio flirtgen cargo rustdoc rustfmt | k32 ntdll user32 go-git-lfs 3x C++ dll
+ *   "/rustc/"                       84       31   464     207      88 |   0     0      0          0        0
+ *   "library\\core\\src\\"          23       11   122      20      25 |   0     0      0          0        0
+ *   "library\\std\\src\\"           46       17   184      43      19 |   0     0      0          0        0
+ *   "RUST_BACKTRACE"                 3        3     4       0       0 |   0     0      0          0        0
+ *
+ * RUST_BACKTRACE is deliberately NOT used: it is absent from dylib-std builds
+ * (rustdoc/rustfmt above), so it false-negatives. The three that remain are
+ * OR-combined so a build that drops one still matches.
+ *
+ * False positives are the only dangerous direction — they would change C
+ * output. A sweep of 10,644 binaries / 9.97 GiB (all of System32 + SysWOW64 +
+ * Git + LLVM + three Pythons + CMake + MinGW) found ZERO: every `/rustc/` hit
+ * was an independently-confirmable Rust image (Microsoft's Rust sudo.exe, the
+ * `_rs` kernel component, ~20 Rust .pyd extensions). A false NEGATIVE is
+ * harmless — it is exactly today's behaviour.
+ *
+ * Note the mixed separators: the `/rustc/<40-hex>/` prefix is rustc's synthetic
+ * remap and uses forward slashes on every host, while the path tail is native,
+ * hence "library\\core\\src\\" on Windows.
+ *
+ * Cached per engine: the scan is O(image) and decompile() runs per function.
+ * Gated by DS_NO_RUSTSTR. */
+static bool compute_is_rust_image(const ds_engine* e) {
+    static const char* const MARKS[] = { "/rustc/", "library\\core\\src\\", "library\\std\\src\\" };
+    for (const char* m : MARKS)
+        if (image_contains(e, m, std::strlen(m))) return true;
+    return false;
+}
+
+static bool is_rust_image(const ds_engine* e) {
+    if (!e || std::getenv("DS_NO_RUSTSTR")) return false;
+    static std::mutex m;
+    static std::map<const ds_engine*, bool> cache;
+    std::lock_guard<std::mutex> lk(m);
+    auto it = cache.find(e);
+    if (it != cache.end()) return it->second;
+    bool v = compute_is_rust_image(e);
+    cache[e] = v;
+    return v;
 }
 
 bool isConst(const ExprP& e) { return e && e->kind == EK::Const; }

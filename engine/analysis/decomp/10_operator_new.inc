@@ -179,7 +179,11 @@
              * `return "foo";` instead of `return 0xe2f0;`. DS_NO_LEASTR. */
             if (!getenv("DS_NO_LEASTR")) {
                 std::string s;
-                if (read_cstring(abs, s)) return mkText("\"" + s + "\"", 8);
+                /* `abs` is recorded on the node: on a Rust image this literal is a
+                 * &str whose real end is the LENGTH in the next argument, not the
+                 * next NUL, and the call-arg renderer needs the source address to
+                 * re-read it. See mkText / try_rust_str_slice. */
+                if (read_cstring(abs, s)) return mkText("\"" + s + "\"", 8, abs);
                 /* UTF-16 twin: `lea rcx,[wide_str]` (an LPCWSTR argument or a stored
                  * wchar_t* — `28 00 6e 00 ...` = L"(null)") is invisible to the byte-wise
                  * read_cstring, which sees '(' then a NUL and gives up, leaving a bare

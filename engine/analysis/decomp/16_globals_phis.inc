@@ -1889,7 +1889,47 @@
     /* Render one call argument. For a decimal-preferred API, a small non-negative
      * integer constant (peeling any widening cast) is emitted in decimal; anything
      * else falls back to the normal string-literal / expression rendering. */
-    std::string call_arg_text(const ExprP& arg, bool dec_api) {
+    /* Rust `&str` passed as the ABI's (ptr, len) register pair: if `arg` is a
+     * constant pointer into read-only data and `next` is a constant length, the
+     * length is authoritative and the literal is NOT NUL-terminated. Returns the
+     * quoted literal, or "" when this is not that shape.
+     *
+     * Gated on the image being Rust (see is_rust_image) so C output cannot move:
+     * the same pair shape in C is `strncmp(s, "hello", 3)`, where truncating to
+     * `"hel"` would be wrong in the other direction, and the two are locally
+     * indistinguishable. */
+    std::string try_rust_str_slice(const ExprP& arg, const ExprP& next) {
+        if (!arg || !next) return "";
+        if (!is_rust_image(e)) return "";
+        /* Both halves of the pair can arrive behind a widening cast, exactly as
+         * try_string_lit's caller peels them before asking. */
+        ExprP p = arg;
+        while (p && p->kind == EK::Cast && p->a) p = p->a;
+        /* The pointer reaches us in one of two shapes:
+         *   EK::Const — a bare address that nothing has interpreted yet;
+         *   EK::Str   — `lea reg,[rip+str]` ALREADY turned it into a literal at lift
+         *               time (10_operator_new.inc), which for a Rust &str means it
+         *               was over-read to the next NUL. mkText recorded the source
+         *               address on the node precisely so it can be re-read here.
+         * A wide (L"...") literal is never a &str, so it is left alone. */
+        if (!p) return "";
+        if (p->kind == EK::Str) {
+            if (p->cval == 0) return "";                        /* no recorded source */
+            if (p->text.rfind("L\"", 0) == 0) return "";         /* UTF-16 is never a &str */
+        } else if (p->kind != EK::Const || p->is_float) {
+            return "";
+        }
+        if ((uint64_t)p->cval < 0x1000) return "";
+        ExprP n = next;
+        while (n && n->kind == EK::Cast && n->a) n = n->a;
+        if (!n || n->kind != EK::Const || n->is_float) return "";
+        if (n->cval <= 0) return "";
+        std::string s;
+        if (!read_rust_str((uint64_t)p->cval, (uint64_t)n->cval, s)) return "";
+        return "\"" + s + "\"";
+    }
+
+    std::string call_arg_text(const ExprP& arg, bool dec_api, const ExprP& next = ExprP()) {
         /* A subnormal "float" const in call-argument (VALUE) position is a
          * misclassified small integer that flowed into a float-typed param slot —
          * pass its integer value (`1`), not the bit-reinterpret `1.4013e-45f`. Safe
@@ -1934,6 +1974,12 @@
             !getenv("DS_NO_ARGCASTCLEAN")) {
             a = a->a;
         }
+        /* A Rust &str is a (ptr,len) pair whose LENGTH is authoritative; its
+         * literals are not NUL-terminated, so try_string_lit's read-to-the-next-NUL
+         * would over-read this exact case into the neighbouring literals. Must be
+         * tried first, and only ever fires on a Rust image. */
+        std::string rs = try_rust_str_slice(a, next);
+        if (!rs.empty()) return rs;
         std::string sl = try_string_lit(a);
         return sl.empty() ? render(a) : sl;
     }
@@ -2772,14 +2818,17 @@
                     for (int i = 0; i < tp_pc; ++i) {
                         if (i) s += ", ";
                         if (i >= (int)e->args.size()) { s += "0"; continue; }
-                        s += call_arg_text(e->args[i], dec_api);
+                        s += call_arg_text(e->args[i], dec_api,
+                                           i + 1 < (int)e->args.size() ? e->args[i + 1] : ExprP());
                     }
                     s += ")";
                     return s;
                 }
                 for (size_t i = 0; i < e->args.size(); ++i) {
                     if (i) s += ", ";
-                    s += call_arg_text(e->args[i], dec_api);   /* call arg = pointer context */
+                    /* args[i+1] is the &str length slot for the Rust slice rule */
+                    s += call_arg_text(e->args[i], dec_api,
+                                       i + 1 < e->args.size() ? e->args[i + 1] : ExprP());
                 }
                 s += ")";
                 /* UNRESOLVED virtual dispatch: the shape was a `*(*obj + off)` vtable call but

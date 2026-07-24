@@ -6,49 +6,7 @@ the reasoning behind each change lives in its commit message.
 
 ---
 
-## In progress: Rust binaries print the WRONG string literal
-
-**Status: diagnosed, not yet fixed. This is a correctness bug, not cosmetics.**
-
-Rust's `&str` is a `(pointer, length)` pair, and its literals are packed into
-`.rdata` back-to-back **with no NUL terminators**. Confirmed in
-`target/release/disasmstudio.exe`, where one 25-byte run
-
-```
-\n}[{,\n: ]"falsetruenull,:
-```
-
-is the backing store for `"\n"`, `"}"`, `"["`, `"{"`, `","`, `": "`, `"]"`,
-`"\""`, `"false"`, `"true"`, `"null"` and `","` — every one of them addressed as
-an offset plus a length into that single run.
-
-`read_cstring` assumes C semantics and reads to the next NUL, so it runs straight
-off the end of the intended literal and into its neighbours. Real output from
-`fn_0007ee10` (a serde_json deserializer):
-
-| emitted | length arg | actually means |
-|---|---|---|
-| `"truenull,:"` | 4 | `"true"` |
-| `"falsetruenull,:"` | 5 | `"false"` |
-| `"{,\n: ]\"falsetruenull,:"` | 1 | `"{"` |
-
-The length is sitting right there in the next argument. This is worse than
-printing a bare address: it is a confident, wrong answer.
-
-**Why it is not fixed yet.** The obvious rule — "truncate a string argument to the
-integer argument that follows it" — breaks C. `strncmp(s, "hello", 3)` would start
-rendering `"hel"`, which is equally wrong in the other direction. The two cases
-are locally indistinguishable: in both, the byte at `ptr + len` is not a NUL.
-
-The intended fix is to gate the slice interpretation on the image actually being
-a Rust binary, so nothing about C output can change. Candidate markers (`/rustc/`,
-`library\std\src\`, `RUST_BACKTRACE`, `core::panicking`, `rust_begin_unwind`) were
-being checked against a Rust binary, kernel32, ntdll and a Go binary when this
-note was written; the marker has to hit the Rust image and miss all three others.
-The engine already has `analysis/rust_demangle.cpp`, so Rust awareness is not new
-here — there is just no "is this a Rust image" flag yet.
-
-## Also open: Rust goto density
+## Open: Rust goto density
 
 `disasmstudio.exe` produces 11,545 gotos across 377 functions; kernel32 produces
 1,379 across 206. The gotos are concentrated — in a 1200-function sample, 300
@@ -64,6 +22,67 @@ has none, so unmodeled SIMD is not the whole story.
 ---
 
 ## Done
+
+### Rust `&str` printed the WRONG string literal
+
+Rust's `&str` is a `(pointer, length)` pair and its literals are packed into
+`.rdata` back-to-back **with no NUL terminators**, so the C read-to-the-next-NUL
+ran off the end of the intended literal into its neighbours — a confident, wrong
+answer. `<bool as Display>::fmt` was the cleanest case:
+
+```c
+return core__fmt__Formatter__pad(a2, "falsetrue", 5, a4);   // meant "false"
+```
+
+The length was sitting in the very next argument the whole time.
+
+**The diagnosis above was in the wrong place.** The note assumed `read_cstring`
+was over-reading at *render* time, which would have made the fix local to
+`try_string_lit`. It is not: `lea reg,[rip+str]` turns the address into a literal
+at **lift** time (`10_operator_new.inc`, the `DS_NO_LEASTR` path), so by the time
+the call arguments are assembled the node is already an `EK::Str` holding the
+over-read text and the source address is gone. Rendering could no longer see
+*where* the bytes came from, which is why the pair rule alone did nothing.
+
+So `mkText` now records the address it read from, and the call-argument renderer
+re-reads that address with the authoritative length. Three pieces:
+
+- `is_rust_image()` (`decompiler.cpp`, cached per engine beside `get_pe_tables`)
+- `read_rust_str(rva, len)` (`01_naming_reads.inc`) — length-terminated, no
+  MINLEN, an interior NUL rejects the run
+- `try_rust_str_slice()` (`16_globals_phis.inc`) — takes `args[i+1]` as the
+  length; accepts the pointer as either a bare `Const` or an already-built `Str`
+  carrying its source rva
+
+The marker is `/rustc/` OR `library\core\src\` OR `library\std\src\` — panic
+`Location` payloads that live in `.rdata`, are referenced by code rather than
+being debug info, and survive a fully stripped build (this project's own exe has
+`NumberOfSymbols=0` and still carries 84). `RUST_BACKTRACE` was measured and
+**rejected**: it is absent from dylib-std builds (rustdoc, rustfmt).
+
+A false positive is the only dangerous direction, since it would change C output.
+A sweep of **10,644 binaries / 9.97 GiB** (all of System32 + SysWOW64, Git, LLVM,
+three Pythons, CMake, MinGW) found **zero** — every `/rustc/` hit was an
+independently-confirmable Rust image (Microsoft's Rust `sudo.exe`, the `_rs`
+kernel component, ~20 Rust `.pyd` extensions). A false negative is harmless: it
+is exactly the old behaviour.
+
+Result on `disasmstudio.exe` (1200 fns): 158 functions changed, literals ≥40
+chars 552 -> 409, leaked `cargo\registry` paths 130 -> 81. The serde
+deserializer's nine sites all read correctly now (`"true"`, `"false"`, `"null"`,
+`"["`, `"{"`, `",\n"`).
+
+Proof that C is untouched — output **byte-identical** with the fix on and off:
+kernel32 701 fns, ntdll 601 fns, a Go binary 251 fns. `throughput` on kernel32
+still asserts parallel == serial across 2590 fns (228 fns/s, 5.7x); `stress`
+reports 0 phantom leaks. Gated `DS_NO_RUSTSTR`.
+
+**Residual, deliberately not fixed.** Only a call argument has a length sitting
+next to it. A `&str` pointer reaching a non-call position (a struct store, a
+return value) still over-reads — that is most of the 409 literals that remain.
+One site also renders `"fals"` (ptr to `"false"`, length 4): the pair itself was
+mis-recovered upstream, so the rule faithfully prints what it was given. Both are
+narrower and less wrong than what they replaced, but neither is *right*.
 
 ### Go function names from the embedded pclntab (`4846958`)
 

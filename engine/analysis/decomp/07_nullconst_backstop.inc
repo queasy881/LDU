@@ -673,7 +673,7 @@
                 if (tgt >= e->base && tgt - e->base < e->image_size) {
                     std::string s;
                     if (read_cstring(tgt - e->base, s))
-                        return mkText("\"" + s + "\"", 8);
+                        return mkText("\"" + s + "\"", 8, tgt - e->base);
                 }
             }
             if (ok) return mkConst(cv, width, false);

@@ -384,6 +384,50 @@
         out.swap(s);
         return true;
     }
+    /* A Rust `&str`: an EXPLICIT (pointer, length) pair, NOT NUL-terminated.
+     *
+     * rustc packs literals into .rdata back-to-back with no terminators, so one
+     * 25-byte run backs `"\n"`, `"}"`, `"["`, `"{"`, `","`, `": "`, `"]"`, `"\""`,
+     * `"false"`, `"true"` and `"null"` — every one of them an offset plus a length
+     * into that single run. read_cstring's read-to-the-next-NUL then runs off the
+     * end of the intended literal and into its neighbours, so a 4-byte `"true"`
+     * printed as `"truenull,:"` — a confident, WRONG answer.
+     *
+     * Here the length is authoritative and no terminator is required. Deliberately
+     * has no MINLEN: the 1-byte literals (`","`, `"{"`) are exactly the ones the
+     * NUL rule mangles worst. Everything else matches read_cstring's filters — the
+     * whole run must be read-only, mapped, control-free and valid UTF-8 — plus an
+     * interior NUL REJECTS the run, since a NUL inside a claimed str means the
+     * pair was never a str to begin with.
+     *
+     * Callers must gate on is_rust_image(); see the note there for why the rule
+     * cannot be applied to C. */
+    bool read_rust_str(uint64_t rva, uint64_t len, std::string& out) {
+        const uint64_t MAXLEN = 4096;
+        if (len == 0 || len > MAXLEN) return false;
+        if (rva + len < rva) return false;                            /* wrap */
+        /* first AND last byte read-only + mapped; read_u8 covers the interior */
+        if (!in_data_rva(rva) || addr_writable(rva)) return false;
+        if (!in_data_rva(rva + len - 1) || addr_writable(rva + len - 1)) return false;
+        std::vector<uint8_t> raw;
+        raw.reserve((size_t)len);
+        for (uint64_t i = 0; i < len; ++i) {
+            uint8_t b;
+            if (!read_u8(rva + i, b)) return false;
+            if (b == 0) return false;                                 /* not a str slice */
+            if (b < 0x20 && b != '\n' && b != '\t' && b != '\r') return false;
+            raw.push_back(b);
+        }
+        bool any_high = false;
+        for (uint8_t b : raw) if (b >= 0x7f) { any_high = true; break; }
+        if (any_high && !valid_utf8(raw.data(), raw.size())) return false;
+        std::string s;
+        for (uint8_t b : raw)
+            if (!cstr_escape_byte(b, s, /*allow_high=*/true)) return false;
+        out.swap(s);
+        return true;
+    }
+
     /* The UTF-16 twin of read_cstring. A wide literal is invisible to read_cstring by
      * construction: `L"VALORANT-Win64-Shipping.exe"` is the bytes 56 00 41 00 4c 00 ..., so a
      * byte-wise reader sees 'V' then a NUL and gives up -- which is why every LPCWSTR argument
