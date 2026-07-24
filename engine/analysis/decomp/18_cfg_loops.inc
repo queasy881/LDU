@@ -393,6 +393,26 @@
              * belongs here too, but `struct_class` is local to the struct pass in
              * 09_structs.inc, not a member — plumbing it out is its own change. */
         }
+        /* (g) PARAMETERS READ AS argN, not aN.
+         *
+         * `a1` is the engine's internal slot id; `arg1` is what a person calls it.
+         * A pure display alias through the same `autoname` map as everything above,
+         * so every type map, struct tag (`s_<fn>_a1`) and analysis key stays on the
+         * canonical name and NOTHING about the recovered semantics moves.
+         *
+         * Skipped for a parameter that already earned a better name from an API
+         * contract (Dst/Src/Size) — `arg1` is strictly less informative — and for
+         * any argN some local already owns. DS_NO_ARGRENAME. */
+        if (!std::getenv("DS_NO_ARGRENAME")) {
+            for (int i = 0; i < num_params; ++i) {
+                std::string canon = "a" + std::to_string(i + 1);
+                if (autoname.count(canon)) continue;      /* API-derived name wins */
+                std::string want = "arg" + std::to_string(i + 1);
+                if (used.count(want)) continue;           /* a local already owns it */
+                autoname[canon] = want;
+                used.insert(want);
+            }
+        }
     }
 
     /* D1: TEMP-WIDTH NARROWING via a VALUE-RANGE FIXPOINT (kill `(int)tN` cast noise).

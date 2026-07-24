@@ -6032,8 +6032,12 @@ struct Decompiler {
             auto isid = [](char c){ return c=='_' || (c>='0'&&c<='9') || (c>='a'&&c<='z') || (c>='A'&&c<='Z'); };
             bool self_rec = !self_fname.empty() && body.find(self_fname + "(") != std::string::npos;
             auto used = [&](int p) -> bool {
-                std::string nm = "a" + std::to_string(p);
-                for (auto& kv : slot_init_param) if (kv.second == nm) return true;  /* loop-carried */
+                /* The body carries the DISPLAY name (aN was aliased to argN by
+                 * compute_autonames), so searching for the canonical name finds
+                 * nothing and prunes a parameter the body still references -- an
+                 * `'arg2' undeclared` that broke 42 of 60 kernel32 functions. */
+                std::string nm = disp("a" + std::to_string(p));
+                for (auto& kv : slot_init_param) if (kv.second == "a" + std::to_string(p)) return true;  /* loop-carried */
                 for (size_t pos = 0; (pos = body.find(nm, pos)) != std::string::npos; pos += nm.size()) {
                     bool lb = (pos == 0) || !isid(body[pos-1]);
                     bool rb = (pos+nm.size() >= body.size()) || !isid(body[pos+nm.size()]);
@@ -6066,10 +6070,11 @@ struct Decompiler {
                 if (i > first_param) params += ", ";
                 std::string nm = "a" + std::to_string(i + 1);
                 std::string ty = decl_type(nm);
+                std::string dn = disp(nm);   /* aN -> argN (see compute_autonames) */
                 /* pointer types already carry `*`; place name without extra space
-                 * collapse so `int* a1` reads cleanly */
-                if (!ty.empty() && ty.back() == '*') params += ty + nm;
-                else params += ty + " " + nm;
+                 * collapse so `int* arg1` reads cleanly */
+                if (!ty.empty() && ty.back() == '*') params += ty + dn;
+                else params += ty + " " + dn;
             }
         }
 
@@ -6167,8 +6172,10 @@ struct Decompiler {
         }
         auto uninit_suffix = [&](const std::string& nm) -> std::string {
             if (!maybe_uninit.count(nm)) return std::string();
+            /* the initializer is a PARAMETER name, so it needs the same display
+             * alias the signature and every Var use get (aN -> argN) */
             auto it = reuse_local_init.find(nm);
-            if (it != reuse_local_init.end()) return " = " + it->second;
+            if (it != reuse_local_init.end()) return " = " + disp(it->second);
             return " = 0";
         };
 
