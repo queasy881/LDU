@@ -22,6 +22,28 @@
                     return n.substr(0, n.size() - sufc.size()); }
             }
         }
+        /* NOTE — an ADJUSTED SUB-VTABLE does not resolve here, deliberately.
+         *
+         * A class with a virtual base has several vtables: the primary one plus an
+         * adjusted vtable per virtual-base subobject. An object's vfptr may target
+         * any of them, and the RTTI scan seeds `<Class>__vftable` only at the one it
+         * walked, so a secondary vtable misses the exact match above. std::cin hits
+         * this — basic_istream derives virtually from basic_ios, and the recovered
+         * class name even records the adjustment (`..._off24`).
+         *
+         * Resolving it by taking the NEAREST seeded vtable at or below the address
+         * was tried and REVERTED: std::cin's vfptr has no seeded vtable below it that
+         * belongs to it, so nearest-below silently attributed the class of whatever
+         * was laid out earlier in .rdata and confidently rendered cin as a
+         * `std::basic_filebuf`. Bounding the gap does not fix that — the correct
+         * vtable is not seeded at ALL, so any proximity rule is guessing which class
+         * a pointer belongs to. A wrong class name is worse than none: it is exactly
+         * the kind of plausible lie the rest of this file refuses to emit.
+         *
+         * The real fix is upstream — seed a symbol for EVERY vtable a class owns
+         * (walk the RTTIClassHierarchyDescriptor's base array and the vbtable rather
+         * than only the vtable the COL scan landed on), after which the exact match
+         * above resolves these with no proximity heuristic at all. */
         return "";
     }
 
