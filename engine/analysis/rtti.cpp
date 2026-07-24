@@ -806,6 +806,18 @@ extern "C" void ds_engine_scan_string_names(ds_engine* e) {
  * printf/fprintf (values -> output) or scanf/sscanf (stack-address args -> input). The
  * format position (rcx=arg0 -> printf/scanf; rdx=arg1 -> fprintf/sscanf) picks the variant.
  * Naming-only, runs before resolve_symbols so all call sites use the name. DS_NO_FMTFN. */
+/* Is `addr` (VA or RVA) the ENTRY of a recovered function? e->funcs is sorted by
+ * rva, so this is a binary search. Used to tell a tail call from a local jump. */
+static bool func_at_rva(const ds_engine* e, uint64_t addr) {
+    uint64_t rva = (addr >= e->base) ? addr - e->base : addr;
+    size_t lo = 0, hi = e->func_len;
+    while (lo < hi) {
+        size_t mid = lo + ((hi - lo) >> 1);
+        if (e->funcs[mid].rva < rva) lo = mid + 1; else hi = mid;
+    }
+    return lo < e->func_len && e->funcs[lo].rva == rva;
+}
+
 extern "C" void ds_engine_scan_format_fns(ds_engine* e) {
     if (std::getenv("DS_NO_FMTFN")) return;
     if (!e || e->arch != DS_ARCH_X64 || !e->image || !e->insn_len) return;
@@ -815,7 +827,20 @@ extern "C" void ds_engine_scan_format_fns(ds_engine* e) {
         return r=="rcx"?0 : r=="rdx"?1 : r=="r8"?2 : r=="r9"?3 : -1; };
     for (size_t i = 0; i < e->insn_len; ++i) {
         const ds_insn* call = &e->insns[i];
-        if (call->ref_type != DS_REF_CALL || !call->ref_target) continue;
+        if (!call->ref_target) continue;
+        /* A TAIL CALL counts as a call site. `return printf(fmt, x);` compiles under
+         * /O2 to `lea rcx,[fmt]; ... ; jmp printf` — a DS_REF_JMP, not a DS_REF_CALL.
+         * Only counting real calls meant printf's sites were invisible whenever the
+         * caller returned the result directly, which is the common shape for thin
+         * wrappers: measured on _qa/fixtures/iotest, printf aggregated ZERO sites
+         * while scanf (whose callers use the value, so it stays a real call) got
+         * two. That is the whole of "printf is sometimes detected and sometimes
+         * not" — it tracked the caller's return shape, not printf.
+         * A jmp is only a tail call when it lands on a function ENTRY; an
+         * intra-function jump is control flow and must not count. */
+        bool is_call = (call->ref_type == DS_REF_CALL);
+        bool is_tail = (call->ref_type == DS_REF_JMP) && func_at_rva(e, call->ref_target);
+        if (!is_call && !is_tail) continue;
         uint64_t F = (call->ref_target >= e->base) ? call->ref_target - e->base : call->ref_target;
         int fmt_pos = -1; unsigned stack_mask = 0; bool fmt_has_s = false;
         for (size_t b = i; b-- > 0 && i - b <= 14; ) {   /* scan the arg-setup window before the call */
@@ -854,6 +879,10 @@ extern "C" void ds_engine_scan_format_fns(ds_engine* e) {
          * one-off coincidence. Note this pass is a FALLBACK: in the app, FLIRT
          * usually names a statically-linked CRT printf first (the batch dump tool
          * does not run FLIRT, which is why it shows up more often there). */
+        if (std::getenv("DS_DBG_FMTFN"))
+            fprintf(stderr, "[fmtfn] F=%#llx sites=%d pos=[%d,%d,%d,%d] after=%d before=%d has_s=%d\n",
+                    (unsigned long long)kv.first, a.sites, a.pos[0], a.pos[1], a.pos[2], a.pos[3],
+                    a.after_sites, a.before_sites, (int)a.has_s);
         if (a.sites < 2) continue;
         uint64_t F = kv.first;
         bool named = false;                              /* only name still-anonymous funcs */

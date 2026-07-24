@@ -335,9 +335,22 @@
         int n_opaque = 0;
         for (auto& kv : opaque_ops) {
             if (body.find(kv.first + "(") == std::string::npos) continue;
+            /* An intrinsic we emit a real DEFINITION for is modelled, not opaque —
+             * the reader can see exactly what it computes. Counting it as unmodelled
+             * would understate confidence for something fully specified. */
+            if (is_modelled_intrinsic(kv.first)) continue;
             op.push_back({ kv.first, kv.second });
             n_opaque += kv.second;
         }
+        /* DS_OPAQUE_CENSUS: machine-readable tally of the GENUINELY unmodelled ops,
+         * taken from the opaque_ops counter rather than by grepping the text. The
+         * distinction matters: most `__`-prefixed names in the output
+         * (__readgsqword/__umulh/__min/...) are exactly modelled and have real
+         * construction sites, so a text scan brands them unmodelled when they are
+         * not. Aggregate across a whole binary to rank what is worth modelling. */
+        if (std::getenv("DS_OPAQUE_CENSUS"))
+            for (auto& kv : op)
+                fprintf(stderr, "OPAQUE %s %d\n", kv.first.c_str(), kv.second);
         std::sort(op.begin(), op.end(), [](const std::pair<std::string,int>& a,
                                            const std::pair<std::string,int>& b) {
             if (a.second != b.second) return a.second > b.second;

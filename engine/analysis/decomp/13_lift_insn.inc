@@ -92,12 +92,37 @@
             {"aesenc","_mm_aesenc_si128"},{"aesenclast","_mm_aesenclast_si128"},{"aesdec","_mm_aesdec_si128"},
             {"aesdeclast","_mm_aesdeclast_si128"},{"aesimc","_mm_aesimc_si128"},{"aeskeygenassist","_mm_aeskeygenassist_si128"},
             {"pclmulqdq","_mm_clmulepi64_si128"},
+            /* lane extract / insert. Both are (vector, imm) or (vector, value, imm)
+             * forms whose operands the opaque-call capture reproduces reliably, so
+             * unlike the cvt* family above they are safe to give their builtin
+             * names. `pextrw` alone accounted for 24 sites still reading as the
+             * home-grown `__pextrw`. */
+            {"pextrb","_mm_extract_epi8"},{"pextrw","_mm_extract_epi16"},
+            {"pextrd","_mm_extract_epi32"},{"pextrq","_mm_extract_epi64"},
+            {"pinsrb","_mm_insert_epi8"},{"pinsrw","_mm_insert_epi16"},
+            {"pinsrd","_mm_insert_epi32"},{"pinsrq","_mm_insert_epi64"},
         };
         std::string key = mnem;
         auto it = T.find(key);
         if (it == T.end() && key.size() > 1 && key[0] == 'v') { it = T.find(key.substr(1)); }  /* VEX 128-bit */
         static const std::string none;
         return it == T.end() ? none : it->second;
+    }
+
+    /* The name an UNMODELLED op should be called by: the canonical Intel intrinsic
+     * when the table has one (so it reads `_mm_srli_si128(x)` — the name a reverse
+     * engineer greps for, and what Hex-Rays/IDA print), else the `__<mnem>`
+     * fallback.
+     *
+     * EVERY minting site must go through this. Five of the six sites built
+     * `"__" + sani(mnem)` directly, so a mnemonic that IS in the table still came
+     * out as the home-grown form depending on which path happened to lift it —
+     * `psrldq` maps to `_mm_srli_si128` and was nonetheless reported as
+     * `__psrldq` 96 times in the census. The table holds only SIMD mnemonics, so
+     * a non-SIMD instruction can never match and keeps its `__` form. */
+    std::string opaque_callee_name(const std::string& mnem) {
+        const std::string& intr = simd_intrinsic_name(mnem);
+        return intr.empty() ? ("__" + sani(mnem)) : intr;
     }
 
     /* ----- the main per-block executor ----- */
@@ -1494,7 +1519,7 @@
                 if (!src) break;
                 auto call = new_expr();
                 call->kind = EK::Call;
-                call->callee = "__" + sani(in.mnem);   /* __bsf/__bsr/__tzcnt/__lzcnt — the
+                call->callee = opaque_callee_name(in.mnem);   /* __bsf/__bsr/__tzcnt/__lzcnt — the
                                                         * names the default: path already
                                                         * synthesised, so no output churn */
                 int cw = (w >= 8) ? 8 : 4;
@@ -2134,7 +2159,7 @@
                     if (!a0 || !a1v) break;   /* untracked src: leave the dest alone */
                     auto call = new_expr();
                     call->kind = EK::Call;
-                    call->callee = "__" + sani(in.mnem);   /* __vpcmpeqb / __vpshufb extern */
+                    call->callee = opaque_callee_name(in.mnem);   /* __vpcmpeqb / __vpshufb extern */
                     call->width = 8; call->ret_kind = 2;
                     call->args.push_back(a0);              /* char broadcast */
                     call->args.push_back(a1v);             /* the scanned load *[rcx] */
@@ -2158,7 +2183,7 @@
                 if (!a0 || !a1v) break;      /* untracked source: leave the dest alone */
                 auto call = new_expr();
                 call->kind = EK::Call;
-                call->callee = "__" + sani(in.mnem);
+                call->callee = opaque_callee_name(in.mnem);
                 call->width = 8; call->ret_kind = 2;
                 call->args.push_back(a0);
                 call->args.push_back(a1v);
@@ -2378,7 +2403,7 @@
                 if (!std::getenv("DS_NO_SIMDOPAQUE")) {
                     auto call = new_expr();
                     call->kind = EK::Call;
-                    call->callee = "__" + sani(in.mnem);
+                    call->callee = opaque_callee_name(in.mnem);
                     call->width = 8; call->ret_kind = 2;   /* carry the xmm as an 8-byte view */
                     call->args.push_back(rvalue(OP(0)));    /* current value (RMW dest) */
                     call->args.push_back(rvalue(OP(1)));    /* shift byte count */
@@ -3613,7 +3638,7 @@
                          * mis-modeled as a semantically-wrong short call, and still makes the op
                          * (and its value) visible instead of dropping it — which is the whole
                          * point of AVX modeling. */
-                        call->callee = "__" + sani(in.mnem);
+                        call->callee = opaque_callee_name(in.mnem);
                         call->width = 8; call->ret_kind = 2;
                         if (OP(0).access & CS_AC_READ) call->args.push_back(rvalue(OP(0)));
                         for (int k = 1; k < nop && k < 4; ++k)
@@ -3774,7 +3799,7 @@
                     !in.mnem.empty() && !std::getenv("DS_NO_OPAQUEMEM")) {
                     auto call = new_expr();
                     call->kind = EK::Call;
-                    call->callee = "__" + sani(in.mnem);
+                    call->callee = opaque_callee_name(in.mnem);
                     call->width = 0; call->ret_kind = 0;
                     call->args.push_back(mkCast("(void*)", addr_of_mem(OP(0)), 8, true));
                     for (int k = 1; k < nop && k < 4; ++k)

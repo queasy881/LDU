@@ -1294,6 +1294,45 @@ struct FuncSig {
 /* forward decl: defined after the class; used by detect_stack_params/detect_float_params */
 static int fp_scalar_width(unsigned id);
 
+/* ---- MODELLED INTRINSICS -------------------------------------------------
+ * Instructions the lifter turns into a named call rather than an expression,
+ * but whose semantics are exactly specifiable in plain C. Emitting a real
+ * DEFINITION instead of a bare `long long __bsr();` extern makes the recovered
+ * code self-contained (it links, and the /TC gate compiles it) and makes the
+ * operation legible instead of a promise.
+ *
+ * Written to match the hardware exactly. bsf/bsr leave the destination
+ * UNDEFINED when the source is zero, which is why the lifter separately models
+ * ZF = (src == 0) — callers branch on that flag, not on the value; the zero
+ * case here just has to be deterministic. tzcnt/lzcnt DO define src==0 as the
+ * operand width.
+ *
+ * Single source of truth for both the proto emitter and the confidence header,
+ * so a modelled op is never also reported as "unmodelled". */
+static const char* modelled_intrinsic_def(const std::string& c) {
+    struct M { const char* name; const char* def; };
+    static const M TBL[] = {
+      {"__bsf",    "static unsigned long long __bsf(unsigned long long x){ unsigned long long i=0; if(!x) return 0; while(!((x>>i)&1)) ++i; return i; }\n"},
+      {"__bsr",    "static unsigned long long __bsr(unsigned long long x){ unsigned long long r=0; if(!x) return 0; while(x>>=1) ++r; return r; }\n"},
+      {"__tzcnt",  "static unsigned long long __tzcnt(unsigned long long x){ unsigned long long i=0; if(!x) return 64; while(!((x>>i)&1)) ++i; return i; }\n"},
+      {"__lzcnt",  "static unsigned long long __lzcnt(unsigned long long x){ unsigned long long n=0,i=64; if(!x) return 64; while(i-- && !((x>>i)&1)) ++n; return n; }\n"},
+      {"__popcnt", "static unsigned long long __popcnt(unsigned long long x){ unsigned long long n=0; while(x){ n+=x&1; x>>=1; } return n; }\n"},
+      /* BMI2 scatter/gather of bits under a mask. Both walk the mask's set bits
+       * from the LSB: pdep takes consecutive low bits of the source and drops one
+       * into each selected position, pext does the reverse. `m & (0-m)` isolates
+       * the lowest set bit and `m &= m-1` clears it, so the loop runs once per set
+       * mask bit and terminates. */
+      {"__pdep",   "static unsigned long long __pdep(unsigned long long v, unsigned long long m){ unsigned long long r=0,b=1; for(; m; m&=m-1){ if(v&b) r|=m&(0-m); b<<=1; } return r; }\n"},
+      {"__pext",   "static unsigned long long __pext(unsigned long long v, unsigned long long m){ unsigned long long r=0,b=1; for(; m; m&=m-1){ if(v & (m&(0-m))) r|=b; b<<=1; } return r; }\n"},
+      {nullptr, nullptr}
+    };
+    for (int i = 0; TBL[i].name; ++i) if (c == TBL[i].name) return TBL[i].def;
+    return nullptr;
+}
+static bool is_modelled_intrinsic(const std::string& c) {
+    return modelled_intrinsic_def(c) != nullptr;
+}
+
 
 struct Decompiler {
     /* ---- class body: topical sections (pure text partition, see decomp/) ---- */
@@ -5957,6 +5996,21 @@ struct Decompiler {
             seen_proto.insert(c);
             /* recovered operator new (recover_operator_new): the honest allocator signature. */
             if (c == "operator_new") { protos += "void* operator_new(unsigned long long);\n"; continue; }
+            /* MODELLED INTRINSICS. These were emitted as bare `long long __bsr();`
+             * externs: the VALUE was right, but the semantics were invisible to the
+             * reader and the recompiled TU could not link (nothing defines them).
+             * They are all small, exactly-specifiable bit operations, so emit a
+             * real definition instead of a promise. Written as plain C so the /TC
+             * gate compiles them, `static` so several recovered TUs can coexist,
+             * and matching the hardware exactly:
+             *   bsf/bsr  index of lowest/highest set bit; UNDEFINED for src==0,
+             *            which is why the lifter also models ZF = (src==0)
+             *            separately -- callers test that flag, not the value.
+             *   tzcnt/lzcnt  counts, and they DO define the src==0 case as the
+             *            operand width.
+             * These four plus popcnt cover 489 of the opaque-call sites measured
+             * across ntdll (bsr 166, bsf 141, tzcnt 104, popcnt 78). */
+            if (const char* def = modelled_intrinsic_def(c)) { protos += def; continue; }
             /* return type must match the callee's definition (same sig table) so
              * the recompiled TU has consistent prototypes. K&R "()" arg list
              * stays compatible with any definition arity. */

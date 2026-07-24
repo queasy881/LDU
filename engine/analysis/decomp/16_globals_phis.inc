@@ -1969,10 +1969,48 @@
          * to exactly 0xADDR, so this is purely cosmetic. Only fires on positive pointer
          * evidence + in_data_rva, so a plain integer is never mislabeled a pointer. */
         if (e->addr_hint && !e->is_float && (uint64_t)v > 0x1000 && in_data_rva((uint64_t)v)) {
+            /* A global whose FIRST QWORD points at a recovered vtable is an INSTANCE
+             * of that class — the vtable pointer at offset 0 is exactly what makes it
+             * one. Naming it after its class turns the standard-stream globals from
+             * anonymous addresses into something readable:
+             *     fun_00001df0(&byte_4e020, &v1)      // std::cin >> v1
+             *   becomes
+             *     fun_00001df0(&std__basic_istream_char_..._4e020, &v1)
+             * which at least says WHAT the object is.
+             *
+             * LIMITATION, measured: this reads the vtable pointer OUT OF THE IMAGE, so
+             * it only fires for a statically-initialised object. It does NOT currently
+             * catch std::cin/cout, because those are constructed by the CRT at startup
+             * — the .data image holds zero at offset 0 and the vtable is stored at
+             * RUNTIME. Recovering those needs the store to be found instead: a
+             * `lea reg,[<Class>__vftable]; mov [<abs>],reg` writing a recovered vtable
+             * to a fixed global address, which is the same evidence scan_ctor_dtor
+             * already uses for `[this+0]`, applied to an absolute destination.
+             *
+             * The address is kept in the name and in the #define, so two distinct
+             * ostreams (cout vs cerr) never collapse into one identifier. We do NOT
+             * try to guess WHICH standard stream it is: cout/cerr/clog share a class
+             * and telling them apart needs construction-order reasoning that would be
+             * a guess dressed as a fact. DS_NO_STREAMNAME. */
+            if (!std::getenv("DS_NO_STREAMNAME")) {
+                int64_t vt = 0;
+                if (read_i64((uint64_t)v, vt) && (uint64_t)vt > 0x1000) {
+                    std::string cls = class_for_vtable((uint64_t)vt);
+                    if (!cls.empty()) {
+                        simplify_std_name(cls);
+                        std::string base = sani(cls);
+                        char nm[160], def[96];
+                        std::snprintf(nm,  sizeof nm,  "%s_%llx", base.c_str(), (unsigned long long)v);
+                        std::snprintf(def, sizeof def, "(*(int8_t*)0x%llx)", (unsigned long long)v);
+                        set_named_global(nm, def);
+                        return "&" + std::string(nm);
+                    }
+                }
+            }
             char nm[40], def[96];
             std::snprintf(nm,  sizeof nm,  "byte_%llx", (unsigned long long)v);
             std::snprintf(def, sizeof def, "(*(int8_t*)0x%llx)", (unsigned long long)v);
-            named_globals[nm] = def;
+            set_named_global(nm, def);
             return "&" + std::string(nm);
         }
         /* H4: a printable-ASCII constant compared against a byte value reads as a char
