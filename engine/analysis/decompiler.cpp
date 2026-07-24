@@ -6261,17 +6261,55 @@ struct Decompiler {
          * recovered class), and per-fn `s_<fn>_<p>` tags are already unique — so one
          * forward decl + one typedef per tag (the include guard made it compile-safe,
          * but emitting `struct Vec3 {...}` twice per function is just noise). */
+        /* UNIFY IDENTICAL LAYOUTS, not just identical tags.
+         *
+         * Dedupe used to be by TAG alone, and tags are per-variable
+         * (`s_<fn>_<var>`), so one recovered shape used by four locals printed
+         * FOUR full definitions — `struct s_fun_000066c0_t2703`,
+         * `_t2704`, `_v278`, ... — each a wall of field_<off>, and the reader has
+         * to diff them to discover they are the same type. Measured on kernel32
+         * (600 fns): 796 struct definitions, of which 151 (19%) are a structural
+         * duplicate of another in the SAME function.
+         *
+         * A duplicate is emitted as `#define <dup> <canonical>` instead. C cannot
+         * alias a struct TAG with a typedef (a typedef name is not a tag, so
+         * `struct <dup>*` would not resolve), but the macro rewrites the tag in
+         * every reference, needs no change at the use sites, and works under both
+         * /TC and /TP — the same trick this file already uses for `class`.
+         *
+         * Comparison is on the RENDERED text with the tag itself neutralised, so
+         * two shapes count as one only when every field type, offset and pad
+         * matches. Nested field types name their parent's tag, so those normalise
+         * differently and stay distinct — conservative, which is the right way to
+         * be wrong here. */
+        std::map<std::string, std::string> canon_of_body;   /* normalised body -> canonical tag */
+        std::map<std::string, std::string> alias_tag;       /* dup tag -> canonical tag */
+        std::map<std::string, std::string> def_of_tag;      /* canonical tag -> its definition */
+        std::vector<std::string> def_order;
+        {
+            std::set<std::string> seen_tags;
+            for (auto& kv : param_structs) {
+                const std::string& tag = kv.second.tag;
+                if (!seen_tags.insert(tag).second) continue;
+                std::string def = struct_typedef_str(kv.second);
+                std::string norm = def;                      /* neutralise the tag */
+                for (size_t p = norm.find(tag); p != std::string::npos; p = norm.find(tag, p + 1))
+                    norm.replace(p, tag.size(), "@T@");
+                auto ins = canon_of_body.emplace(norm, tag);
+                if (ins.second) { def_of_tag[tag] = def; def_order.push_back(tag); }
+                else            { alias_tag[tag] = ins.first->second; }
+            }
+        }
+        for (auto& kv : alias_tag)
+            protos += "#define " + kv.first + " " + kv.second + "\n";
         std::set<std::string> emitted_tags;
         for (auto& kv : param_structs) {
+            if (alias_tag.count(kv.second.tag)) continue;          /* the macro covers it */
             if (!emitted_tags.insert(kv.second.tag).second) continue;
             const char* kw = (kv.second.is_class && !kv.second.cls_kw_struct) ? "class " : "struct ";
             protos += kw + kv.second.tag + ";\n";
         }
-        emitted_tags.clear();
-        for (auto& kv : param_structs) {
-            if (!emitted_tags.insert(kv.second.tag).second) continue;
-            protos += struct_typedef_str(kv.second);
-        }
+        for (const std::string& tag : def_order) protos += def_of_tag[tag];
         /* extern decls for the vtable symbols referenced by `obj->__vftable = &<Class>__vftable`
          * (populated during body emit). The /TC gate compiles (no link), so extern is fine. */
         for (auto& v : referenced_vtables) protos += "extern void* " + v + ";\n";
