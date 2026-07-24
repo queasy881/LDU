@@ -7953,6 +7953,13 @@ void build_sig_table(ds_engine* e, std::map<uint64_t, FuncSig>& tab) {
          * mis-typed `int` because its __invalid_parameter tail set rax_live. */
         else if (xmm0_live_at_ret && saw_fp_ret_tail) sig.ret_kind = (ret_xmm0_w >= 8) ? 4 : 3;
         else if (rax_live_at_ret) sig.ret_kind = (ret_rax_w >= 8) ? 2 : 1;
+        /* MEASURED, do not "tighten" this: requiring saw_fp_ret_tail here as well
+         * (on the theory that a merely-live xmm0 is the residue of a void function,
+         * which is exactly how `void vec3_normalize(const Vec3*,Vec3*)` comes out
+         * returning float) costs far more than it buys -- RET fidelity over the
+         * corpus fell 677/683 to 664/683, because plenty of genuine float returns
+         * never match the strong pattern. The two void misreads are the cheaper
+         * error. _qa/sigdiff.py reproduces both numbers. */
         else if (xmm0_live_at_ret) sig.ret_kind = (ret_xmm0_w >= 8) ? 4 : 3; /* float/double */
         /* x87 ST(0) return (32-bit /arch:IA32). Deliberately ranked BELOW the rax test:
          * the depth tracking can only fail to notice a return, never invent one over a
