@@ -766,13 +766,37 @@ fn background_decompile(
 /// at least `MIN` chars. Returns (rva, value, kind) with kind 0=ascii, 1=utf16,
 /// sorted by rva. Bounded so a huge image can't blow up memory.
 fn scan_strings(engine: &Engine, segs: &[Segment]) -> Vec<(u64, String, u8)> {
-    // Ghidra-parity string recovery. We deliberately DO NOT require a trailing NUL
-    // (Ghidra reports any maximal printable run) and use min length 4, so we find
-    // at least as many strings as Ghidra does. False positives are bounded by the
-    // maximal-run model (a run is one string) and by only scanning data segments.
-    const MIN: usize = 4;
+    // A run of printable bytes is NOT evidence of a string. In compressed,
+    // encrypted or packed data every byte is ~uniform, so the chance of 4
+    // consecutive printable ASCII bytes is (95/256)^4 ~= 1.9% PER POSITION —
+    // about 20,000 false hits per megabyte. That is exactly what the old
+    // "any maximal printable run of >= 4, no terminator required" rule produced:
+    // 117,867 entries on a packed binary, all of them noise like `plL;2`, `o(}I`,
+    // `Vd}"`. A strings list that long is worse than no strings list.
+    //
+    // (The comment this replaces claimed the loose rule was "Ghidra parity". It
+    // is not: Ghidra's string analyzer defaults to minimum length 5 AND requires
+    // null termination, and IDA likewise defaults to 5 with a terminator.)
+    //
+    // So a candidate must now carry positive evidence of being a string:
+    //   1. NUL-TERMINATED (or wide-NUL for UTF-16). This is the single biggest
+    //      discriminator — it costs a factor of ~256 in random data while every
+    //      real C string has one by construction.
+    //   2. At least MIN characters.
+    //   3. Contains at least one alphanumeric character, which rejects the
+    //      punctuation soup (`}{;|~`) that survives 1 and 2 by chance while
+    //      keeping real format strings (`%s: %d\n` has `s` and `d`).
+    //
+    // Combined, random data yields ~(0.371^5)/256 ~= 3e-5 hits per byte — a few
+    // dozen per megabyte instead of tens of thousands.
+    const MIN: usize = 5;
     const MAX_VAL: usize = 480;
     const CAP: usize = 500_000;
+
+    /// A run that is only punctuation/symbols is noise even when NUL-terminated.
+    fn looks_like_text(s: &str) -> bool {
+        s.chars().any(|c| c.is_ascii_alphanumeric())
+    }
     // Printable ASCII plus the common in-string whitespace bytes (tab / LF / CR),
     // so a `"...line1\nline2..."` format string stays ONE string instead of being
     // split at the 0x0a — matching Ghidra's default string char set.
@@ -795,8 +819,7 @@ fn scan_strings(engine: &Engine, segs: &[Segment]) -> Vec<(u64, String, u8)> {
             continue;
         }
 
-        // ASCII / UTF-8 runs — any maximal printable run of >= MIN bytes, no NUL
-        // requirement.
+        // ASCII / UTF-8: a maximal printable run of >= MIN that is NUL-TERMINATED.
         let mut i = 0usize;
         while i < n {
             if printable(bytes[i]) {
@@ -806,12 +829,18 @@ fn scan_strings(engine: &Engine, segs: &[Segment]) -> Vec<(u64, String, u8)> {
                     j += 1;
                 }
                 let len = j - start;
-                if len >= MIN {
+                // `j` is the first non-printable byte; the run is a C string only
+                // when that byte is the terminator. A run ending at the end of the
+                // segment is accepted too (the terminator may sit in the next page).
+                let terminated = j >= n || bytes[j] == 0;
+                if len >= MIN && terminated {
                     let take = len.min(MAX_VAL);
                     let s: String = bytes[start..start + take].iter().map(|&c| c as char).collect();
-                    out.push((seg.rva + start as u64, s, 0));
-                    if out.len() >= CAP {
-                        break 'segs;
+                    if looks_like_text(&s) {
+                        out.push((seg.rva + start as u64, s, 0));
+                        if out.len() >= CAP {
+                            break 'segs;
+                        }
                     }
                 }
                 i = j;
@@ -820,7 +849,7 @@ fn scan_strings(engine: &Engine, segs: &[Segment]) -> Vec<(u64, String, u8)> {
             }
         }
 
-        // UTF-16LE runs: [printable, 0x00] repeated — no wide-NUL requirement.
+        // UTF-16LE: [printable, 0x00] repeated, terminated by a wide NUL.
         let mut i = 0usize;
         while i + 1 < n {
             if printable(bytes[i]) && bytes[i + 1] == 0 {
@@ -831,7 +860,8 @@ fn scan_strings(engine: &Engine, segs: &[Segment]) -> Vec<(u64, String, u8)> {
                     s.push(bytes[j] as char);
                     j += 2;
                 }
-                if s.len() >= MIN {
+                let terminated = j + 1 >= n || (bytes[j] == 0 && bytes[j + 1] == 0);
+                if s.len() >= MIN && terminated && looks_like_text(&s) {
                     out.push((seg.rva + start as u64, s, 1));
                     if out.len() >= CAP {
                         break 'segs;

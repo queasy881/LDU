@@ -844,7 +844,17 @@ extern "C" void ds_engine_scan_format_fns(ds_engine* e) {
     }
     for (auto& kv : agg) {
         const Agg& a = kv.second;
-        if (a.sites < 3) continue;                       /* >=3 format-string sites = confident */
+        /* >=2 format-string sites. This was 3, which is why printf came out named
+         * on some binaries and left as fun_XXXX on others: the threshold is a
+         * property of how often the BINARY happens to call it, not of how sure we
+         * are that it IS printf. A callee handed a `%`-conversion literal in arg0
+         * from two independent sites, with the argument-position shape below
+         * deciding which family member it is, is already a confident call — the
+         * evidence is the format string, and a second site only rules out a
+         * one-off coincidence. Note this pass is a FALLBACK: in the app, FLIRT
+         * usually names a statically-linked CRT printf first (the batch dump tool
+         * does not run FLIRT, which is why it shows up more often there). */
+        if (a.sites < 2) continue;
         uint64_t F = kv.first;
         bool named = false;                              /* only name still-anonymous funcs */
         for (size_t i = 0; i < e->symbol_len; ++i)

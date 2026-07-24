@@ -227,7 +227,20 @@
         }
         s += (char)b; return true;
     }
-    static const int CSTR_MINLEN = 4;
+    /* Minimum length for rendering an operand as a string LITERAL.
+     *
+     * This is deliberately lower than the blind data-scan threshold, because the
+     * evidence is different in kind. The scanner is guessing from bytes alone; by
+     * the time we get here the value is already known to be used as a POINTER,
+     * and the target is verified read-only, NUL-terminated and printable. Under
+     * those constraints a 2-character hit is overwhelmingly a real literal.
+     *
+     * At 4 the most common format strings in existence — "%d", "%s", "%c", "%x" —
+     * all fell below the bar, so `scanf("%d", &a)` rendered as
+     * `fun_0000b5c0(0x3a654, s1)`: the call was right but its most informative
+     * operand was printed as a bare address. Two is the shortest length that
+     * still requires a NUL terminator to agree with it. */
+    static const int CSTR_MINLEN = 2;
     /* If `rva` addresses a READ-ONLY, null-terminated, printable C string of at least
      * MINLEN chars, return it C-escaped (no quotes). Recovers string-literal operands
      * the compiler passed by address — Ghidra-style .rdata string recovery. */
