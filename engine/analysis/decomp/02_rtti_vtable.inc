@@ -246,6 +246,7 @@
             return (ct != var_class_tag.end()) ? ct->second : std::string();
         };
         for (int iter = 0; iter < 4; ++iter) {
+            if (!budget_ok()) break;   /* deadline: stop refining, keep what we have */
             bool changed = false;
             for (auto& b : blocks) for (auto& s : b.stmts) {
                 if (s.kind != SK::Assign || !s.lhs || s.lhs->kind != EK::Var || !s.rhs) continue;

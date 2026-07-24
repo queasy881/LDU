@@ -603,63 +603,83 @@ fn run_analysis(
         return;
     }
 
-    // -- Stage 6: eagerly decompile EVERY function (60..99) ------------------
-    // Runs on THIS worker thread while it still owns `engine`, so it never
-    // contends the session lock and the app window stays responsive (the
-    // centered overlay animates the count). Results are cached so
-    // get_pseudocode is instant afterwards. `/*@addr*/` line markers are on for
-    // the listing<->decompiler sync. A per-function size/block guard plus a
-    // wall-clock budget keep the load BOUNDED: a rare pathological function is
-    // deferred to on-demand decompilation instead of stalling the whole load.
-    // Fast path: a saved analysis (Ctrl+S last session) whose binary is unchanged.
-    // Skip the whole decompile pass — the functions are already done.
-    let decomp_cache = if let Some(cached) = load_decomp_cache(&path) {
-        progress_count(
-            &proxy,
-            target,
-            "Loaded saved decompilation",
-            99.0,
-            cached.len(),
-            cached.len().max(1),
-        );
-        cached
-    } else {
-        std::env::set_var("DS_LINE_ADDR", "1");
-        let total = funcs.len().max(1);
-        let t0 = std::time::Instant::now();
-        // Budget generously: the eager pass runs on THIS worker thread (UI stays
-        // responsive), and anything it defers gets decompiled ON THE UI THREAD the
-        // first time it's opened — which FREEZES the app on a big function (a 775-
-        // block / 12KB function is ~5-7s). So decompile essentially everything up
-        // front off-thread; only a truly pathological CFG past the raised caps or
-        // the wall-clock budget still defers.
-        let budget = std::time::Duration::from_secs(
-            std::env::var("DS_DECOMPILE_BUDGET_SECS")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(240),
-        );
-        const BIG_BLOCKS: u32 = 4000; // only an extreme CFG defers now
-        const BIG_SIZE: u64 = 0x40000;
+    // -- Stage 6: OPEN THE WINDOW, then decompile in the background ----------
+    //
+    // This used to decompile EVERY function before pushing `analysis_done`, so
+    // the loading overlay stayed up for the whole pass — budgeted at 240s, on
+    // top of ~30s of analysis for a large DLL. Opening a big binary therefore
+    // looked like the app had hung, which makes it useless as a disassembler
+    // however good the output is.
+    //
+    // Nothing in the listing needs the decompiler: the segments, functions,
+    // instructions, strings, imports/exports and xrefs are all ready NOW. So the
+    // session is committed and the window unblocked here, and the eager pass
+    // moves to a background thread that fills `decomp_cache` as it goes. The
+    // engine is `Sync` and re-entrant, so the background workers and any
+    // interactive request share it safely through the `Arc`.
+    //
+    // A function the user opens before the background pass reaches it is not a
+    // miss: `get_pseudocode` decompiles on demand, off the UI thread, and each
+    // function is individually time-bounded by the engine's work budget. So the
+    // worst case is a short wait for ONE function, never a wait for all of them.
+    let engine = Arc::new(engine);
 
-        // PARALLEL decompile. ds_decompile is re-entrant (fresh Decompiler per call,
-        // const engine, mutex-guarded per-engine caches — see bridge `unsafe impl
-        // Sync for Engine`), so N worker threads share one `&engine` and each pulls
-        // the next function index off a shared atomic. This is the throughput lever:
-        // one core did ~a few hundred fns/s serially; every core in parallel clears
-        // thousands/s so even a large image finishes inside the budget instead of
-        // deferring functions to the (freeze-prone) on-open path.
-        //
-        // Warm the per-engine sig table ONCE up front (single-threaded) so the N
-        // workers don't all block on the first-call build mutex at startup.
-        // Thread count. The decompiler is allocation-heavy (every expression node is
-        // a shared_ptr, every pass clones trees), so the Windows process heap lock —
-        // NOT the CPU — is the ceiling: a measured scaling sweep on a 16-core box peaked
-        // at ~8 workers (122 fns/s) and got SLOWER at 16 (115). So cap the default at 8;
-        // that is at/near the throughput peak AND leaves cores free so the UI stays
-        // responsive during the load. Overridable via DS_DECOMPILE_THREADS (raise it once
-        // a scalable allocator lands — then scaling becomes near-linear). See
-        // crates/shell/tests/throughput.rs.
+    // Fast path: a saved analysis (Ctrl+S last session) whose binary is
+    // unchanged — the functions are already done, so commit it directly.
+    let preloaded = load_decomp_cache(&path);
+    let have_preloaded = preloaded.is_some();
+    {
+        let mut s = match session.lock() {
+            Ok(s) => s,
+            Err(p) => p.into_inner(),
+        };
+        if !Arc::ptr_eq(&s.cancel, &cancel) || is_cancelled(&cancel) {
+            return;
+        }
+        s.meta = Some(snapshot);
+        s.engine = Some(engine.clone());
+        s.segs = segs;
+        s.funcs = funcs.clone();
+        s.exports = exports;
+        s.imports = imports;
+        s.strings = strings;
+        s.data_xrefs = data_xrefs;
+        s.rows = rows;
+        s.rva_index = rva_index;
+        s.listing_len = listing_len;
+        s.decomp_cache = preloaded.unwrap_or_default();
+    }
+    // The window is usable from here on.
+    push_event(&proxy, target, serde_json::json!({ "event": "analysis_done" }));
+    if have_preloaded {
+        return;
+    }
+    background_decompile(session, engine, funcs, cancel, proxy, target);
+}
+
+/// Decompile every function into the session's cache, off the UI thread and
+/// after the window is already usable.
+///
+/// Progress is reported through the same `analysis_progress` event the loading
+/// overlay uses, so the UI can show a subtle "decompiling N/M" indicator without
+/// blocking anything. Results are published incrementally (a batch at a time)
+/// rather than at the end, so an early function is available almost immediately.
+fn background_decompile(
+    session: SharedSession,
+    engine: Arc<Engine>,
+    funcs: Vec<Func>,
+    cancel: Arc<AtomicBool>,
+    proxy: EventLoopProxy<UserEvent>,
+    target: WindowId,
+) {
+    std::thread::spawn(move || {
+        let total = funcs.len();
+        if total == 0 {
+            return;
+        }
+        // Line markers drive the listing<->decompiler sync in the UI.
+        std::env::set_var("DS_LINE_ADDR", "1");
+
         let cores = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
         let nthreads = std::env::var("DS_DECOMPILE_THREADS")
             .ok()
@@ -668,104 +688,68 @@ fn run_analysis(
             .unwrap_or_else(|| cores.min(8))
             .min(total)
             .max(1);
-        let next = AtomicUsize::new(0); // shared work cursor
-        let done = AtomicUsize::new(0); // completed count, for progress
-        let shards: Vec<Mutex<Vec<(u64, String)>>> =
-            (0..nthreads).map(|_| Mutex::new(Vec::new())).collect();
 
-        // Warm the per-engine sig table (the O(functions) prepass) once, single-
-        // threaded, by decompiling any one eligible function and discarding it. The
-        // sig table is then cached, so the N workers never contend on the build
-        // mutex. The one redundant decompile is negligible (it reuses the cache).
-        if let Some(f0) = funcs
-            .iter()
-            .find(|f| f.block_count <= BIG_BLOCKS && f.size <= BIG_SIZE)
-        {
-            let _ = engine.decompile(f0.rva);
-        }
-
+        let next = AtomicUsize::new(0);
+        let done = AtomicUsize::new(0);
         let engine_ref = &engine;
         let funcs_ref = &funcs;
         let cancel_ref = &cancel;
+        let session_ref = &session;
+
         std::thread::scope(|scope| {
-            for tid in 0..nthreads {
+            for _ in 0..nthreads {
                 let next = &next;
                 let done = &done;
-                let shard = &shards[tid];
                 scope.spawn(move || {
-                    let mut local: Vec<(u64, String)> = Vec::new();
+                    // Publish in small batches: frequent enough that an opened
+                    // function is usually already cached, rare enough that the
+                    // session lock is not contended per function.
+                    let mut batch: Vec<(u64, String)> = Vec::with_capacity(32);
                     loop {
                         let i = next.fetch_add(1, Ordering::Relaxed);
                         if i >= total || is_cancelled(cancel_ref) {
                             break;
                         }
-                        let f = &funcs_ref[i];
-                        // A pathological CFG past the raised caps, or the wall-clock
-                        // budget, is DEFERRED (decompiled on demand, off the UI
-                        // thread — see get_pseudocode). Everything else decompiles now.
-                        if !(f.block_count > BIG_BLOCKS || f.size > BIG_SIZE || t0.elapsed() > budget)
-                        {
-                            if let Some(code) = engine_ref.decompile(f.rva) {
-                                local.push((f.rva, code));
-                            }
+                        // No size/block guard here any more: every function is
+                        // time-bounded inside the engine, so none can stall the
+                        // pass, and skipping big ones only pushed the cost onto
+                        // the first user who opened them.
+                        if let Some(code) = engine_ref.decompile(funcs_ref[i].rva) {
+                            batch.push((funcs_ref[i].rva, code));
                         }
                         done.fetch_add(1, Ordering::Relaxed);
+                        if batch.len() >= 32 {
+                            let mut s = session_ref.lock().unwrap_or_else(|p| p.into_inner());
+                            for (rva, code) in batch.drain(..) {
+                                s.decomp_cache.insert(rva, code);
+                            }
+                        }
                     }
-                    *shard.lock().unwrap_or_else(|p| p.into_inner()) = local;
+                    if !batch.is_empty() {
+                        let mut s = session_ref.lock().unwrap_or_else(|p| p.into_inner());
+                        for (rva, code) in batch.drain(..) {
+                            s.decomp_cache.insert(rva, code);
+                        }
+                    }
                 });
             }
-            // Progress reporter runs on the scope's own thread while workers churn.
+            // Reporter: a background indicator, not a blocking overlay.
             loop {
                 let d = done.load(Ordering::Relaxed).min(total);
-                let pct = 60.0 + 39.0 * (d as f64 / total as f64);
-                progress_count(&proxy, target, "Decompiling functions", pct, d, total);
+                progress_count(&proxy, target, "Decompiling in background", 100.0, d, total);
                 if d >= total || is_cancelled(cancel_ref) {
                     break;
                 }
-                std::thread::sleep(std::time::Duration::from_millis(60));
+                std::thread::sleep(std::time::Duration::from_millis(250));
             }
         });
         std::env::remove_var("DS_LINE_ADDR");
-        if is_cancelled(&cancel) {
-            return;
-        }
-        let mut cache: HashMap<u64, String> = HashMap::with_capacity(total);
-        for shard in shards {
-            for (rva, code) in shard.into_inner().unwrap_or_else(|p| p.into_inner()) {
-                cache.insert(rva, code);
-            }
-        }
-        cache
-    };
-    if is_cancelled(&cancel) {
-        return;
-    }
-
-    // Commit into the shared session.
-    {
-        let mut s = match session.lock() {
-            Ok(s) => s,
-            Err(p) => p.into_inner(),
-        };
-        // If a newer run replaced our cancel token, or cancellation fired, bail.
-        if !Arc::ptr_eq(&s.cancel, &cancel) || is_cancelled(&cancel) {
-            return;
-        }
-        s.meta = Some(snapshot);
-        s.engine = Some(Arc::new(engine));
-        s.segs = segs;
-        s.funcs = funcs;
-        s.exports = exports;
-        s.imports = imports;
-        s.strings = strings;
-        s.data_xrefs = data_xrefs;
-        s.rows = rows;
-        s.rva_index = rva_index;
-        s.listing_len = listing_len;
-        s.decomp_cache = decomp_cache;
-    }
-
-    push_event(&proxy, target, serde_json::json!({ "event": "analysis_done" }));
+        push_event(
+            &proxy,
+            target,
+            serde_json::json!({ "event": "decompile_complete" }),
+        );
+    });
 }
 
 /// Scan mapped segments for printable strings: ASCII runs and UTF-16LE runs of

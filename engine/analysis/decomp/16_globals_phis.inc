@@ -9,6 +9,7 @@
             int ns = (int)b.stmts.size();
             if (ns > 250) continue;                  /* keep it cheap */
             for (int iter = 0; iter < 30; ++iter) {
+                if (!budget_ok()) break;   /* deadline: stop refining, keep what we have */
                 std::vector<ExprP> cand;
                 for (auto& s : b.stmts) if (s.kind==SK::Assign) { collect_subs(s.rhs, cand); collect_subs(s.lhs, cand); }
                 collect_subs(b.cond, cand); collect_subs(b.ret_value, cand); collect_subs(b.switch_var, cand);

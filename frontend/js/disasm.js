@@ -40,6 +40,10 @@
     }).catch(function () {});
 
     DS.on("analysis_progress", onProgress);
+    DS.on("decompile_complete", function () {
+      var hint = U.$("#sb-hint");
+      if (hint) hint.textContent = "Ctrl F search · G goto · F5 decompile";
+    });
     DS.on("analysis_error", onAnalysisError);
     DS.on("analysis_done", boot);
 
@@ -52,6 +56,22 @@
 
   var ovSteps = [];   // ordered list of stage names seen, for the checklist
   function onProgress(p) {
+    /* Once the window is up, decompilation continues in the BACKGROUND — the
+       listing, xrefs, strings and navigation are all already usable. Report that
+       in the status bar rather than the loading overlay, which is gone by then.
+       (Previously the overlay stayed up for the whole decompile pass, so opening
+       a large binary looked like a hang for minutes.) */
+    if (S.booted) {
+      var hint = U.$("#sb-hint");
+      if (hint && p.total) {
+        if (p.done >= p.total) {
+          hint.textContent = "Ctrl F search · G goto · F5 decompile";
+        } else {
+          hint.textContent = "Decompiling " + p.done + " / " + p.total + " in background…";
+        }
+      }
+      return;
+    }
     var st = U.$("#ov-stage"), bar = U.$("#ov-bar"), pct = U.$("#ov-pct");
     if (p.stage && st) st.textContent = p.stage;
     // The percentage shown must MATCH what the user reads. For a counted stage

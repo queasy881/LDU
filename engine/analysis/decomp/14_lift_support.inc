@@ -267,6 +267,7 @@
         for (int i = 0; i < nb; ++i) call_before_block[i] = (i == entry) ? 0 : 1;
         bool changed = true; int guard = 0;
         while (changed && guard++ < 100000) {
+            if (!budget_ok()) break;   /* deadline: stop refining, keep what we have */
             changed = false;
             for (int i = 0; i < nb; ++i) {
                 if (i == entry) continue;

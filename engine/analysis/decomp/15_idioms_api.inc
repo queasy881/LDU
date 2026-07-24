@@ -406,6 +406,7 @@
         e = hoist_shared(e, hoists);           /* collapse pointer-shared DAG first */
         if (node_count(e) > 2500) return e;   /* skip pathological unrolled trees */
         for (int iter = 0; iter < 60; ++iter) {
+            if (!budget_ok()) break;   /* deadline: stop refining, keep what we have */
             std::vector<ExprP> subs;
             collect_subs(e, subs);
             for (auto& h : hoists) collect_subs(h.rhs, subs);
@@ -612,6 +613,7 @@
      * any propagation-duplicated multi-use value into one definition. */
     void cse_global() {
         for (int iter = 0; iter < 60; ++iter) {
+            if (!budget_ok()) break;   /* deadline: stop refining, keep what we have */
             /* One linear pass: collect candidate subexprs (in the SAME order as
              * before, so the count/size tie-break is unchanged) AND tally every
              * subexpr's occurrence count + block-set by structural key. */

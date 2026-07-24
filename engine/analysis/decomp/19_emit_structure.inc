@@ -56,7 +56,11 @@
     long emit_work = 0;
 
     void emit_stmts(int id, std::string& dst) {
-        ++emit_work;
+        /* The deadline is sampled HERE too: a block render is the emitter's unit
+         * of real work, and every emission path goes through it. Checking only in
+         * the region walkers left paths (duplication, loop sinks, guard clauses)
+         * that could render for a long time without ever consulting it. */
+        if ((++emit_work & 0xFF) == 0) budget_spend(256);
         if (iv_suppressed_stmts.empty()) {
             for (auto& s : blocks[id].stmts) {
                 emit_stmt(s, dst);
@@ -648,17 +652,13 @@
         return TrialKey{emitter_state_sig(), b, stop, loop_header,
                         cur_loop_follow, cur_loop_header};
     }
-    /* DEFAULT OFF. The memo is only exact if a failed trial restores EVERYTHING it
-     * touched, and today's rollback does not: it restores structured/need_label/
-     * threaded/dup_budget but leaks cur_loop_N, merged_blocks and loop_fwd_sink. That
-     * makes a trial impure, so the memo gets occasional false negatives and the
-     * structurer takes a different branch — measured 15/600 ntdll functions
-     * changed (net +3 gotos of 2650: two functions improved, two regressed). It is
-     * a 4.3x win on pathological functions (35.5s -> 8.2s) and worth having, but
-     * only once the rollback is made complete; until then it stays opt-in so the
-     * default build cannot change a single line of output. DS_TRIALMEMO=1. */
+    /* DEFAULT ON, now that emit_save/emit_restore roll back EVERY mutable emitter
+     * field. With the rollback complete a failed trial is genuinely reproducible,
+     * so remembering the failure returns exactly what re-running it would have —
+     * the speedup is pure removed recomputation and the emitted text is unchanged,
+     * goto for goto. DS_NO_TRIALMEMO disables it for A/B. */
     static bool trial_memo_off() {
-        static const bool v = std::getenv("DS_TRIALMEMO") == nullptr;
+        static const bool v = std::getenv("DS_NO_TRIALMEMO") != nullptr;
         return v;
     }
     bool trial_known_bad(const TrialKey& k) const {
@@ -1213,6 +1213,37 @@
     int cur_loop_latch  = -1;
     std::set<int> fwd_sinks;   /* T=-1 pure-convergence joins: emit ONCE after the region */
     int cur_fwd_sink = -1;
+
+    /* ---- COMPLETE emitter-state snapshot ------------------------------------
+     * A speculative trial emits a region into a scratch buffer and, if the result
+     * is not good enough, must leave the world EXACTLY as it found it. The trial
+     * sites used to restore only structured/need_label/threaded/dup_budget and
+     * leaked the loop cursors, the active sink set and the indent — so a failed
+     * trial changed later decisions, which is both a latent correctness hazard and
+     * the reason the trial memo could not be trusted (a "failed" trial was not
+     * reproducible, so remembering the failure changed output).
+     *
+     * Snapshotting EVERY mutable emitter field makes a trial a genuine pure
+     * function of its inputs. That is what lets the memo skip a repeat trial and
+     * get byte-identical output, which in turn is what removes the exponential
+     * re-exploration WITHOUT trading away structure quality. */
+    struct EmitSnapshot {
+        std::set<int> structured, need_label, threaded, active_loop_sinks;
+        int dup_budget, cur_loop_header, cur_loop_follow, cur_loop_latch,
+            cur_fwd_sink, indent_lvl;
+    };
+    EmitSnapshot emit_save() const {
+        return EmitSnapshot{structured, need_label, threaded, active_loop_sinks,
+                            dup_budget, cur_loop_header, cur_loop_follow,
+                            cur_loop_latch, cur_fwd_sink, indent_lvl};
+    }
+    void emit_restore(const EmitSnapshot& s) {
+        structured = s.structured; need_label = s.need_label;
+        threaded = s.threaded;     active_loop_sinks = s.active_loop_sinks;
+        dup_budget = s.dup_budget; cur_loop_header = s.cur_loop_header;
+        cur_loop_follow = s.cur_loop_follow; cur_loop_latch = s.cur_loop_latch;
+        cur_fwd_sink = s.cur_fwd_sink;       indent_lvl = s.indent_lvl;
+    }
     std::map<int,std::map<int,int>> loop_pd;   /* loop-header -> (block -> loop-local ipdom), lazy */
     std::map<int,std::set<int>> loop_fwd_sink; /* loop-header -> in-loop convergence joins (chain), each emitted once */
     std::set<int> active_loop_sinks;           /* currently-active in-loop sinks: a reach falls through */

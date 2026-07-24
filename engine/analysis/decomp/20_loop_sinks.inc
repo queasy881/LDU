@@ -443,8 +443,7 @@
              * exactly the same text (see TrialKey). */
             const TrialKey tk = trial_key(other, follow, loop_header);
             if (trial_known_bad(tk)) continue;
-            auto s_struct = structured; auto s_label = need_label;
-            auto s_thread = threaded;   int s_dup = dup_budget;
+            const EmitSnapshot snap = emit_save();
             std::string body;
             indent_lvl++;
             emit_region(other, follow, body, loop_header);
@@ -457,8 +456,7 @@
                 emit_region(follow, stop, dst, loop_header);
                 return;
             }
-            structured = s_struct; need_label = s_label;
-            threaded = s_thread;   dup_budget = s_dup;
+            emit_restore(snap);          /* leave NO trace of the failed attempt */
             trial_record_bad(tk);
         }
 
@@ -689,8 +687,7 @@
          * machine. Emit both arms into scratch bodies and commit only if NEITHER
          * produced a goto; otherwise roll back the structuring state untouched. */
         if (t != fl && !structured.count(t) && !structured.count(fl)) {
-            auto s_struct = structured; auto s_label = need_label;
-            auto s_thread = threaded;   int s_dup = dup_budget;
+            const EmitSnapshot snap = emit_save();
             std::string tb, fb;
             indent_lvl++; emit_region(t, stop, tb, loop_header); indent_lvl--;
             indent_lvl++; emit_region(fl, stop, fb, loop_header); indent_lvl--;
@@ -708,8 +705,7 @@
                 }
                 return;
             }
-            structured = s_struct; need_label = s_label;
-            threaded = s_thread;   dup_budget = s_dup;
+            emit_restore(snap);
         }
 
         /* The taken arm was already emitted elsewhere (a shared guard/exit body
@@ -753,8 +749,7 @@
                 int body_arm = (J == t) ? fl : t;
                 ExprP g = (J == t) ? negate_expr(cond) : cond;
                 if (body_arm >= 0 && body_arm != stop && !structured.count(body_arm)) {
-                    auto s_struct = structured; auto s_label = need_label;
-                    auto s_thread = threaded; int s_dup = dup_budget;
+                    const EmitSnapshot snap = emit_save();
                     std::string body;
                     indent_lvl++; emit_region(body_arm, J, body, loop_header); indent_lvl--;
                     if (body.find("goto ") == std::string::npos) {
@@ -763,14 +758,12 @@
                         emit_region(J, stop, dst, loop_header);
                         return;
                     }
-                    structured = s_struct; need_label = s_label;
-                    threaded = s_thread; dup_budget = s_dup;
+                    emit_restore(snap);
                 }
             }
             if (J >= 0 && J != b && J != stop && J != t && J != fl &&
                 !structured.count(J) && !structured.count(t) && !structured.count(fl)) {
-                auto s_struct = structured; auto s_label = need_label;
-                auto s_thread = threaded; int s_dup = dup_budget;
+                const EmitSnapshot snap = emit_save();
                 std::string tb, fb;
                 indent_lvl++; emit_region(t, J, tb, loop_header); indent_lvl--;
                 indent_lvl++; emit_region(fl, J, fb, loop_header); indent_lvl--;
@@ -786,8 +779,7 @@
                     emit_region(J, stop, dst, loop_header);
                     return;
                 }
-                structured = s_struct; need_label = s_label;
-                threaded = s_thread; dup_budget = s_dup;
+                emit_restore(snap);
             }
         }
 

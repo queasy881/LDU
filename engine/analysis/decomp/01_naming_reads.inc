@@ -114,10 +114,23 @@
         }();
         return v;
     }
+    /* Absolute per-function ceiling — a SAFETY NET, not a performance knob.
+     *
+     * Tripping it costs output quality: the emitter falls back to the labeled
+     * goto-CFG, so that function's goto count jumps. Tuning this DOWN to buy
+     * speed is therefore the wrong trade — measured at 600ms it turned 10 of 600
+     * ntdll functions into goto soup and pushed the total from 2657 to 4054.
+     * Speed has to come from doing less redundant work (see the trial memo),
+     * not from giving up earlier.
+     *
+     * So it is set well above any function that is merely slow, and exists only
+     * so that a genuinely pathological CFG — or a loop nobody has profiled yet —
+     * cannot hang the app. At this value it fires on essentially nothing, and
+     * output is identical to having no deadline at all. */
     static long budget_wall_default() {
         static const long v = [] {
             const char* s = std::getenv("DS_WALL_MS");
-            return s ? std::atol(s) : 5000L;   /* absolute per-function ceiling */
+            return s ? std::atol(s) : 8000L;
         }();
         return v;
     }

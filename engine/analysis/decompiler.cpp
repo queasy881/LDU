@@ -1222,6 +1222,7 @@ struct Decompiler {
         auto ind_of = [](const std::string& s){ size_t i = 0; while (i < s.size() && s[i] == ' ') ++i; return (int)i; };
         bool changed = true; int guard = 0;
         while (changed && guard++ < 100000) {
+            if (!budget_ok()) break;   /* deadline: stop refining, keep what we have */
             changed = false;
             for (size_t i = 0; i + 1 < L.size(); ++i) {
                 int I = ind_of(L[i]);
@@ -1292,6 +1293,7 @@ struct Decompiler {
         };
         bool changed = true; int guard = 0;
         while (changed && guard++ < 100000) {
+            if (!budget_ok()) break;   /* deadline: stop refining, keep what we have */
             changed = false;
             for (size_t i = 0; i + 1 < L.size(); ++i) {
                 int I = ind_of(L[i]);
@@ -1746,6 +1748,7 @@ struct Decompiler {
     void dead_store_elim() {
         bool changed = true; int guard = 0;
         while (changed && guard++ < 16) {
+            if (!budget_ok()) break;   /* deadline: stop refining, keep what we have */
             changed = false;
             /* tally reads of every var name (single walk per expression) */
             std::map<std::string,int> reads;
@@ -2000,6 +2003,7 @@ struct Decompiler {
     void global_dead_store_elim() {
         bool changed = true; int guard = 0;
         while (changed && guard++ < 16) {
+            if (!budget_ok()) break;   /* deadline: stop refining, keep what we have */
             changed = false;
             size_t n = blocks.size();
             /* address-taken vars are never considered dead (value may escape) */
@@ -2599,6 +2603,7 @@ struct Decompiler {
         collect_addr_taken(addr_taken);
         bool changed = true; int guard = 0;
         while (changed && guard++ < 8) {
+            if (!budget_ok()) break;   /* deadline: stop refining, keep what we have */
             changed = false;
             /* Snapshot whole-function read/write counts ONCE per iteration instead of
              * calling total_reads/total_writes (each a full-function scan) per def —
@@ -2869,6 +2874,7 @@ struct Decompiler {
             Block& b = blocks[bidx];
             bool changed = true; int guard = 0;
             while (changed && guard++ < 400) {
+                if (!budget_ok()) break;   /* deadline: stop refining, keep what we have */
                 changed = false;
                 for (int di = 0; di < (int)b.stmts.size(); ++di) {
                     Stmt& def = b.stmts[di];
@@ -2953,6 +2959,7 @@ struct Decompiler {
         };
         bool changed = true; int guard = 0;
         while (changed && guard++ < 15) {
+            if (!budget_ok()) break;   /* deadline: stop refining, keep what we have */
             changed = false;
             std::map<std::string,int> writes;
             for (auto& b : blocks) for (auto& s : b.stmts)
@@ -3040,6 +3047,7 @@ struct Decompiler {
         };
         bool changed = true; int guard = 0;
         while (changed && guard++ < 12) {
+            if (!budget_ok()) break;   /* deadline: stop refining, keep what we have */
             changed = false;
             std::map<std::string,int> writes;
             for (auto& b : blocks) for (auto& s : b.stmts)
@@ -3756,6 +3764,7 @@ struct Decompiler {
             scan_pmis(b.cond);
         }
         for (int iter = 0; iter < 8; ++iter) {   /* fixpoint: a conflicted var may feed another */
+            if (!budget_ok()) break;   /* deadline: stop refining, keep what we have */
             bool changed = false;
             for (auto& b : blocks)
                 for (auto& s : b.stmts) {
@@ -3907,6 +3916,7 @@ struct Decompiler {
     void propagate_pointer_types() {
         bool changed = true; int guard = 0;
         while (changed && guard++ < 8) {
+            if (!budget_ok()) break;   /* deadline: stop refining, keep what we have */
             changed = false;
             for (auto& b : blocks) {
                 for (auto& s : b.stmts) {
@@ -4125,6 +4135,7 @@ struct Decompiler {
     void propagate_float_types() {
         bool changed = true; int guard = 0;
         while (changed && guard++ < 8) {
+            if (!budget_ok()) break;   /* deadline: stop refining, keep what we have */
             changed = false;
             for (auto& b : blocks) for (auto& s : b.stmts) {
                 if (s.kind != SK::Assign || !s.lhs || s.lhs->kind != EK::Var) continue;
@@ -4502,6 +4513,7 @@ struct Decompiler {
         }
         /* definition-based propagation overrides votes for assigned temps/locals */
         for (int pass = 0; pass < 5; ++pass) {
+            if (!budget_ok()) break;   /* deadline: stop refining, keep what we have */
             bool changed = false;
             for (auto& b : blocks) {
                 for (auto& s : b.stmts) {
@@ -5414,6 +5426,7 @@ struct Decompiler {
             for (int i = 0; i < nb; ++i) out[i] = allvars;
             bool changed = true; int guard = 0;
             while (changed && guard++ < 200000) {
+                if (!budget_ok()) break;   /* deadline: stop refining, keep what we have */
                 changed = false;
                 for (int i = 0; i < nb; ++i) {
                     std::set<std::string> ni; bool first = true;
