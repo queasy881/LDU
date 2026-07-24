@@ -367,13 +367,29 @@ void scan_rtti_itanium(ds_engine* e) {
                     uint64_t v0;
                     if (!read_u64(e, vfun_rva, v0) || v0 < e->base || !ds_rva_is_exec(e, v0 - e->base)) continue;
 
-                    /* Name `<Class>__vftable` ONLY on the PRIMARY vtable (offset-to-top 0):
-                     * that is the vtable an object stores at +0, which is what class_for_vtable
-                     * matches to recognize a constructor. A secondary (MI base-subobject) vtable
-                     * has a negative offset-to-top and lives at a sub-object offset, so naming it
-                     * `<Class>__vftable` would be wrong; its virtuals are still named below. */
-                    if (sotop == 0 && !already_seeded(e, vfun_rva)) {   /* name the vtable at &slot[2] (RAW name) */
-                        char vt[160]; std::snprintf(vt, sizeof vt, "%s__vftable", cls_raw.c_str());
+                    /* `<Class>__vftable` is the PRIMARY vtable (offset-to-top 0) — the one an
+                     * object stores at +0, and what class_for_vtable matches to recognize a
+                     * constructor.
+                     *
+                     * A SECONDARY vtable (a multiple-inheritance base subobject, or a virtual
+                     * base) has a non-zero offset-to-top. It used to get no vtable symbol at
+                     * all, on the grounds that calling it `<Class>__vftable` would be wrong.
+                     * That is true, but the consequence was that a pointer to one resolved to
+                     * NOTHING: std::basic_istream derives virtually from basic_ios, so
+                     * std::cin's vfptr targets an adjusted vtable and `std::cin >> a` came out
+                     * as `fun_x(&byte_4e020, &v)` with no idea what the object was.
+                     *
+                     * So name it, and name it HONESTLY: `<Class>__vftable_off<N>` records which
+                     * subobject it belongs to instead of pretending to be the primary. It is
+                     * still unambiguously <Class>'s vtable, which is all a caller needs to type
+                     * the object; class_for_vtable strips the suffix to recover the class. */
+                    if (!already_seeded(e, vfun_rva)) {   /* name the vtable at &slot[2] (RAW name) */
+                        char vt[176];
+                        if (sotop == 0)
+                            std::snprintf(vt, sizeof vt, "%s__vftable", cls_raw.c_str());
+                        else
+                            std::snprintf(vt, sizeof vt, "%s__vftable_off%d", cls_raw.c_str(),
+                                          (int)(sotop < 0 ? -sotop : sotop));
                         ds_engine_add_symbol(e, vfun_rva, vt);
                     }
                     for (int i = 0; i < 4096; ++i) {
@@ -856,6 +872,64 @@ extern "C" void ds_engine_scan_class_globals(ds_engine* e) {
             if (cc != ctor_class.end()) {
                 char nm[192];
                 std::snprintf(nm, sizeof nm, "%s_%llx", c_safe(cc->second).c_str(),
+                              (unsigned long long)grva);
+                ds_engine_add_symbol(e, grva, nm);
+                ++named;
+            }
+            break;
+        }
+    }
+
+    /* PATTERN 3 — passed as `this` to a known MEMBER of a class.
+     *
+     * The two patterns above both need the vtable STORE to be visible. For the
+     * standard streams it never is: std::cin's first field is a VBPTR (its vbtable
+     * reads {0,24} — the virtual base of basic_istream at offset 24, exactly the
+     * `__off24` the recovered class name carries), and every vfptr field in the
+     * object is ZERO in the image because the CRT writes them at startup.
+     *
+     * What IS visible is how the object is USED. The RTTI scan names every virtual
+     * slot function `<Class>__vftbl_N`, and a virtual method's first argument is a
+     * `this` of that class. So:
+     *     lea  rcx, [<abs>]
+     *     call <Class>__vftbl_N
+     * proves <abs> is a <Class> without needing the construction at all. This is
+     * the same join as pattern 2, against a set of symbols that actually exists.
+     *
+     * Only the FIRST match wins per address, and a later write to rcx aborts the
+     * window, so an unrelated lea cannot be mistaken for a `this` setup. */
+    std::map<uint64_t, std::string> member_class;
+    for (size_t i = 0; i < e->symbol_len; ++i) {
+        const char* nm = e->symbols[i].name;
+        if (!nm[0]) continue;
+        const char* p = std::strstr(nm, "__vftbl_");
+        if (!p || p == nm) continue;
+        bool digits = p[8] != '\0';
+        for (const char* q = p + 8; *q; ++q) if (!std::isdigit((unsigned char)*q)) { digits = false; break; }
+        if (!digits) continue;
+        member_class[e->symbols[i].rva] = std::string(nm, p - nm);
+    }
+    for (size_t i = 0; i + 1 < e->insn_len && !member_class.empty(); ++i) {
+        const ds_insn* lea = &e->insns[i];
+        if (std::strcmp(lea->mnemonic, "lea") != 0) continue;
+        if (lea->ref_type != DS_REF_DATA || !lea->ref_target) continue;
+        if (std::strncmp(lea->operands, "rcx", 3) != 0) continue;
+        uint64_t grva = (lea->ref_target >= e->base) ? lea->ref_target - e->base : lea->ref_target;
+        if (already_seeded(e, grva)) continue;
+        if (ds_rva_is_exec(e, grva)) continue;              /* data objects only */
+        for (size_t j = i + 1; j < e->insn_len && j - i <= 6; ++j) {
+            const ds_insn* c = &e->insns[j];
+            if (c->mnemonic[0] == 'j') break;
+            if (std::strcmp(c->mnemonic, "call") != 0) {
+                if (std::strncmp(c->operands, "rcx", 3) == 0) break;   /* rcx reused */
+                continue;
+            }
+            if (c->ref_type != DS_REF_CALL || !c->ref_target) break;
+            uint64_t F = (c->ref_target >= e->base) ? c->ref_target - e->base : c->ref_target;
+            auto mc = member_class.find(F);
+            if (mc != member_class.end()) {
+                char nm[192];
+                std::snprintf(nm, sizeof nm, "%s_%llx", c_safe(mc->second).c_str(),
                               (unsigned long long)grva);
                 ds_engine_add_symbol(e, grva, nm);
                 ++named;

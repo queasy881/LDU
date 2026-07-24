@@ -20,6 +20,12 @@
                     return n.substr(0, n.size() - sufs.size()); }
                 if (ends_with(n, sufc)) { if (is_struct) *is_struct = false;
                     return n.substr(0, n.size() - sufc.size()); }
+                /* `<Class>__vftable_off<N>` — a secondary vtable (MI base subobject or a
+                 * VIRTUAL base). Still unambiguously this class's vtable, so it types the
+                 * object exactly as the primary one does; the offset is only provenance. */
+                size_t off = n.find("__vftable_off");
+                if (off != std::string::npos) { if (is_struct) *is_struct = false;
+                    return n.substr(0, off); }
             }
         }
         /* NOTE — an ADJUSTED SUB-VTABLE does not resolve here, deliberately.
