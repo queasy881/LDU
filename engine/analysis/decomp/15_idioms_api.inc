@@ -158,7 +158,7 @@
             }
         }
 
-        auto call = std::make_shared<Expr>();
+        auto call = new_expr();
         call->kind = EK::Call; call->callee = callee; call->indirect = indirect;
         call->width = 8; call->ret_kind = ret_kind;
         /* Keep an indirect target as a live child (see the tail-call path): a value
@@ -223,7 +223,7 @@
                     if (!no_moreglobals && av && av->kind == EK::Const && !av->is_float &&
                         (uint64_t)av->cval > 0x1000 && (cc_ptr_param_mask & (1u << i)) &&
                         in_data_rva((uint64_t)av->cval)) {
-                        av = std::make_shared<Expr>(*av);   /* don't mutate a shared regfile node */
+                        av = new_expr(*av);   /* don't mutate a shared regfile node */
                         av->addr_hint = true;
                     }
                     call->args.push_back(av);
@@ -348,7 +348,7 @@
             if (rit != repl.end() && !top) return rit->second;   /* use the temp var */
             auto mit = memo.find(e.get());
             if (mit != memo.end()) return mit->second;
-            ExprP c = std::make_shared<Expr>(*e);
+            ExprP c = new_expr(*e);
             c->a = rebuild(e->a, false); c->b = rebuild(e->b, false); c->c = rebuild(e->c, false);
             for (auto& ar : c->args) ar = rebuild(ar, false);
             memo[e.get()] = c;

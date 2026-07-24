@@ -102,7 +102,7 @@
                 else if (op==">") n="<="; else if (op=="<=") n=">";
             }
             if (!n.empty()) {
-                auto e = std::make_shared<Expr>(*c); e->op = n; return e;
+                auto e = new_expr(*c); e->op = n; return e;
             }
         }
         return mkUnary("!", clone(c), c ? c->width : 4);
@@ -125,7 +125,7 @@
                 return op == "!=" ? inner : negate_expr(inner);
             }
             if (op == "&&" || op == "||") {
-                auto c = std::make_shared<Expr>(*e);
+                auto c = new_expr(*e);
                 c->a = bool_simplify(e->a); c->b = bool_simplify(e->b);
                 return c;
             }

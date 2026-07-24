@@ -125,8 +125,8 @@
                            s->b->kind==EK::Const &&
                            ((uint64_t)s->b->cval & lowmask)==0;
                 };
-                if (masks_off(e->a->a)) { auto c=std::make_shared<Expr>(*e); c->a=e->a->b; return fold(c); }
-                if (masks_off(e->a->b)) { auto c=std::make_shared<Expr>(*e); c->a=e->a->a; return fold(c); }
+                if (masks_off(e->a->a)) { auto c=new_expr(*e); c->a=e->a->b; return fold(c); }
+                if (masks_off(e->a->b)) { auto c=new_expr(*e); c->a=e->a->a; return fold(c); }
             }
             /* drop nested no-op cast: (T)((T)x) -> (T)x */
             if (e->a->kind == EK::Cast && e->a->op == e->op) return e->a;
@@ -137,7 +137,7 @@
              * value change, not a redundant reinterpretation. */
             if (e->a->kind == EK::Cast && e->a->width == e->width &&
                 e->is_float == e->a->is_float) {
-                auto c = std::make_shared<Expr>(*e);
+                auto c = new_expr(*e);
                 c->a = e->a->a; /* skip the inner cast */
                 return fold(c);
             }
@@ -146,7 +146,7 @@
              * only the truncation: (sN)x. (Same int<->float domain guard.) */
             if (e->a->kind == EK::Cast && e->a->width > e->width &&
                 e->is_float == e->a->is_float) {
-                auto c = std::make_shared<Expr>(*e);
+                auto c = new_expr(*e);
                 c->a = e->a->a;
                 return fold(c);
             }
@@ -486,7 +486,7 @@
             /* (A|B) >> s -> (A>>s)|(B>>s) ;  (A|B) & M -> (A&M)|(B&M) */
             if (src && src->kind == EK::Binary && src->op == "|" && all_cty(src)) {
                 auto side = [&](ExprP s) {
-                    auto n = std::make_shared<Expr>(*e); n->a = s; n->b = clone(e->b);
+                    auto n = new_expr(*e); n->a = s; n->b = clone(e->b);
                     return peephole_expr(n);
                 };
                 return peephole_expr(mkBinary("|", side(src->a), side(src->b),
@@ -588,7 +588,7 @@
             (e->a->op == "<" || e->a->op == ">") &&
             exprEqual(e->a->a, e->b->a) && exprEqual(e->a->b, e->b->b) &&
             !has_call(e->a) && !has_call(e->b) && !reads_mem(e->a)) {
-            auto n = std::make_shared<Expr>(*e->a);
+            auto n = new_expr(*e->a);
             n->op = (e->a->op == "<") ? "<=" : ">=";
             return n;
         }
@@ -599,7 +599,7 @@
             if (e->a->op == e->op) return e->a;                              /* (T)((T)x) */
             if (e->a->width == e->width ||                                   /* (uN)(sN)x */
                 e->a->width >  e->width) {                                   /* (sN)((sM)x) N<M: truncation wins */
-                auto c = std::make_shared<Expr>(*e); c->a = e->a->a; return peephole_expr(c);
+                auto c = new_expr(*e); c->a = e->a->a; return peephole_expr(c);
             }
             /* A8 + movzx idiom: a WIDENING cast over a NARROWER cast is redundant — the
              * narrow cast already promotes to `int` value-identically in any expression
@@ -650,7 +650,7 @@
             /* x + (-K) -> x - K  (integers only; guard INT64_MIN) */
             if (op == "+" && !e->is_float && e->b->kind == EK::Const &&
                 !e->b->is_unsigned && e->b->cval < 0 && e->b->cval != INT64_MIN) {
-                auto c = std::make_shared<Expr>(*e);
+                auto c = new_expr(*e);
                 c->op = "-"; c->b = mkConst(-e->b->cval, e->b->width, false);
                 return c;
             }
@@ -681,7 +681,7 @@
                 if (e->b->kind == EK::Const && e->b->cval == 0 && !e->b->is_float &&
                     e->a->kind == EK::Binary && e->a->op == "-" && e->a->a && e->a->b &&
                     !e->a->is_float) {
-                    auto c = std::make_shared<Expr>(*e);
+                    auto c = new_expr(*e);
                     c->a = e->a->a; c->b = e->a->b; return peephole_expr(c);
                 }
                 /* (a + C1) ==/!= C2  ->  a ==/!= (C2 - C1) */
@@ -712,7 +712,7 @@
                         else { uint64_t sgn = 1ull << (bits - 1);
                                nc = (u & sgn) ? (int64_t)(u | ~mask) : (int64_t)u; }
                     }
-                    auto c = std::make_shared<Expr>(*e);
+                    auto c = new_expr(*e);
                     c->a = e->a->a; c->b = mkConst(nc, e->b->width, e->b->is_unsigned);
                     return peephole_expr(c);
                 }
@@ -727,7 +727,7 @@
                 for (ExprP* o : { &e->a, &e->b }) {
                     ExprP& k = *o;
                     if (k && k->kind == EK::Const && !k->is_float && !k->hex_hint && k->cval < 0) {
-                        auto c = std::make_shared<Expr>(*k); c->hex_hint = true;
+                        auto c = new_expr(*k); c->hex_hint = true;
                         if (e->width == 4) { c->cval = (int64_t)(int32_t)k->cval; c->width = 4; }
                         k = c;
                     }
@@ -749,7 +749,7 @@
                     ExprP& sib = sw ? e->a : e->b;
                     if (k && k->kind == EK::Const && !k->is_float && !k->char_hint &&
                         k->cval >= 0x20 && k->cval <= 0x7e && byteish(sib)) {
-                        auto c = std::make_shared<Expr>(*k); c->char_hint = true; k = c;
+                        auto c = new_expr(*k); c->char_hint = true; k = c;
                     }
                 }
             }
@@ -1295,13 +1295,25 @@
                         if (b.id < (int)reg_live_in.size() &&
                             !reg_live_in[b.id][(Reg)r]) continue;
                         long long key = (long long)b.id * 64 + r;
-                        ExprP newval;
+                        /* CLONE ONLY ON COMMIT. `clone()` is a deep recursive copy
+                         * of a whole expression tree, and this runs for every live
+                         * register of every block on every iteration — but a
+                         * fixpoint spends most of its iterations changing NOTHING,
+                         * so nearly all of those copies were built, compared, found
+                         * equal, and thrown away. `borrowed` holds the candidate
+                         * without copying it; exprEqual is a read-only walk, so the
+                         * comparison needs no copy at all, and the clone happens
+                         * only when the value actually changes. Semantics are
+                         * identical — entry_reg still ends up owning a private copy.
+                         * This was the single hottest phase in the profile (34%). */
+                        ExprP newval;    /* freshly built -> already private */
+                        ExprP borrowed;  /* someone else's tree -> copy iff committed */
                         auto pit = phi_of.find(key);
                         if (pit != phi_of.end()) {
                             newval = mkVar(pit->second, 8);    /* keep existing phi */
                         } else if (b.pred.size() == 1) {
                             ExprP po = blocks[b.pred[0]].reg_out[r];
-                            if (po) newval = clone(po);        /* propagate straight */
+                            if (po) borrowed = po;             /* propagate straight */
                         } else {
                             ExprP first = nullptr; bool diff = false, any = false;
                             for (int p : b.pred) {
@@ -1324,13 +1336,17 @@
                                 phi_needs.push_back({(int)b.id, (Reg)r, tn});
                                 newval = mkVar(tn, 8);
                             } else if (any) {
-                                newval = clone(first);
+                                borrowed = first;
                             }
                         }
                         ExprP& cur = entry_reg[b.id][r];
-                        bool same = ((bool)cur == (bool)newval) &&
-                                    (!cur || exprEqual(cur, newval));
-                        if (!same) { cur = newval; changed = true; }
+                        const ExprP& cand = newval ? newval : borrowed;
+                        bool same = ((bool)cur == (bool)cand) &&
+                                    (!cur || exprEqual(cur, cand));
+                        if (!same) {
+                            cur = newval ? newval : (borrowed ? clone(borrowed) : nullptr);
+                            changed = true;
+                        }
 
                         /* High-lane (packed-SIMD) merge for XMM regs: propagate the
                          * lane only when all predecessors that have one agree (the
@@ -1346,7 +1362,7 @@
                                 if (!hv) hv = po;
                                 else if (!exprEqual(hv, po)) hdiff = true;
                             }
-                            ExprP nh;
+                            ExprP nh, nh_borrow;
                             auto hpit = phi_of_hi.find(key);
                             if (hpit != phi_of_hi.end()) {
                                 nh = mkVar(hpit->second, 8);        /* keep existing hi phi */
@@ -1360,12 +1376,16 @@
                                 phi_needs_hi.push_back({(int)b.id, (Reg)r, tn});
                                 nh = mkVar(tn, 8);
                             } else {
-                                nh = (hany && !hdiff) ? clone(hv) : nullptr;
+                                nh_borrow = (hany && !hdiff) ? hv : nullptr;  /* clone on commit */
                             }
                             ExprP& curh = entry_reg_hi[b.id][r];
-                            bool hsame = ((bool)curh == (bool)nh) &&
-                                         (!curh || exprEqual(curh, nh));
-                            if (!hsame) { curh = nh; changed = true; }
+                            const ExprP& hcand = nh ? nh : nh_borrow;
+                            bool hsame = ((bool)curh == (bool)hcand) &&
+                                         (!curh || exprEqual(curh, hcand));
+                            if (!hsame) {
+                                curh = nh ? nh : (nh_borrow ? clone(nh_borrow) : nullptr);
+                                changed = true;
+                            }
                         }
 
                         /* Vec-load-address merge for XMM regs (same agreement rule

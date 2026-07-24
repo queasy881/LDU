@@ -334,6 +334,110 @@ enum class EK {
 struct Expr;
 using ExprP = std::shared_ptr<Expr>;
 
+/* ====================================================================== */
+/*  Expression node pool                                                   */
+/* ====================================================================== */
+/*
+ * Every value in the IR is a heap-allocated Expr behind a shared_ptr, and every
+ * pass clones subtrees, so a single function churns through a very large number
+ * of small, identically-sized, short-lived allocations. Through the general
+ * allocator that made the process heap lock — not the CPU — the ceiling on
+ * parallel decompilation: throughput peaked around 8 workers and got WORSE at
+ * 16, which is why the shell capped its thread count at 8.
+ *
+ * This is a thread-local, size-bucketed free-list pool. Allocation is a pop off
+ * a list and deallocation is a push, with no atomics and no lock, so N workers
+ * scale without contending. It sits behind std::allocate_shared, so ExprP stays
+ * std::shared_ptr<Expr> and not one of the ~70 construction sites changes.
+ *
+ * SAFETY. The pool is per-thread, so a node freed on a different thread than it
+ * was allocated on would migrate between free lists — harmless — but a node
+ * still live when its owning thread exits would be a use-after-free if the
+ * chunks were released. Two things make that impossible: no Expr ever escapes
+ * the decompile that created it (the result is a std::string; neither FuncSig
+ * nor PeTables, the only structures shared across threads, holds an ExprP), and
+ * the chunks are DELIBERATELY LEAKED — never freed, even at thread exit — so any
+ * pointer the pool has ever handed out stays valid for the life of the process.
+ * The cost of that is bounded by peak concurrent usage, not by total work, since
+ * freed blocks are always reused.
+ *
+ * DS_NO_EXPRPOOL falls back to the general allocator for A/B measurement.
+ */
+struct ExprPool {
+    static constexpr size_t kGran    = 16;                  /* >= sizeof(void*) */
+    static constexpr size_t kMaxSize = 512;                 /* larger -> global */
+    static constexpr size_t kBuckets = kMaxSize / kGran + 1;
+    static constexpr size_t kChunk   = 256 * 1024;
+
+    void*  free_list[kBuckets] = {};
+    char*  chunk = nullptr;
+    size_t chunk_off = 0, chunk_left = 0;
+
+    void* alloc(size_t n) {
+        if (n == 0) n = 1;
+        if (n > kMaxSize) return ::operator new(n);
+        size_t b  = (n + kGran - 1) / kGran;
+        size_t sz = b * kGran;
+        if (void* p = free_list[b]) {
+            free_list[b] = *reinterpret_cast<void**>(p);
+            return p;
+        }
+        if (chunk_left < sz) {
+            /* Intentionally leaked: see SAFETY above. */
+            chunk = static_cast<char*>(::operator new(kChunk));
+            chunk_off = 0;
+            chunk_left = kChunk;
+        }
+        void* p = chunk + chunk_off;
+        chunk_off  += sz;
+        chunk_left -= sz;
+        return p;
+    }
+    void release(void* p, size_t n) {
+        if (n == 0) n = 1;
+        if (n > kMaxSize) { ::operator delete(p); return; }
+        size_t b = (n + kGran - 1) / kGran;
+        *reinterpret_cast<void**>(p) = free_list[b];
+        free_list[b] = p;
+    }
+};
+
+inline ExprPool& expr_pool() {
+    static thread_local ExprPool p;
+    return p;
+}
+inline bool expr_pool_off() {
+    static const bool v = std::getenv("DS_NO_EXPRPOOL") != nullptr;
+    return v;
+}
+
+/* Minimal STL allocator over the pool. allocate_shared rebinds this to its own
+ * combined control-block+object type, so the pool must serve arbitrary small
+ * sizes rather than just sizeof(Expr) — hence the size buckets. */
+template <class T>
+struct PoolAlloc {
+    using value_type = T;
+    PoolAlloc() noexcept {}
+    template <class U> PoolAlloc(const PoolAlloc<U>&) noexcept {}
+    T* allocate(size_t n) {
+        size_t bytes = n * sizeof(T);
+        return static_cast<T*>(expr_pool_off() ? ::operator new(bytes)
+                                               : expr_pool().alloc(bytes));
+    }
+    void deallocate(T* p, size_t n) noexcept {
+        if (expr_pool_off()) { ::operator delete(p); return; }
+        expr_pool().release(p, n * sizeof(T));
+    }
+    template <class U> bool operator==(const PoolAlloc<U>&) const noexcept { return true; }
+    template <class U> bool operator!=(const PoolAlloc<U>&) const noexcept { return false; }
+};
+
+/* The single construction point for IR nodes. */
+template <class... A>
+inline ExprP new_expr(A&&... args) {
+    return std::allocate_shared<Expr>(PoolAlloc<Expr>(), std::forward<A>(args)...);
+}
+
 struct Expr {
     EK kind;
 
@@ -368,27 +472,27 @@ struct Expr {
 };
 
 ExprP mkConst(int64_t v, int w = 4, bool u = false) {
-    auto e = std::make_shared<Expr>(); e->kind = EK::Const; e->cval = v;
+    auto e = new_expr(); e->kind = EK::Const; e->cval = v;
     e->width = w; e->is_unsigned = u; return e;
 }
 ExprP mkReg(Reg r, int w) {
-    auto e = std::make_shared<Expr>(); e->kind = EK::Reg;
+    auto e = new_expr(); e->kind = EK::Reg;
     e->reg = r; e->width = w; return e;
 }
 ExprP mkVar(const std::string& n, int w = 4, bool u = false) {
-    auto e = std::make_shared<Expr>(); e->kind = EK::Var; e->name = n;
+    auto e = new_expr(); e->kind = EK::Var; e->name = n;
     e->width = w; e->is_unsigned = u; return e;
 }
 ExprP mkMem(ExprP addr, int w, bool u = false) {
-    auto e = std::make_shared<Expr>(); e->kind = EK::Mem; e->a = addr;
+    auto e = new_expr(); e->kind = EK::Mem; e->a = addr;
     e->width = w; e->is_unsigned = u; return e;
 }
 ExprP mkUnary(const std::string& op, ExprP x, int w) {
-    auto e = std::make_shared<Expr>(); e->kind = EK::Unary; e->op = op;
+    auto e = new_expr(); e->kind = EK::Unary; e->op = op;
     e->a = x; e->width = w; return e;
 }
 ExprP mkBinary(const std::string& op, ExprP l, ExprP r, int w, bool u = false) {
-    auto e = std::make_shared<Expr>(); e->kind = EK::Binary; e->op = op;
+    auto e = new_expr(); e->kind = EK::Binary; e->op = op;
     e->a = l; e->b = r; e->width = w; e->is_unsigned = u; return e;
 }
 ExprP mkCast(const std::string& cast, ExprP x, int w, bool u = false) {
@@ -401,19 +505,19 @@ ExprP mkCast(const std::string& cast, ExprP x, int w, bool u = false) {
         x->width == w && x->is_unsigned == u) {
         return x;
     }
-    auto e = std::make_shared<Expr>(); e->kind = EK::Cast; e->op = cast;
+    auto e = new_expr(); e->kind = EK::Cast; e->op = cast;
     e->a = x; e->width = w; e->is_unsigned = u; return e;
 }
 ExprP mkAddrOf(ExprP x) {
-    auto e = std::make_shared<Expr>(); e->kind = EK::AddrOf; e->a = x;
+    auto e = new_expr(); e->kind = EK::AddrOf; e->a = x;
     e->width = 8; return e;
 }
 ExprP mkTernary(ExprP cond, ExprP t, ExprP f, int w) {
-    auto e = std::make_shared<Expr>(); e->kind = EK::Ternary;
+    auto e = new_expr(); e->kind = EK::Ternary;
     e->a = cond; e->b = t; e->c = f; e->width = w; return e;
 }
 ExprP mkText(const std::string& t, int w = 8) {
-    auto e = std::make_shared<Expr>(); e->kind = EK::Str; e->text = t;
+    auto e = new_expr(); e->kind = EK::Str; e->text = t;
     e->width = w; return e;
 }
 
@@ -693,7 +797,7 @@ bool isConst(const ExprP& e) { return e && e->kind == EK::Const; }
 
 ExprP clone(const ExprP& e) {
     if (!e) return nullptr;
-    auto c = std::make_shared<Expr>(*e);
+    auto c = new_expr(*e);
     c->a = clone(e->a);
     c->b = clone(e->b);
     c->c = clone(e->c);
@@ -810,7 +914,7 @@ bool reads_named_var(const ExprP& e, const std::string& nm) {
 ExprP subst_named_var(const ExprP& e, const std::string& nm, const ExprP& repl) {
     if (!e) return e;
     if (e->kind == EK::Var && e->name == nm) return clone(repl);
-    auto c = std::make_shared<Expr>(*e);
+    auto c = new_expr(*e);
     c->a = subst_named_var(e->a, nm, repl);
     c->b = subst_named_var(e->b, nm, repl);
     c->c = subst_named_var(e->c, nm, repl);
@@ -825,7 +929,7 @@ bool exprEqual(const ExprP& a, const ExprP& b);   /* defined just below */
 ExprP subst_subtree(const ExprP& e, const ExprP& target, const ExprP& repl) {
     if (!e) return e;
     if (exprEqual(e, target)) return clone(repl);
-    auto c = std::make_shared<Expr>(*e);
+    auto c = new_expr(*e);
     c->a = subst_subtree(e->a, target, repl);
     c->b = subst_subtree(e->b, target, repl);
     c->c = subst_subtree(e->c, target, repl);
@@ -5134,8 +5238,8 @@ struct Decompiler {
              * passes produce identical structure. */
             need_label.clear();
             reset_emit();
+            std::string scratch;
             {
-                std::string scratch;
                 emit_region(entry_block(), -1, scratch, -1);
                 for (auto& b : blocks) {
                     if (budget_tripped) break;   /* deadline: stop driving new regions */
@@ -5145,14 +5249,31 @@ struct Decompiler {
                 }
             }
             _phase("emit-pass1(discover)");
-            /* NOTE: a pass-1 bailout must NOT skip pass 2. reset_emit() clears
-             * struct_bailed on purpose — pass 2 runs with the labels pass 1
-             * discovered, which is different (and better) input, so it frequently
-             * structures cleanly where pass 1 gave up. Short-circuiting here to
-             * "save" the work silently reverted those functions to the goto-CFG. */
+
+            /* PASS 2 IS OFTEN UNNECESSARY. It exists for one situation: a `goto L`
+             * whose target was already emitted INLINE, before the goto revealed
+             * that it needed a label. Re-emitting with need_label pre-populated
+             * fixes that. But if pass 1 came out label-consistent then no goto is
+             * dangling, every target that needed a label already got one, and pass
+             * 2 would re-derive the identical text — the two passes make the same
+             * structural decisions by construction, and any label pass 2 adds for
+             * an already-consistent body is unreferenced and removed by
+             * prune_dead_labels below.
+             *
+             * Most functions contain no gotos at all, so this skips a full second
+             * emission for the large majority of them. Measured: pass 1 and pass 2
+             * cost the same, and together they were ~40% of total decompile time.
+             *
+             * A pass-1 BAILOUT still falls through to pass 2: reset_emit() clears
+             * struct_bailed on purpose, and pass 2 runs with better input (the
+             * discovered labels), so it frequently structures cleanly where pass 1
+             * gave up. Short-circuiting that reverted those functions to goto-CFG. */
+            std::string tmp;
+            if (!struct_bailed && !budget_tripped && labels_consistent(scratch)) {
+                tmp.swap(scratch);
+            } else {
             /* PASS 2 (real): need_label now holds all goto targets from pass 1. */
             reset_emit();
-            std::string tmp;
             emit_region(entry_block(), -1, tmp, -1);
             for (auto& b : blocks) {
                 if (budget_tripped) break;   /* deadline: stop driving new regions */
@@ -5160,6 +5281,7 @@ struct Decompiler {
                 if (b.insn_idx.empty()) continue;
                 need_label.insert(b.id);
                 emit_region(b.id, -1, tmp, -1);
+            }
             }
             /* Repair pass: catch any residual dangling target (a block reached only
              * via duplication, so pass 1 didn't canonically label it). */

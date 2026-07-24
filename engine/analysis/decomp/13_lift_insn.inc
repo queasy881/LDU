@@ -343,7 +343,7 @@
                     if (known_api(base, aargc, ark)) { pc = aargc; rk = ark; fmask = 0; }
                 }
                 extern_callees[callee] = rk;
-                auto call = std::make_shared<Expr>();
+                auto call = new_expr();
                 call->kind = EK::Call; call->callee = callee; call->width = 8;
                 call->ret_kind = rk;
                 Reg argregs[4] = { R_RCX, R_RDX, R_R8, R_R9 };
@@ -424,7 +424,7 @@
                 else { callee = "((long long(*)())(" + render(rv) + "))"; indirect = true; itgt = rv; }
             }
             if (!callee.empty()) {
-                auto call = std::make_shared<Expr>();
+                auto call = new_expr();
                 call->kind = EK::Call; call->callee = callee; call->indirect = indirect;
                 /* Keep the indirect target as a live child (call->a), NOT only baked
                  * into the callee string. Otherwise the target value (`t = f(); call
@@ -600,7 +600,7 @@
                              (sz==4)?"(unsigned long*)":"(unsigned long long*)";
             const char* st = (sz==1)?"(const unsigned char*)":(sz==2)?"(const unsigned short*)":
                              (sz==4)?"(const unsigned long*)":"(const unsigned long long*)";
-            auto call = std::make_shared<Expr>();
+            auto call = new_expr();
             call->kind = EK::Call; call->callee = fn; call->width = 0; call->ret_kind = 5;
             ExprP dst = reg_value(R_RDI, 8), src = reg_value(R_RSI, 8), cnt = reg_value(R_RCX, 8);
             if (dst) call->args.push_back(mkCast(pt, dst, 8, true));
@@ -680,7 +680,7 @@
         ExprP src = src_override ? src_override
                                  : (x.op_count >= 2 ? rvalue(x.operands[1]) : nullptr);
         if (!src) return false;
-        auto call = std::make_shared<Expr>();
+        auto call = new_expr();
         call->kind = EK::Call;
         call->callee = std::string(nm) + (w == 8 ? "64" : "");
         call->width = w;
@@ -734,7 +734,7 @@
         ExprP base = reg_value(R_RDI, 8), base_pre = reg_value(R_RDI, 8);
         ExprP cnt = reg_value(R_RCX, 8);
         ExprP val = reg_value(R_RAX, sz);
-        auto call = std::make_shared<Expr>();
+        auto call = new_expr();
         call->kind = EK::Call; call->callee = fn; call->width = 8; call->ret_kind = 2;
         if (base) call->args.push_back(mkCast(pt, base, 8, true));
         if (val)  call->args.push_back(mkCast(vt, val, sz, true));
@@ -792,7 +792,7 @@
         ExprP src  = reg_value(R_RSI, 8), src_pre = reg_value(R_RSI, 8);
         ExprP dst  = reg_value(R_RDI, 8), dst_pre = reg_value(R_RDI, 8);
         ExprP cnt  = reg_value(R_RCX, 8);
-        auto call = std::make_shared<Expr>();
+        auto call = new_expr();
         call->kind = EK::Call; call->callee = fn; call->width = 8; call->ret_kind = 2;
         if (src) call->args.push_back(mkCast(pt, src, 8, true));
         if (dst) call->args.push_back(mkCast(pt, dst, 8, true));
@@ -1122,7 +1122,7 @@
                                  (w==8)?"(unsigned long long)":"(unsigned int)";
                 /* the 8/16-bit forms take an `unsigned char` shift, the 32/64-bit an `int` */
                 const char* ct = (w<=2) ? "(unsigned char)" : "(int)";
-                auto call = std::make_shared<Expr>();
+                auto call = new_expr();
                 call->kind = EK::Call; call->callee = fn; call->width = w;
                 call->ret_kind = (w==8) ? 2 : 1; call->is_unsigned = true;
                 call->args.push_back(mkCast(vt, rvalue(OP(0)), w, true));
@@ -1150,7 +1150,7 @@
                 ExprP d = rvalue(OP(0)), s = rvalue(OP(1)), c = rvalue(OP(2));
                 if (!d || !s || !c) break;
                 if (w == 8) {
-                    auto call = std::make_shared<Expr>();
+                    auto call = new_expr();
                     call->kind = EK::Call;
                     call->callee = right ? "__shiftright128" : "__shiftleft128";
                     call->width = 8; call->ret_kind = 2; call->is_unsigned = true;
@@ -1283,7 +1283,7 @@
              * in compiler output. */
             case X86_INS_INT: {
                 if (nop < 1 || OP(0).type != X86_OP_IMM || OP(0).imm != 0x29) break;
-                auto call = std::make_shared<Expr>();
+                auto call = new_expr();
                 call->kind = EK::Call; call->callee = "__fastfail";
                 call->width = 0; call->ret_kind = 0;
                 call->args.push_back(mkCast("(unsigned int)", reg_value(R_RCX, 4), 4, true));
@@ -1310,7 +1310,7 @@
                  * Only the widths that HAVE an intrinsic (2/4/8); anything else keeps the
                  * shuffle. DS_NO_BSWAPFN. */
                 if ((w == 2 || w == 4 || w == 8) && !std::getenv("DS_NO_BSWAPFN")) {
-                    auto call = std::make_shared<Expr>();
+                    auto call = new_expr();
                     call->kind = EK::Call;
                     call->callee = (w == 2) ? "_byteswap_ushort"
                                  : (w == 4) ? "_byteswap_ulong" : "_byteswap_uint64";
@@ -1492,7 +1492,7 @@
                 int w = OP(0).size ? OP(0).size : 4;
                 ExprP src = rvalue(OP(1));
                 if (!src) break;
-                auto call = std::make_shared<Expr>();
+                auto call = new_expr();
                 call->kind = EK::Call;
                 call->callee = "__" + sani(in.mnem);   /* __bsf/__bsr/__tzcnt/__lzcnt — the
                                                         * names the default: path already
@@ -1888,14 +1888,14 @@
                                     iv->a->a->kind == EK::AddrOf && iv->a->a->a)
                                     hiX = iv->a->a->a;
                                 if (rw == 4 && hiX) {
-                                    auto call = std::make_shared<Expr>();
+                                    auto call = new_expr();
                                     call->kind = EK::Call; call->callee = "__f32_hi";
                                     call->width = 4; call->is_float = true; call->ret_kind = 3;
                                     call->args.push_back(clone(hiX));
                                     used_f32hi = true;
                                     do_dst(b, OP(0), call, in.addr);
                                 } else if (rw == 4) {
-                                    auto call = std::make_shared<Expr>();
+                                    auto call = new_expr();
                                     call->kind = EK::Call; call->callee = "__u2f";
                                     call->width = 4; call->is_float = true; call->ret_kind = 3;
                                     call->args.push_back(iv);
@@ -2132,7 +2132,7 @@
                         std::getenv("DS_NO_SSESCAN") || std::getenv("DS_NO_AVXMODEL")) break;
                     ExprP a0 = rvalue(OP(aiy)), a1v = rvalue(OP(biy));
                     if (!a0 || !a1v) break;   /* untracked src: leave the dest alone */
-                    auto call = std::make_shared<Expr>();
+                    auto call = new_expr();
                     call->kind = EK::Call;
                     call->callee = "__" + sani(in.mnem);   /* __vpcmpeqb / __vpshufb extern */
                     call->width = 8; call->ret_kind = 2;
@@ -2156,7 +2156,7 @@
                 }
                 ExprP a0 = rvalue(OP(ai)), a1v = rvalue(OP(bi));
                 if (!a0 || !a1v) break;      /* untracked source: leave the dest alone */
-                auto call = std::make_shared<Expr>();
+                auto call = new_expr();
                 call->kind = EK::Call;
                 call->callee = "__" + sani(in.mnem);
                 call->width = 8; call->ret_kind = 2;
@@ -2255,7 +2255,7 @@
                 ExprP alo, ahi;
                 if (!simd_src_lanes(OP(nop >= 2 ? 1 : 0), alo, ahi)) break;
                 auto mk = [&](ExprP v) {
-                    auto c = std::make_shared<Expr>();
+                    auto c = new_expr();
                     c->kind = EK::Call; c->callee = "sqrt"; c->width = 8;
                     c->is_float = true; c->ret_kind = 4;
                     c->args.push_back(v);
@@ -2376,7 +2376,7 @@
                  * SSE PSRLDQ form (dst is BOTH source and destination) reaches here; the
                  * VEX VPSRLDQ has a separate source and takes the default path. */
                 if (!std::getenv("DS_NO_SIMDOPAQUE")) {
-                    auto call = std::make_shared<Expr>();
+                    auto call = new_expr();
                     call->kind = EK::Call;
                     call->callee = "__" + sani(in.mnem);
                     call->width = 8; call->ret_kind = 2;   /* carry the xmm as an 8-byte view */
@@ -2567,7 +2567,7 @@
                                : (imm & 3) == 1 ? (dbl?"floor":"floorf")
                                : (imm & 3) == 2 ? (dbl?"ceil":"ceilf")
                                : (imm & 3) == 3 ? (dbl?"trunc":"truncf") : (dbl?"nearbyint":"nearbyintf");
-                auto call = std::make_shared<Expr>();
+                auto call = new_expr();
                 call->kind = EK::Call; call->callee = fn; call->width = w; call->ret_kind = dbl?4:3;
                 call->args.push_back(fp_src(OP(si), w));
                 call->is_float = true;
@@ -2580,7 +2580,7 @@
             case X86_INS_RSQRTSS: case X86_INS_VRSQRTSS: {
                 if (nop < 1) break;
                 int si = (nop >= 2) ? 1 : 0;
-                auto sq = std::make_shared<Expr>();
+                auto sq = new_expr();
                 sq->kind = EK::Call; sq->callee = "sqrtf"; sq->width = 4; sq->ret_kind = 3;
                 sq->args.push_back(fp_src(OP(si), 4)); sq->is_float = true;
                 used_mathfn.insert("sqrtf");
@@ -2635,7 +2635,7 @@
                 if (nop < 2) break;
                 int w = (id==X86_INS_SQRTSD) ? 8 : 4;
                 ExprP src = fp_src(OP(1), w);
-                auto call = std::make_shared<Expr>();
+                auto call = new_expr();
                 call->kind = EK::Call; call->callee = (w >= 8) ? "sqrt" : "sqrtf";
                 call->width = w; call->is_float = true; call->ret_kind = (w >= 8) ? 4 : 3;
                 if (src) call->args.push_back(src);
@@ -2765,7 +2765,7 @@
                     else if (lo==0x7fffffffu && hi==0x7fffffffu) absw=(id==X86_INS_VANDPD)?8:4;
                 }
                 if (absw) {
-                    auto call = std::make_shared<Expr>();
+                    auto call = new_expr();
                     call->kind=EK::Call; call->callee=(absw>=8)?"__fabs":"__fabsf";
                     call->width=absw; call->is_float=true;
                     call->args.push_back(fp_src(OP(1), absw));
@@ -2838,7 +2838,7 @@
                 for (int i = 0; i < 4; ++i) {
                     ExprP v = f[i];
                     if (id == X86_INS_CVTPS2DQ) {
-                        auto nb = std::make_shared<Expr>();
+                        auto nb = new_expr();
                         nb->kind = EK::Call; nb->callee = "nearbyintf"; nb->width = 4;
                         nb->ret_kind = 1; nb->is_float = true;
                         nb->args.push_back(v);
@@ -2978,7 +2978,7 @@
                 }
                 if (absw) {
                     ExprP src = rvalue(OP(0));
-                    auto call = std::make_shared<Expr>();
+                    auto call = new_expr();
                     call->kind = EK::Call; call->callee = (absw >= 8) ? "__fabs" : "__fabsf";
                     call->width = absw; call->is_float = true;
                     if (src) call->args.push_back(src);
@@ -3066,7 +3066,7 @@
                  * DS_NO_INTERLOCKED. */
                 if (has_lock(x) && OP(0).type == X86_OP_MEM && (w0 == 4 || w0 == 8) &&
                     !std::getenv("DS_NO_INTERLOCKED")) {
-                    auto call = std::make_shared<Expr>();
+                    auto call = new_expr();
                     call->kind = EK::Call;
                     call->callee = (w0 == 8) ? "_InterlockedExchangeAdd64"
                                              : "_InterlockedExchangeAdd";
@@ -3152,7 +3152,7 @@
                 ExprP leaf = reg_value(R_RAX, 4);
                 ExprP sub  = reg_value(R_RCX, 4);
                 auto mk = [&](const char* fn)->ExprP {
-                    auto c = std::make_shared<Expr>();
+                    auto c = new_expr();
                     c->kind = EK::Call; c->callee = fn; c->width = 4; c->ret_kind = 1;
                     c->args.push_back(clone(leaf)); c->args.push_back(clone(sub));
                     return c;
@@ -3167,7 +3167,7 @@
                  * destination slot is DEFINED with the real control word (a later
                  * read-modify-write of it is meaningful, not a stale backstop). */
                 if (nop < 1) break;
-                auto call = std::make_shared<Expr>();
+                auto call = new_expr();
                 call->kind = EK::Call; call->callee = "__readmxcsr";
                 call->width = 4; call->ret_kind = 1;
                 used_mxcsr = true;
@@ -3182,7 +3182,7 @@
                  * branch bodies (fun_000828f0). The read keeps that dataflow live. */
                 if (nop < 1) break;
                 ExprP arg = rvalue(OP(0));
-                auto call = std::make_shared<Expr>();
+                auto call = new_expr();
                 call->kind = EK::Call; call->callee = "__writemxcsr";
                 call->width = 0; call->ret_kind = 5; /* void */
                 used_mxcsr = true;
@@ -3287,14 +3287,14 @@
                 fpu_slot(0) = r; break;
             }
             case X86_INS_FABS: {
-                auto c = std::make_shared<Expr>();
+                auto c = new_expr();
                 c->kind = EK::Call; c->callee = "fabs"; c->width = 8;
                 c->ret_kind = 1; c->is_float = true;
                 c->args.push_back(fpu_get(0));
                 fpu_slot(0) = c; break;
             }
             case X86_INS_FSQRT: {
-                auto c = std::make_shared<Expr>();
+                auto c = new_expr();
                 c->kind = EK::Call; c->callee = "sqrt"; c->width = 8;
                 c->ret_kind = 1; c->is_float = true;
                 c->args.push_back(fpu_get(0));
@@ -3370,7 +3370,7 @@
              * to a temp so the two halves come from ONE read, not two separate calls. */
             case X86_INS_RDTSC: case X86_INS_RDTSCP: case X86_INS_XGETBV: {
                 bool xg = (id == X86_INS_XGETBV);
-                auto call = std::make_shared<Expr>();
+                auto call = new_expr();
                 call->kind = EK::Call; call->callee = xg ? "_xgetbv" : "__rdtsc";
                 call->width = 8; call->ret_kind = 2; call->is_unsigned = true;
                 if (xg) call->args.push_back(mkCast("(unsigned int)", reg_value(R_RCX, 4), 4, true));
@@ -3389,7 +3389,7 @@
              * compile-clean, entirely plausible, wrong value. The number in eax IS the
              * selector, so keep it as the argument. */
             case X86_INS_SYSCALL: case X86_INS_SYSENTER: {
-                auto call = std::make_shared<Expr>();
+                auto call = new_expr();
                 call->kind = EK::Call; call->callee = "__syscall";
                 call->width = 8; call->ret_kind = 2; call->is_unsigned = true;
                 call->args.push_back(mkCast("(unsigned int)", reg_value(R_RAX, 4), 4, true));
@@ -3426,7 +3426,7 @@
                     ExprP dst = reg_value(R_RDI, 8);
                     ExprP cnt = reg_value(R_RCX, 8);
                     const char* fn = (sz==1)?"__stosb":(sz==2)?"__stosw":(sz==4)?"__stosd":"__stosq";
-                    auto call = std::make_shared<Expr>();
+                    auto call = new_expr();
                     call->kind = EK::Call; call->callee = fn; call->width = 0; call->ret_kind = 5;
                     /* cast args to the emitted __stos* prototype so the call is not
                      * C4024/C4047 (dst is a `unsigned <T>*`, val `unsigned <T>`, cnt
@@ -3553,7 +3553,7 @@
                      * is dropped, and the confidence header discloses it. DS_NO_SIMDOPAQUE. */
                     bool xmm = is_xmm(dr) && !std::getenv("DS_NO_SIMDOPAQUE");
                     if (gpr || xmm) {
-                        auto call = std::make_shared<Expr>();
+                        auto call = new_expr();
                         call->kind = EK::Call;
                         /* xmm packed op -> canonical Intel intrinsic name (Hex-Rays parity);
                          * GPR / unmapped ops keep the __mnem form. */
@@ -3604,7 +3604,7 @@
                          * vec_op_value keyed by the capstone reg id, so a later read (e.g. the
                          * vmovdqu store) picks it up: `_mm256_storeu_si256(dst, _mm256_add_epi32(
                          * a, b))` instead of a lost op. DS_NO_AVXMODEL disables. */
-                        auto call = std::make_shared<Expr>();
+                        auto call = new_expr();
                         call->kind = EK::Call;
                         /* Deliberately use the __mnem extern, NOT the _mm256_/_mm512_ intrinsic
                          * name: MSVC builtin-recognizes many 256/512-bit intrinsics with strict
@@ -3684,7 +3684,7 @@
                              * single wide reg copy, exactly memcpy's contract. DS_NO_SSEMEMCPY
                              * reverts to the (gate-proven) chunked stores. */
                             if (!std::getenv("DS_NO_SSEMEMCPY")) {
-                                auto call = std::make_shared<Expr>();
+                                auto call = new_expr();
                                 call->kind = EK::Call; call->callee = "memcpy";
                                 call->width = 8; call->ret_kind = 2;
                                 call->args.push_back(mkCast("(void*)", clone(daddr), 8, true));
@@ -3726,7 +3726,7 @@
                                     ExprP byteval = isConst
                                         ? mkConst((int64_t)((uint64_t)fv->cval & 0xFF), 4)
                                         : mkCast("(unsigned __int8)", clone(fv), 1, true);
-                                    auto call = std::make_shared<Expr>();
+                                    auto call = new_expr();
                                     call->kind = EK::Call; call->callee = "memset";
                                     call->width = 8; call->ret_kind = 2;
                                     call->args.push_back(mkCast("(void*)", clone(daddr), 8, true));
@@ -3772,7 +3772,7 @@
                 }
                 if (nop >= 2 && vex_wide_refused && OP(0).type == X86_OP_MEM &&
                     !in.mnem.empty() && !std::getenv("DS_NO_OPAQUEMEM")) {
-                    auto call = std::make_shared<Expr>();
+                    auto call = new_expr();
                     call->kind = EK::Call;
                     call->callee = "__" + sani(in.mnem);
                     call->width = 0; call->ret_kind = 0;

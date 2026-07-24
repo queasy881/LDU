@@ -262,7 +262,7 @@
 
     ExprP set_width(ExprP v, int w) {
         if (!v) return v;
-        auto c = std::make_shared<Expr>(*v);
+        auto c = new_expr(*v);
         c->a = v->a; c->b = v->b; c->c = v->c; c->args = v->args;
         c->width = w;
         return c;
