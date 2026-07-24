@@ -7542,6 +7542,24 @@ void build_sig_table(ds_engine* e, std::map<uint64_t, FuncSig>& tab) {
                 s.ptr_param_mask = tab[callee].ptr_param_mask;
                 for (int p = 0; p < 4; ++p) s.ptr_param_w[p] = tab[callee].ptr_param_w[p];
             }
+            /* THE RETURN TYPE FORWARDS TOO. A pure `jmp T` thunk hands back exactly
+             * what T hands back, but only the parameter side was copied, so every
+             * thunk kept the ret_kind its own (return-less) body implied: VOID.
+             *
+             * A void callee's result is discarded at every call site, which is how
+             * kernel32 fun_0003d9a4 -- a HIGH-confidence, goto-free function -- came
+             * out as 49 bare `j_sin();` statements whose results vanished, with the
+             * surrounding expression multiplying its coefficients by the pre-call
+             * ANGLE instead of by sin(angle). Silently wrong arithmetic in output
+             * that looks entirely healthy, which is the worst failure mode there is.
+             *
+             * Only ever widens void -> a real type; a thunk that genuinely discards
+             * (a `void` target) is untouched, and ret_api forwards with it so the
+             * API-derived return typing survives the hop. */
+            if (s.ret_kind == 0 && tab[callee].ret_kind != 0) {
+                s.ret_kind = tab[callee].ret_kind;
+                if (s.ret_api.empty()) s.ret_api = tab[callee].ret_api;
+            }
         }
     }
 

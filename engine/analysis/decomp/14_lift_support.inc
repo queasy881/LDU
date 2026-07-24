@@ -507,6 +507,55 @@
         return false;
     }
 
+    /* FLOATING-POINT signatures for the C math library.
+     *
+     * known_api()'s 3-tuple cannot express these: its `rk` column only ever used
+     * 0/1/2 (void/int/long long) and the caller forces cc_float_mask to 0, so a
+     * math routine would be called with an INTEGER register and its double result
+     * treated as void. This table supplies the two missing facts - which parameter
+     * positions arrive in xmm, and that the result is a double (ret_kind 4).
+     *
+     * Why it matters: these reach the decompiler as `jmp` thunks with no body, so
+     * the recovered signature is void/0-params, and a void result is discarded at
+     * every call site. kernel32 fun_0003d9a4 - HIGH confidence, goto-free -
+     * emitted 49 bare `j_sin();` statements with their results dropped, while the
+     * surrounding polynomial multiplied its coefficients by the pre-call ANGLE
+     * instead of sin(angle). Wrong arithmetic inside output that looks healthy.
+     *
+     * Returns the xmm parameter mask, or 0 when `nm` is not a known math routine.
+     * `*rk_out` receives the return kind (4 = double) on a hit. */
+    static unsigned known_math_api(const std::string& nm, int& argc, int& rk_out) {
+        struct M { const char* n; int a; unsigned fmask; };
+        static const M tbl[] = {
+            /* one double in, double out */
+            {"sin",1,0x1},{"cos",1,0x1},{"tan",1,0x1},{"asin",1,0x1},{"acos",1,0x1},
+            {"atan",1,0x1},{"sinh",1,0x1},{"cosh",1,0x1},{"tanh",1,0x1},
+            {"exp",1,0x1},{"exp2",1,0x1},{"expm1",1,0x1},
+            {"log",1,0x1},{"log2",1,0x1},{"log10",1,0x1},{"log1p",1,0x1},
+            {"sqrt",1,0x1},{"cbrt",1,0x1},{"fabs",1,0x1},
+            {"ceil",1,0x1},{"floor",1,0x1},{"trunc",1,0x1},{"round",1,0x1},
+            {"rint",1,0x1},{"nearbyint",1,0x1},
+            /* two doubles in, double out */
+            {"pow",2,0x3},{"atan2",2,0x3},{"fmod",2,0x3},{"hypot",2,0x3},
+            {"fdim",2,0x3},{"fmax",2,0x3},{"fmin",2,0x3},{"copysign",2,0x3},
+            {"remainder",2,0x3},
+            /* three doubles in, double out */
+            {"fma",3,0x7},
+            {nullptr,0,0}
+        };
+        std::string base = nm;
+        if (base.rfind("j_", 0) == 0) base.erase(0, 2);   /* jmp-thunk prefix */
+        /* the `f`/`l` suffixed float/long-double forms have the same shape */
+        if (base.size() > 1 && (base.back() == 'f' || base.back() == 'l')) {
+            std::string trimmed = base.substr(0, base.size() - 1);
+            for (int i = 0; tbl[i].n; ++i)
+                if (trimmed == tbl[i].n) { argc = tbl[i].a; rk_out = 4; return tbl[i].fmask; }
+        }
+        for (int i = 0; tbl[i].n; ++i)
+            if (base == tbl[i].n) { argc = tbl[i].a; rk_out = 4; return tbl[i].fmask; }
+        return 0;
+    }
+
     /* Backing type for every name api_param_types() can produce. INTEGER-backed on
      * purpose: a pointer and a 64-bit integer occupy the identical x64 register
      * slot, so the callee reads rcx/edx unchanged and NO call site needs a cast it

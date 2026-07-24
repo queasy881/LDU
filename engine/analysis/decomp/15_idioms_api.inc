@@ -152,7 +152,18 @@
          * thunk having no body, so the fact must win. */
         if (!indirect && !callee.empty()) {
             int aargc, ark;
-            if (known_api(callee, aargc, ark)) {
+            /* The C math library first: its arguments arrive in xmm and its result
+             * is a double, neither of which known_api's 3-tuple can say (it forces
+             * cc_float_mask to 0 and only encodes void/int/long long). These reach
+             * us as bodiless `jmp` thunks, so the recovered signature is void with
+             * no parameters — and a void result is dropped at every call site. */
+            unsigned mfmask = known_math_api(callee, aargc, ark);
+            if (mfmask) {
+                pc = aargc; ret_kind = ark;      /* 4 = double */
+                cc_float_mask = mfmask;
+                cc_pc_from_sig = true;
+                extern_callees[callee] = ret_kind;
+            } else if (known_api(callee, aargc, ark)) {
                 pc = aargc; ret_kind = ark; cc_float_mask = 0;
                 cc_pc_from_sig = true;
                 extern_callees[callee] = ret_kind;
