@@ -969,7 +969,27 @@
              * 40s. Reading a bool member costs nothing next to a block render. */
             if (++struct_guard > 300000 || budget_tripped ||
                 ((struct_guard & 0x3FF) == 0 && !budget_spend(1024))) {
-                struct_bailed = true; dst += ind() + "/* structurer bailout */\n"; return;
+                /* CUT, don't bail — the same trade the depth ceiling above makes.
+                 *
+                 * This used to set struct_bailed and emit a comment, dropping the
+                 * region: the body was then incomplete, so the caller threw away
+                 * the WHOLE function and re-emitted every block as a flat
+                 * goto-CFG. Measured on the worst offenders, pass 1 spends the
+                 * entire meter by itself and comes out LABEL-CONSISTENT — so the
+                 * old rule paid the full budget and then discarded a good partial
+                 * structure, turning ~50 gotos into 333.
+                 *
+                 * Emitting `goto L_b` and leaving b unstructured keeps everything
+                 * already recovered and hands the remainder to
+                 * emit_unstructured_tail, which is strictly less work than the
+                 * whole-function goto-CFG this replaces. Running out of budget
+                 * says nothing about whether the function is reducible, exactly as
+                 * running out of stack does not. */
+                if (b >= 0 && b != stop) {
+                    need_label.insert(b);
+                    dst += ind() + "goto " + block_label(b) + ";\n";
+                }
+                return;
             }
             /* A jump to the innermost loop's follow is a `break`; a jump to its
              * header (the continue point) is a `continue`. Converting these here

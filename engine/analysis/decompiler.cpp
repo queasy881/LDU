@@ -1989,6 +1989,65 @@ struct Decompiler {
         }
     }
 
+    /* Emit ONLY the blocks the structurer never reached, as a labeled goto-CFG
+     * tail appended after the structured body.
+     *
+     * This is what makes a work-meter trip survivable. Hitting the meter used to
+     * set struct_bailed and throw the ENTIRE function away — every loop and `if`
+     * already recovered — for a flat goto-CFG over all blocks. Cutting instead
+     * (emit `goto L_b` at the trip point, leave the block unstructured) keeps the
+     * structure and leaves a remainder, and this emits that remainder.
+     *
+     * Fall-through is elided against the next block IN THIS TAIL, not the next by
+     * address: the tail's set has holes, so "next by address" may not be what is
+     * textually next, and eliding against it would silently run the wrong block.
+     * Eliding against the tail's own order is exact, and matters — emitting every
+     * transfer explicitly instead cost ~70% MORE gotos than the whole-function
+     * goto-CFG this replaces, which defeats the point. */
+    void emit_unstructured_tail(std::string& dst) {
+        std::vector<int> order;
+        for (size_t i = 0; i < blocks.size(); ++i)
+            if (!structured.count((int)i) && !blocks[i].insn_idx.empty()) order.push_back((int)i);
+        std::sort(order.begin(), order.end(),
+                  [&](int a, int c){ return blocks[a].addr < blocks[c].addr; });
+        for (size_t oi = 0; oi < order.size(); ++oi) {
+            int id = order[oi];
+            const int nxt = (oi + 1 < order.size()) ? order[oi + 1] : -1;
+            Block& b = blocks[id];
+            structured.insert(id);
+            dst += block_label(id) + ":;\n";
+            emit_stmts(id, dst);
+            if (b.ends_ret) {
+                dst += ind() + ret_text(id) + "\n";
+            } else if (b.is_switch) {
+                dst += ind() + "switch (" + switch_sel(b.switch_var ? b.switch_var : mkConst(0,4)) + ") {\n";
+                indent_lvl++;
+                for (size_t i = 0; i < b.case_succ.size(); ++i) {
+                    if (b.case_succ[i] < 0) continue;
+                    dst += ind() + "case " + std::to_string(i) + ": goto " +
+                           block_label(b.case_succ[i]) + ";\n";
+                }
+                indent_lvl--;
+                dst += ind() + "}\n";
+                if (b.default_succ >= 0)
+                    dst += ind() + "goto " + block_label(b.default_succ) + ";\n";
+                else dst += ind() + ret_text(id) + "\n";
+            } else if (b.ends_jcc) {
+                if (b.taken >= 0)
+                    dst += ind() + "if (" + render_cond(b.cond ? b.cond : mkConst(1,4)) +
+                           ") goto " + block_label(b.taken) + ";\n";
+                if (b.fall >= 0) { if (b.fall != nxt) dst += ind() + "goto " + block_label(b.fall) + ";\n"; }
+                else dst += ind() + ret_text(id) + "\n";
+            } else if (b.ends_jmp) {
+                if (b.taken >= 0) { if (b.taken != nxt) dst += ind() + "goto " + block_label(b.taken) + ";\n"; }
+                else dst += ind() + ret_text(id) + "\n";
+            } else {
+                if (b.fall >= 0) { if (b.fall != nxt) dst += ind() + "goto " + block_label(b.fall) + ";\n"; }
+                else dst += ind() + ret_text(id) + "\n";
+            }
+        }
+    }
+
     /* GUARANTEED goto-free emission of ANY CFG (reducible or irreducible) via a
      * loop-switch dispatch: `int __state = entry; while(1) switch(__state){...}`.
      * Each block is a `case <id>:`; `goto X` becomes `__state = X; break;` (the
@@ -5644,7 +5703,28 @@ struct Decompiler {
              * pass-1 -> pass-2 mechanism that already works. So run it again. Each
              * round can only add labels, so it converges; the bound stops a
              * pathological CFG from looping and costs one wasted emission at worst. */
-            for (int retry = 0; retry < 3 && !budget_tripped && !labels_consistent(tmp); ++retry) {
+            /* ITERATE TO A FIXPOINT, don't stop at 3.
+             *
+             * need_label only ever GROWS, so this converges — the comment above
+             * already says so. Two things stopped it early anyway: the hard cap of
+             * 3, and the `else break` below, which discarded any round that had
+             * not strictly REDUCED the dangling count even though that round had
+             * grown need_label and would have converged on the next one. Progress
+             * is in need_label, not in the dangling count, and measuring the wrong
+             * one threw the progress away.
+             *
+             * That is what left REDUCIBLE CFGs emitting gotos with budget to
+             * spare: fun_0001fe40 (423 blocks, reducible) still dangles after 3
+             * rounds and so lost all 423 blocks' structure to the flat goto-CFG.
+             *
+             * Termination is on the real fixpoint — a round that adds no label
+             * cannot change the next one — with a ceiling as a backstop. The best
+             * (fewest-dangling) attempt is kept, so a round can never make the
+             * accepted body worse than one already seen. */
+            std::string best_body = tmp;
+            size_t best_dang = dangling_label_blocks(tmp).size();
+            for (int retry = 0; retry < 24 && !budget_tripped && !labels_consistent(tmp); ++retry) {
+                const size_t nl_before = need_label.size();
                 std::string re;
                 reset_emit();
                 emit_region(entry_block(), -1, re, -1);
@@ -5667,14 +5747,21 @@ struct Decompiler {
                     }
                     if (!progress) break;
                 }
-                /* keep the retry only if it is no worse: it must resolve at least as
-                 * many labels as the attempt it replaces. */
-                if (labels_consistent(re) || dangling_label_blocks(re).size() <
-                                             dangling_label_blocks(tmp).size())
-                    tmp.swap(re);
-                else
-                    break;
+                /* Remember the best attempt seen, then CARRY THIS ROUND FORWARD
+                 * regardless of whether it reduced the dangling count: the labels
+                 * it added live in need_label and are what lets the next round
+                 * resolve. Stopping here on a flat round was the bug. */
+                const size_t dang_re = dangling_label_blocks(re).size();
+                if (labels_consistent(re)) { tmp.swap(re); break; }
+                if (dang_re < best_dang) { best_dang = dang_re; best_body = re; }
+                tmp.swap(re);
+                /* True fixpoint: a round that added no label cannot change the
+                 * next one, so further rounds are pure cost. */
+                if (need_label.size() == nl_before) break;
             }
+            /* Never accept a body worse than one already produced. */
+            if (!labels_consistent(tmp) && dangling_label_blocks(tmp).size() > best_dang)
+                tmp = best_body;
             _phase("emit-pass2+repair");
             /* Drop provably-unreachable statements (a `goto`/stmt after an
              * unconditional transfer) — including any the repair pass just emitted.
@@ -5697,7 +5784,34 @@ struct Decompiler {
              * early, so the body may be missing whole regions even when what DID
              * get emitted happens to be label-consistent. Fall through to the
              * complete goto-CFG, which never loses a block. */
-            ok_struct = labels_consistent(body) && !struct_bailed && !budget_tripped;
+            /* The meter may have cut regions loose (see the trip in emit_region).
+             * Emit those blocks as a goto-CFG tail so the body is COMPLETE, then
+             * accept only if it really is: every non-empty block emitted exactly
+             * once and no dangling label. Coverage is what makes cutting safe —
+             * a lost block would be silently missing code, which is worse than
+             * any number of gotos. */
+            if (budget_tripped || struct_guard > 300000) {
+                emit_unstructured_tail(body);
+                body = dedupe_label_defs(body);
+            }
+            /* DEDUPE BEFORE JUDGING, not after.
+             *
+             * labels_consistent() is false for EITHER an undefined label or a
+             * DUPLICATE definition, and the repair loop's whole job is to append a
+             * canonically-labelled copy of a block — which routinely produces the
+             * duplicate. The body was then rejected and the entire function thrown
+             * away for a redefinition that the pipeline strips unconditionally a
+             * few lines later anyway ("guarantee no duplicate label survives").
+             *
+             * Measured: fun_00097dd0 (300 blocks, REDUCIBLE) was reverted with an
+             * EMPTY dangling set after spending 37k of its 1.69M budget — nothing
+             * was wrong with it except a duplicate label. Deduping first cannot
+             * create a dangling label, since the first definition always remains. */
+            body = dedupe_label_defs(body);
+            bool all_covered = true;
+            for (auto& b : blocks)
+                if (!b.insn_idx.empty() && !structured.count(b.id)) { all_covered = false; break; }
+            ok_struct = labels_consistent(body) && !struct_bailed && all_covered;
         } catch (...) {
             ok_struct = false;
         }
@@ -5712,7 +5826,19 @@ struct Decompiler {
             std::string dbg;
             if (std::getenv("DS_DBG_BODY")) {
                 std::vector<int> dang = dangling_label_blocks(body);
-                dbg = "/* DBG reverted; dangling:";
+                /* WHICH of the three conditions rejected the structured attempt.
+                 * Printing only the dangling set was misleading: the set is EMPTY
+                 * whenever the cause was the work meter or a dropped region, which
+                 * is the common case for the worst offenders. */
+                dbg = "/* DBG reverted;";
+                dbg += " reason=";
+                if (!labels_consistent(body)) dbg += "dangling-labels ";
+                if (struct_bailed)            dbg += "struct-bailed(region-dropped) ";
+                if (budget_tripped)           dbg += "work-budget ";
+                dbg += "| spent=" + std::to_string(budget_spent) +
+                       "/" + std::to_string(budget_cap);
+                dbg += " blocks=" + std::to_string(blocks.size());
+                dbg += " dangling:";
                 for (int d : dang) dbg += " " + block_label(d);
                 dbg += " */\n";
                 dbg += "/* ---- failed structured attempt ----\n" + body + "\n---- end ---- */\n";

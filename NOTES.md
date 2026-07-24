@@ -6,7 +6,58 @@ the reasoning behind each change lives in its commit message.
 
 ---
 
-## Open: Rust goto density
+## In progress: goto density — root-caused, 30% removed, not yet 0
+
+**The open question is answered.** Every worst-case function was hitting the
+whole-function `emit_goto_cfg` fallback, and for three separate reasons — none
+of which was "genuinely irreducible":
+
+1. **The work meter, by a hair.** Pass 1 spends the ENTIRE budget by itself and
+   overruns by *under 1%* (`77312/76952`, `91904/91664`); every later pass is
+   gated on `!budget_tripped` so they all no-op. A 1% overrun cost 100% of the
+   structure.
+2. **A duplicate label.** `labels_consistent()` is false for an undefined label
+   OR a duplicate definition, and the repair loop's job is to append a
+   canonically-labelled copy — which routinely makes the duplicate. Bodies were
+   thrown away over a redefinition the pipeline strips a few lines later anyway.
+   `fun_00097dd0` (300 blocks, reducible) was reverted with an EMPTY dangling
+   set after using 37k of its 1.69M budget.
+3. **The retry loop measuring the wrong thing.** It stopped after 3 rounds, and
+   bailed on the first round that did not shrink the dangling *count* — even
+   though that round had grown `need_label`, which is where the progress is.
+
+Three fixes, no code duplication and no state machine:
+
+- **Cut, don't bail** — a meter trip emits `goto L_b` and keeps everything
+  already structured, with `emit_unstructured_tail` emitting the remainder.
+  Same trade the depth ceiling makes (`5607907`). Acceptance now requires
+  coverage: every non-empty block emitted, else fall back.
+- **Reducible-gated budget (x24)** — a reducible CFG has a goto-free form, so
+  work buys structure; an irreducible one does not, so it keeps the old cap.
+  Gating is why the perf gate got FASTER, not slower.
+- **Dedupe before judging, and iterate labels to a fixpoint.**
+
+Measured on `disasmstudio.exe` (1200 fns), by the T1-T2 reducibility prover:
+
+| | before | after |
+|---|---|---|
+| reducible (a goto-free form exists) | 244 fns / **4529** | 244 fns / **2879** |
+| irreducible (provably needs splitting) | 57 fns / **4014** | 57 fns / **3118** |
+| total | 8543 | **5997** |
+
+`fun_00097dd0` 298 -> 27, `fun_0001fe40` 343 -> 127.
+
+kernel32 unchanged at 1292 gotos; `throughput` still asserts parallel == serial
+across 2590 fns and got faster (228 -> 273 fns/s); 0 phantom leaks.
+
+**Not done: 2879 reducible gotos remain, and they should be 0.** The residual is
+concentrated in cut-points (`fun_000039e0` 220, `fun_00016640` 204,
+`fun_0004e090` 204) — functions that still exhaust even the x24 meter. That is a
+structurer-efficiency problem, not a ceiling: the emitter re-emits whole
+functions several times per attempt. The irreducible 3118 are unavoidable
+without node-splitting, which is deliberately out of scope.
+
+## Open: Rust goto density (original note)
 
 `disasmstudio.exe` produces 11,545 gotos across 377 functions; kernel32 produces
 1,379 across 206. The gotos are concentrated — in a 1200-function sample, 300

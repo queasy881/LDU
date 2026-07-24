@@ -164,6 +164,25 @@
         long b = (long)blocks.size() + 1;
         budget_cap = budget_scale() > 0 ? budget_scale()
                                         : (60000L + 8L * n + 40L * b);
+        /* SPEND THE METER WHERE IT CAN BUY STRUCTURE.
+         *
+         * A REDUCIBLE CFG has a goto-free structured form; every goto it emits is
+         * a structurer limitation, and more work converts directly into recovered
+         * loops and ifs. An IRREDUCIBLE one provably does not (without node
+         * splitting or a dispatch variable), so its gotos are unavoidable and
+         * extra budget buys nothing but time.
+         *
+         * Measured on disasmstudio.exe: the worst offenders overran the base cap
+         * by UNDER 1% and lost their whole structure for it; the reducible ones
+         * needed ~10x to finish (fun_0003b2f0: 260 gotos -> 40 at 800k). Raising
+         * the cap for everything cost 2.7x wall time and bought nothing on the
+         * irreducible half, which is where the biggest functions are. Gating on
+         * reducibility puts the time exactly where it pays.
+         *
+         * cfg_is_reducible is O(V*(V+E)) and runs once per function.
+         * DS_WORK_BUDGET (explicit) still wins outright. */
+        if (budget_scale() <= 0 && !std::getenv("DS_NO_REDBUDGET") && cfg_is_reducible())
+            budget_cap *= 24L;
         budget_spent = 0;
         budget_tripped = false;
         budget_wall_ms = budget_wall_default();
