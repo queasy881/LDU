@@ -946,6 +946,9 @@
          * param-to-param assignment (e.g. `a1 = a4`). Reads of a param resolve to
          * its name via param_home_off, so the store carries no information. */
         if (home_store_addrs.count(in.addr)) return;
+        /* the prologue stack-cookie write: dropped with its epilogue check, rather
+         * than emitted with the rsp mix silently missing (see cookie_store_addrs). */
+        if (cookie_store_addrs.count(in.addr)) return;
         /* Snapshot the switch index register's value at the EXACT table-load insn
          * (recover_jump_table recorded its address): the computed goto reuses that
          * register as the jump target right after, and it is also briefly reused

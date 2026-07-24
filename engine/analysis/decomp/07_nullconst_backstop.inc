@@ -173,10 +173,44 @@
      * so BOTH lifting and liveness ignore them. If only lifting drops the call,
      * liveness still counts its implicit rax-def, marks rax not-live-in at the
      * epilogue merge, and skips the rax phi — losing the real return value. */
+    /* Stores that write the PROLOGUE stack cookie — suppressed when lifting.
+     *
+     * `is_cookie_xor` deliberately models `xor reg,rsp` as a no-op, which is right
+     * for the epilogue CHECK (`xor rcx,rsp; call __security_check_cookie`, whose
+     * value is only compared and whose call is dropped anyway). But the canonical
+     * prologue is
+     *     mov rax, [__security_cookie]
+     *     xor rax, rsp                 <- modelled as a no-op
+     *     mov [rsp+0x48], rax          <- so this stores the RAW cookie
+     * and that store IS emitted, as `field_28 = qword_bf230;` — a value the machine
+     * never writes, since the real one is mixed with rsp. Modelling the xor
+     * faithfully is not an option either: rsp is a frame base with no C spelling.
+     *
+     * The whole sequence is compiler housekeeping with no effect on recovered
+     * semantics — the epilogue check is already dropped — so the store is dropped
+     * with it. Silence beats a confidently wrong value. */
+    std::set<uint64_t> cookie_store_addrs;
+
     void scan_cookie_calls() {
-        for (size_t i = 1; i < insns.size(); ++i)
+        for (size_t i = 1; i < insns.size(); ++i) {
             if (insns[i].is_call && is_cookie_xor(&insns[i-1]))
                 cookie_call_addrs.insert(insns[i].addr);
+            /* `xor reg,rsp` immediately followed by a store of that same reg to a
+             * stack slot: the prologue cookie write. */
+            if (!is_cookie_xor(&insns[i-1])) continue;
+            const cs_x86& xr = insns[i-1].x86;
+            Reg cr; int crw; map_reg(xr.operands[0].reg, cr, crw);
+            const cs_x86& st = insns[i].x86;
+            if (insns[i].id != X86_INS_MOV || st.op_count != 2) continue;
+            if (st.operands[0].type != X86_OP_MEM || st.operands[1].type != X86_OP_REG) continue;
+            Reg sr; int srw; map_reg(st.operands[1].reg, sr, srw);
+            if (sr != cr) continue;
+            Reg mb = R_NONE; int mbw;
+            if (st.operands[0].mem.base != X86_REG_INVALID)
+                map_reg(st.operands[0].mem.base, mb, mbw);
+            if (mb != R_RSP && mb != R_RBP) continue;
+            cookie_store_addrs.insert(insns[i].addr);
+        }
     }
     uint32_t cur_insn_size = 0;
 
