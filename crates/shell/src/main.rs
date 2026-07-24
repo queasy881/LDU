@@ -29,6 +29,7 @@ mod dialogs;
 mod dsproj;
 mod ipc;
 mod protocol;
+mod script;
 mod session;
 
 use std::collections::HashMap;
@@ -181,6 +182,15 @@ fn build_window<T>(
 }
 
 fn main() {
+    /* Headless scripting mode: run the JSON command stream and exit WITHOUT ever
+     * building an event loop or a window, so it works over a pipe, in CI, and on a
+     * machine with no display. Checked before anything GUI is constructed. */
+    {
+        let argv: Vec<String> = std::env::args().skip(1).collect();
+        if argv.first().map(String::as_str) == Some("--script") {
+            std::process::exit(script::run(&argv[1..]));
+        }
+    }
     let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
     let proxy = event_loop.create_proxy();
 
