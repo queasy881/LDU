@@ -119,6 +119,13 @@ void ds_engine_add_symbol(ds_engine* e, uint64_t rva, const char* name);
 /* recover C++ class/virtual-function names from MSVC x64 RTTI and seed them as
  * symbols. Runs inside ds_engine_resolve_symbols before naming; x64-only, gated
  * by DS_NO_RTTI. Idempotent-safe: only seeds still-unnamed recovered functions. */
+/* Recover real function names from a Go binary's embedded pclntab (runtime
+ * symbol table). Statically-linked Go exports almost nothing, so without this
+ * every function is fun_<rva>. Runs beside ds_engine_load_pdb, before build_cfg
+ * collects function starts, so a name also RECOVERS a function nothing calls.
+ * No-op on non-Go images. Gated by DS_NO_GOPCLNTAB. */
+void ds_engine_load_go_pclntab(ds_engine* e);
+
 void ds_engine_scan_rtti(ds_engine* e);
 /* name C++ constructors/destructors: a function that stores &<Class>__vftable to
  * [this+0] is a ctor (or a dtor when it is itself a vtable slot). Runs after

@@ -155,6 +155,11 @@ extern "C" int ds_engine_build_cfg(ds_engine* e) {
      * scan_rtti defers to any rva already seeded. */
     ds_engine_load_pdb(e);
 
+    /* Go's pclntab, same category as the PDB: the producer's own symbol table.
+     * After load_pdb so a cgo build's PDB stays authoritative, and before
+     * scan_rtti/function-start collection for the same reason the PDB is. */
+    ds_engine_load_go_pclntab(e);
+
     /* recover C++ class/virtual-function names from MSVC RTTI and seed them as
      * symbols BEFORE function-start collection: a vtable-only virtual (never
      * directly called) is then picked up by the e->symbols[] pass below and both
