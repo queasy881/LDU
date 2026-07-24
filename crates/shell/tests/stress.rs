@@ -65,6 +65,8 @@ fn count_in_reg(s: &str) -> usize {
     n
 }
 
+mod common;
+
 #[test]
 fn stress() {
     let bin = std::env::var("DS_REAL_BIN").expect("DS_REAL_BIN required (no default)");
@@ -115,7 +117,14 @@ fn stress() {
     let out_dir = std::env::var("DS_STRESS_OUT").ok();
 
     let t_all = std::time::Instant::now();
+    // Production stack: see common::on_worker_stack.
+    common::on_worker_stack(|| {
     for f in funcs.iter().take(cap) {
+        if std::env::var("DS_TRACE_FN").is_ok() {
+            eprintln!("[FN] {:#x} size={}", f.rva, f.size);
+            use std::io::Write as _;
+            let _ = std::io::stderr().flush();
+        }
         let t0 = std::time::Instant::now();
         let code = engine.decompile(f.rva).unwrap_or_default();
         let ms = t0.elapsed().as_millis();
@@ -148,6 +157,7 @@ fn stress() {
             combined.push('\n');
         }
     }
+    });
     let all_ms = t_all.elapsed().as_millis();
 
     if let Some(dir) = &out_dir {

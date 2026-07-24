@@ -78,11 +78,28 @@ fn throughput() {
     let mut serial_secs = 0.0_f64;
     if !sweep {
         let t = std::time::Instant::now();
-        for f in funcs.iter() {
-            if let Some(code) = engine.decompile(f.rva) {
-                serial.insert(f.rva, code.len());
+        // Same stack as the parallel workers below and as the app's workers: the
+        // two sides of this comparison must run under identical conditions, or a
+        // reported mismatch says more about the harness than about the engine.
+        let engine_ref = &engine;
+        let funcs_ref = &funcs;
+        std::thread::scope(|scope| {
+            let h = std::thread::Builder::new()
+                .stack_size(64 * 1024 * 1024)
+                .spawn_scoped(scope, move || {
+                    let mut out = Vec::new();
+                    for f in funcs_ref.iter() {
+                        if let Some(code) = engine_ref.decompile(f.rva) {
+                            out.push((f.rva, code.len()));
+                        }
+                    }
+                    out
+                })
+                .expect("spawn serial worker");
+            for (rva, len) in h.join().expect("serial worker panicked") {
+                serial.insert(rva, len);
             }
-        }
+        });
         serial_secs = t.elapsed().as_secs_f64();
         eprintln!(
             "SERIAL:   {:.2}s  =>  {:.0} fns/s  ({} decompiled)",
@@ -113,7 +130,14 @@ fn throughput() {
         for tid in 0..nthreads {
             let next = &next;
             let shard = &shards[tid];
-            scope.spawn(move || {
+            // Match the production worker stack (session.rs). The structurer's
+            // depth ceiling is deterministic, but its stack-exhaustion SAFETY NET
+            // is not — so a test running on a smaller stack than the real app
+            // could take a different path and report a mismatch the shipped
+            // product would never hit. Same stack here, same code path there.
+            let _ = std::thread::Builder::new()
+                .stack_size(64 * 1024 * 1024)
+                .spawn_scoped(scope, move || {
                 let mut local = Vec::new();
                 loop {
                     let i = next.fetch_add(1, Ordering::Relaxed);
@@ -125,7 +149,7 @@ fn throughput() {
                     }
                 }
                 *shard.lock().unwrap() = local;
-            });
+                });
         }
     });
     let par_secs = t.elapsed().as_secs_f64();

@@ -72,3 +72,30 @@ pub fn real_bin() -> Option<String> {
 pub const NO_REAL_BIN: &str =
     "[skip] no test binary: set DS_REAL_BIN=<path>, or build the corpus with \
      _qa/fixtures/corpus/compile_all.bat";
+
+/// Stack size the app gives its decompile workers (see `session.rs`).
+///
+/// The structurer recurses over the region tree. Its depth ceiling is
+/// deterministic, but the stack-exhaustion safety net underneath it is not: on a
+/// smaller stack the engine cuts a region earlier and emits a `goto` where the
+/// shipped product would have kept the structure. libtest threads get 2 MiB,
+/// which is roughly a seventh of what the real workers have — so a test left on
+/// the default stack measures a configuration no user ever runs, and can report
+/// a difference that does not exist in the product.
+pub const WORKER_STACK: usize = 64 * 1024 * 1024;
+
+/// Run `f` on a thread with the production worker stack, and return its result.
+pub fn on_worker_stack<T, F>(f: F) -> T
+where
+    F: FnOnce() -> T + Send,
+    T: Send,
+{
+    std::thread::scope(|scope| {
+        std::thread::Builder::new()
+            .stack_size(WORKER_STACK)
+            .spawn_scoped(scope, f)
+            .expect("spawn worker-stack thread")
+            .join()
+            .expect("worker-stack thread panicked")
+    })
+}

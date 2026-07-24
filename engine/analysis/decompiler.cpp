@@ -50,6 +50,61 @@
 #include <memory>
 #include <functional>
 #include <array>
+
+#if defined(_WIN32)
+#  ifndef WIN32_LEAN_AND_MEAN
+#    define WIN32_LEAN_AND_MEAN
+#  endif
+#  ifndef NOMINMAX          /* else the min/max MACROS break every std::min/std::max */
+#    define NOMINMAX
+#  endif
+#  include <windows.h>
+#endif
+
+/* ====================================================================== */
+/*  Stack headroom                                                         */
+/* ====================================================================== */
+/*
+ * THE STRUCTURER RECURSES, so a sufficiently nested CFG can exhaust the stack
+ * and kill the process. That is not a hypothetical: a Go binary's package-init
+ * function (git-lfs 0xd0480 -- 324 blocks of `if (cond) {...}` chained one
+ * inside the next) drove emit_region past 140 frames and crashed with
+ * STATUS_ACCESS_VIOLATION. The GUI's decompile workers run on Rust's default
+ * 2 MiB stacks, so it crashed there too.
+ *
+ * A fixed depth cap is the wrong instrument: real functions already come close
+ * (ntdll peaks at depth 100, kernel32 at 50), so any cap safe for a small stack
+ * would bail on functions that work today, and any cap generous enough for them
+ * would still crash on a smaller stack. The frame size is not knowable either --
+ * it depends on the compiler, the build flags and which helpers inline.
+ *
+ * So measure the actual remaining stack instead. This is exact, adapts to
+ * whatever stack the host thread was given, and is a couple of loads: the thread
+ * stack bounds are constant per thread and cached, leaving one compare against
+ * the current frame's address. Any input, any thread, any stack size -- the
+ * structurer bails to the flat goto-CFG (which does not recurse) before the
+ * stack runs out, instead of taking the process down.
+ */
+static size_t ds_stack_headroom() {
+#if defined(_WIN32)
+    static thread_local uintptr_t s_low = 0;
+    if (!s_low) {
+        ULONG_PTR lo = 0, hi = 0;
+        GetCurrentThreadStackLimits(&lo, &hi);
+        s_low = (uintptr_t)lo;
+        if (!s_low) s_low = 1;          /* query failed: disable the check */
+    }
+    if (s_low == 1) return (size_t)-1;
+    char probe;
+    uintptr_t sp = (uintptr_t)&probe;
+    return sp > s_low ? (size_t)(sp - s_low) : 0;
+#else
+    return (size_t)-1;
+#endif
+}
+/* Bail while this much stack is still left. Generous: one emit_region level
+ * measured ~14 KB, and the fallback path itself needs room to run. */
+static const size_t kStackReserve = 256 * 1024;
 #include <chrono>
 
 #ifdef DS_USE_CAPSTONE
@@ -822,7 +877,31 @@ static std::shared_ptr<const PeTables> get_pe_tables(const ds_engine* e) {
 
 bool isConst(const ExprP& e) { return e && e->kind == EK::Const; }
 
+/* Recursion-depth counter. The COUNT is always maintained — emit_region's ceiling
+ * reads it, and that ceiling has to be deterministic, so it cannot depend on a
+ * debug switch. Only the tracing is conditional (DS_DBG_DEPTH), which is what
+ * attributed the Go-binary stack overflow to emit_region in the first place. */
+struct DepthProbe {
+    static bool trace() { static const bool v = std::getenv("DS_DBG_DEPTH") != nullptr; return v; }
+    int* cur;
+    DepthProbe(const char* n, int* c) : cur(c) {
+        ++*cur;
+        if (trace() && *cur % 10 == 0) fprintf(stderr, "[DEPTH] %s = %d\n", n, *cur);
+    }
+    ~DepthProbe() { --*cur; }
+};
+#define DS_DEPTH(name) static thread_local int _d_##name = 0; DepthProbe _dp_##name(#name, &_d_##name)
+
+/* Maximum structurer recursion. Chosen from measurement, not taste: real binaries
+ * peak around 100 nested regions (ntdll; kernel32 reaches 50), and one level costs
+ * roughly 14 KB of stack, so 512 leaves large headroom over anything observed while
+ * still fitting in ~7.5 MB — comfortably inside the stacks the decompile workers
+ * are given. Past this the region is cut and re-emitted at top level (see
+ * emit_region), which costs one goto and keeps the rest of the structure. */
+static const int kMaxEmitDepth = 512;
+
 ExprP clone(const ExprP& e) {
+    DS_DEPTH(clone);
     if (!e) return nullptr;
     auto c = new_expr(*e);
     c->a = clone(e->a);

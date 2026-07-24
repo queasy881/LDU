@@ -710,7 +710,20 @@ fn background_decompile(
             for _ in 0..nthreads {
                 let next = &next;
                 let done = &done;
-                scope.spawn(move || {
+                // The engine's structurer RECURSES over the region tree, and real
+                // binaries get close to the default limit: ntdll peaks around 100
+                // nested levels at roughly 14 KB of stack each, and a Go package-init
+                // function (324 chained `if` blocks) goes far past that. Rust's
+                // default 2 MiB is not enough headroom -- git-lfs crashed the worker
+                // outright. The engine now bails to its flat goto fallback when the
+                // stack runs low, so this can never crash either way; a bigger stack
+                // just means real functions keep their recovered structure instead of
+                // hitting that ceiling. Reserved address space, not committed memory,
+                // so the cost of asking for it is nil.
+                let worker = std::thread::Builder::new()
+                    .name("decompile".into())
+                    .stack_size(64 * 1024 * 1024);
+                let spawned = worker.spawn_scoped(scope, move || {
                     // Publish in small batches: frequent enough that an opened
                     // function is usually already cached, rare enough that the
                     // session lock is not contended per function.
@@ -742,6 +755,11 @@ fn background_decompile(
                         }
                     }
                 });
+                // A failed spawn loses no work: every worker pulls from the same
+                // atomic cursor, so the ones that did start drain the whole queue.
+                if let Err(e) = spawned {
+                    eprintln!("decompile worker spawn failed: {e}");
+                }
             }
             // Reporter: a background indicator, not a blocking overlay.
             loop {

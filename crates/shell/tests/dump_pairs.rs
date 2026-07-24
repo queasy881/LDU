@@ -111,7 +111,7 @@ fn dump_pairs() {
             break;
         }
         let __t0 = std::time::Instant::now();
-        let code = engine.decompile(f.rva).unwrap_or_default();
+        let code = common::on_worker_stack(|| engine.decompile(f.rva).unwrap_or_default());
         if std::env::var("DS_TIMING").is_ok() {
             eprintln!("DSTIME {:#x} {}", f.rva, __t0.elapsed().as_millis());
         }
@@ -151,7 +151,7 @@ fn dump_pairs() {
             if have.contains(&rva) {
                 continue;
             }
-            let code = engine.decompile(rva).unwrap_or_default();
+            let code = common::on_worker_stack(|| engine.decompile(rva).unwrap_or_default());
             if code.trim().is_empty() {
                 continue;
             }

@@ -2081,6 +2081,7 @@
     }
 
     std::string render(const ExprP& e) {
+        DS_DEPTH(render);
         if (!e) return "0";
         switch (e->kind) {
             case EK::Const: return render_const(e);

@@ -919,6 +919,41 @@
     /* Emit region starting at `b`, stopping (exclusive) when we reach `stop`
      * (a follow/join block) or a block already emitted. */
     void emit_region(int b, int stop, std::string& dst, int loop_header) {
+        DS_DEPTH(emit_region);
+        /* THIRD CEILING, and the only one that is about the MACHINE rather than
+         * the work: the structurer recurses, so a deeply nested CFG can run the
+         * thread out of stack and take the process down with it (a Go package-init
+         * function did exactly that). Checked on entry — once per recursion level,
+         * not per step, so it costs nothing.
+         *
+         * This does NOT set struct_bailed. Running low on stack says nothing about
+         * whether the function is reducible, and collapsing the WHOLE function to a
+         * flat goto-CFG over one deep subregion would throw away every loop and `if`
+         * the structurer had already recovered — 162 gotos where a handful will do.
+         * Instead CUT HERE: emit a goto to this block and leave it unstructured, so
+         * the driver's top-level region loop picks it up and emits it as its own
+         * region — which starts again at depth 1. Unbounded DEPTH becomes bounded
+         * BREADTH, the surrounding structure survives untouched, and the cost is one
+         * goto per cut point. Same mechanism the driver already uses for any block
+         * the structurer did not reach. */
+        /* The ceiling is a DEPTH, not a stack measurement, because output must not
+         * depend on which thread produced it. A stack-headroom test alone would make
+         * the cut point a function of the host thread's stack size, so the same
+         * binary could decompile differently in the GUI than in a test, and the
+         * parallel-equals-serial guarantee would hold only by luck. kMaxEmitDepth is
+         * an input-only property: same CFG, same cuts, every time.
+         *
+         * The headroom test stays as a pure crash-preventing net for a thread whose
+         * stack is smaller than kMaxEmitDepth needs. It should never fire where the
+         * stack is sized as intended (see the decompile workers in session.rs); if it
+         * does, output on that thread may differ — which is strictly better than
+         * taking the process down. */
+        if (b >= 0 && b != stop &&
+            (_d_emit_region > kMaxEmitDepth || ds_stack_headroom() < kStackReserve)) {
+            need_label.insert(b);
+            dst += ind() + "goto " + block_label(b) + ";\n";
+            return;
+        }
         while (b >= 0 && b != stop) {
             /* Two ceilings, both routing to the SAME complete goto-CFG fallback
              * (struct_bailed -> emit_goto_cfg): a step count, and the deadline.
