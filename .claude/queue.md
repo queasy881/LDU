@@ -11,7 +11,14 @@ The user reads the commits; a summary is only wanted when the whole queue is emp
       xrefs, so caller-side evidence does not exist. Two callee-side rules tried and recorded in
       the code: the path-mix rule fires on nothing; tightening the xmm0 fallback costs RET
       677->664. Needs a genuinely new signal, not a tweak.
-- [ ] SIG-1 residual: sret / Vector1-4 struct returns via caller-side evidence
+- [ ] SIG-1 residual: sret / Vector1-4 struct returns. ORACLE NOW EXISTS:
+      _qa/fixtures/corpus/sretcall.cpp (makers are static + called by exported wrappers, so the
+      xrefs the rest of the corpus lacks are present; also plants an 8-byte Vec2 returned in RAX
+      and copy_bytes, a real writes-through-arg0-and-returns-it function a naive detector breaks).
+      DECISIVE PATTERN, seen in our own output for sum3: caller passes &<its own local> as arg0,
+      then bulk-copies N bytes FROM the returned pointer. Belongs in build_sig_table (cross-fn).
+      BONUS BUG pinned by the same fixture: sum3 recovers as int32_t returning (int32_t)(s1+0x10)
+      instead of a float sum.
 - [ ] Vector function naming (vec2_/vec3_/vec4_ shapes -> named vector ops)
 - [ ] GOTO-1 residual: 2879 reducible gotos (structurer re-emission efficiency)
 - [ ] IDA-3: ARM64 lifting (BLOCKED: capstone AArch64 backend not vendored - user decision)
