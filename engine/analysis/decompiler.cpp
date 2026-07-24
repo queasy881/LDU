@@ -5376,13 +5376,73 @@ struct Decompiler {
                 std::vector<int> dang = dangling_label_blocks(tmp);
                 bool progress = false;
                 for (int id : dang) {
-                    if (structured.count(id)) continue;  /* will get its label */
+                    /* A block emitted ONLY inside a duplicated region has no label:
+                     * emit_dup_region calls emit_stmts directly and never consults
+                     * need_label. It is nonetheless marked `structured`, so skipping
+                     * structured blocks here — as this loop used to — meant those
+                     * targets could never be repaired, and a mere four of them
+                     * condemned the whole function to the flat goto-CFG.
+                     * Dropping it from `structured` lets a canonical, LABELLED copy
+                     * be emitted that the goto can actually reach. Each round strictly
+                     * reduces the dangling set, and the outer guard bounds it. */
+                    structured.erase(id);
                     need_label.insert(id);
                     indent_lvl = 1;
                     emit_region(id, -1, tmp, -1);
                     progress = true;
                 }
                 if (!progress) break;
+            }
+            /* RE-EMIT rather than throw the whole function away.
+             *
+             * A `goto L_x` dangles when block x was emitted INLINE before the goto
+             * revealed it needed a label. The repair loop above cannot fix that case:
+             * it skips any block already in `structured`, which is exactly the
+             * blocks that dangle. So a handful of unresolved labels condemned the
+             * ENTIRE body, and ok_struct=false fell back to the flat goto-CFG.
+             *
+             * The cost of that all-or-nothing rule is enormous. kernel32
+             * fun_000066c0 (1188 blocks): the structured attempt recovered 57 loops
+             * and dangled on FOUR labels out of 651 — and those four discarded every
+             * one of the loops, emitting 1140 gotos across 4297 lines instead, with
+             * not a single `while`/`for`/`do` in the output while the disassembly
+             * contains 476 back-edges.
+             *
+             * need_label now CONTAINS those targets (the repair inserted them), and
+             * re-emitting with a pre-populated need_label is precisely the
+             * pass-1 -> pass-2 mechanism that already works. So run it again. Each
+             * round can only add labels, so it converges; the bound stops a
+             * pathological CFG from looping and costs one wasted emission at worst. */
+            for (int retry = 0; retry < 3 && !budget_tripped && !labels_consistent(tmp); ++retry) {
+                std::string re;
+                reset_emit();
+                emit_region(entry_block(), -1, re, -1);
+                for (auto& b : blocks) {
+                    if (budget_tripped) break;
+                    if (structured.count(b.id)) continue;
+                    if (b.insn_idx.empty()) continue;
+                    need_label.insert(b.id);
+                    emit_region(b.id, -1, re, -1);
+                }
+                for (size_t guard = 0; guard <= blocks.size() && !budget_tripped; ++guard) {
+                    std::vector<int> dang = dangling_label_blocks(re);
+                    bool progress = false;
+                    for (int id : dang) {
+                        structured.erase(id);   /* see the repair loop above */
+                        need_label.insert(id);
+                        indent_lvl = 1;
+                        emit_region(id, -1, re, -1);
+                        progress = true;
+                    }
+                    if (!progress) break;
+                }
+                /* keep the retry only if it is no worse: it must resolve at least as
+                 * many labels as the attempt it replaces. */
+                if (labels_consistent(re) || dangling_label_blocks(re).size() <
+                                             dangling_label_blocks(tmp).size())
+                    tmp.swap(re);
+                else
+                    break;
             }
             _phase("emit-pass2+repair");
             /* Drop provably-unreachable statements (a `goto`/stmt after an

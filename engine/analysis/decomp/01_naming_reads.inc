@@ -107,10 +107,12 @@
     long  budget_calls = 0;
     std::chrono::steady_clock::time_point budget_t0;
 
+    /* DS_WORK_BUDGET, when set, is an ABSOLUTE unit cap (not a per-instruction
+     * scale); 0 means "use the size-derived default in budget_init". */
     static long budget_scale() {
         static const long v = [] {
             const char* s = std::getenv("DS_WORK_BUDGET");
-            return s ? std::atol(s) : 2000L;   /* work units per instruction */
+            return s ? std::atol(s) : 0L;
         }();
         return v;
     }
@@ -127,19 +129,41 @@
      * so that a genuinely pathological CFG — or a loop nobody has profiled yet —
      * cannot hang the app. At this value it fires on essentially nothing, and
      * output is identical to having no deadline at all. */
+    /* WALL CLOCK OFF BY DEFAULT.
+     *
+     * A timing-based limit makes the OUTPUT depend on machine load: the same
+     * function decompiled alone finishes under the deadline and decompiled on 16
+     * busy threads does not, so it structures one way serially and another way in
+     * parallel. That is exactly what the throughput test asserts against, and it
+     * duly failed on kernel32 fun_000066c0 (~3.4s serial) once the label-repair
+     * work pushed it nearer the limit.
+     *
+     * The work meter below bounds the same thing deterministically, so the clock
+     * is not needed and its only effect was to make results irreproducible. Set
+     * DS_WALL_MS to re-enable it as a belt-and-braces stop. */
     static long budget_wall_default() {
         static const long v = [] {
             const char* s = std::getenv("DS_WALL_MS");
-            return s ? std::atol(s) : 8000L;
+            return s ? std::atol(s) : 0L;
         }();
         return v;
     }
 
-    /* Called once the instruction/block lists exist, so the cap can scale. */
+    /* Called once the instruction/block lists exist, so the cap can scale.
+     *
+     * This is now the ONLY per-function limit (the wall clock is off by default),
+     * so it has to actually bind rather than sit far above anything reachable —
+     * it previously scaled to millions of units and never fired, leaving the
+     * timing-dependent clock doing all the work. Units are charged at roughly
+     * 7.5k/second of emitter time, so this bounds a pathological function to a
+     * few seconds while sitting well above every well-behaved one (the largest
+     * healthy kernel32 function measured ~25k). Deterministic: identical alone or
+     * on 16 threads. DS_WORK_BUDGET overrides. */
     void budget_init() {
         long n = (long)insns.size() + 1;
         long b = (long)blocks.size() + 1;
-        budget_cap = 100000L + budget_scale() * n + 4000L * b;
+        budget_cap = budget_scale() > 0 ? budget_scale()
+                                        : (60000L + 8L * n + 40L * b);
         budget_spent = 0;
         budget_tripped = false;
         budget_wall_ms = budget_wall_default();
