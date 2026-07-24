@@ -338,6 +338,61 @@
                 scan(b.cond); scan(b.ret_value); scan(b.switch_var); scan(b.tail_call);
             }
         }
+        /* (e) NAME A LOCAL AFTER WHAT IT PROVABLY IS.
+         *
+         * (a)-(d) only fire when an API is involved, so a function that calls
+         * nothing well-known keeps a wall of `v5`. These four roles are decided
+         * from the local's OWN definitions and uses, which every function has.
+         *
+         * The bar is the project's: a WRONG name is worse than `v5`, so each rule
+         * demands that EVERY definition agrees and bails on the first one that
+         * does not. Ambiguous locals keep their number. Same `assign` machinery,
+         * so `used` still guarantees no collision. DS_NO_ROLENAME. */
+        if (!std::getenv("DS_NO_ROLENAME")) {
+            struct Role { int defs = 0, bad = 0, boolish = 0, strish = 0, incr = 0; };
+            std::map<std::string, Role> role;
+            for (auto& b : blocks) {
+                for (auto& s : b.stmts) {
+                    if (s.kind != SK::Assign || !s.lhs || s.lhs->kind != EK::Var || !s.rhs) continue;
+                    const std::string& nm = s.lhs->name;
+                    if (!is_local(nm)) continue;
+                    Role& r = role[nm];
+                    ++r.defs;
+                    ExprP v = s.rhs;
+                    while (v && v->kind == EK::Cast && v->a) v = v->a;
+                    if (!v) { ++r.bad; continue; }
+                    /* boolean: every def is the constant 0 or 1 */
+                    if (v->kind == EK::Const && !v->is_float && (v->cval == 0 || v->cval == 1)) ++r.boolish;
+                    /* boolean: a def that IS a comparison (`v = a < b`) */
+                    else if (v->kind == EK::Binary &&
+                             (v->op == "<" || v->op == ">" || v->op == "<=" || v->op == ">=" ||
+                              v->op == "==" || v->op == "!=")) ++r.boolish;
+                    /* string: a def that is a string literal */
+                    else if (v->kind == EK::Str && v->text.rfind("L\"", 0) != 0 &&
+                             !v->text.empty() && v->text[0] == '"') ++r.strish;
+                    /* counter: `v = v + <positive const>` */
+                    else if (v->kind == EK::Binary && v->op == "+" && v->a && v->b &&
+                             v->a->kind == EK::Var && v->a->name == nm &&
+                             v->b->kind == EK::Const && !v->b->is_float && v->b->cval > 0) ++r.incr;
+                    else ++r.bad;
+                }
+            }
+            static const std::vector<std::string> FLAGP  = {"flag2","flag3","flag4"};
+            static const std::vector<std::string> STRP   = {"str2","str3","str4"};
+            static const std::vector<std::string> CNTP   = {"count2","count3","count4"};
+            for (auto& kv : role) {
+                const Role& r = kv.second;
+                if (r.defs == 0 || r.bad) continue;              /* one disagreeing def -> keep v<N> */
+                if (r.boolish == r.defs)      assign(kv.first, "flag",  FLAGP);
+                else if (r.strish == r.defs)  assign(kv.first, "str",   STRP);
+                /* a counter needs a real initialiser as well as the increment, else
+                 * `v = v + 1` alone is just as likely a pointer walk */
+                else if (r.incr > 0 && r.incr < r.defs) assign(kv.first, "count", CNTP);
+            }
+            /* Naming a class-typed local after its class (v9->health -> pPlayer->health)
+             * belongs here too, but `struct_class` is local to the struct pass in
+             * 09_structs.inc, not a member — plumbing it out is its own change. */
+        }
     }
 
     /* D1: TEMP-WIDTH NARROWING via a VALUE-RANGE FIXPOINT (kill `(int)tN` cast noise).
