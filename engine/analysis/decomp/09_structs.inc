@@ -6,6 +6,7 @@
  */
     struct ParamStruct {
         std::string tag;                     /* e.g. "s_a1" */
+        std::string utag;                    /* user struct applied to this var (ds_engine_define_struct) */
         std::map<int64_t,int>  fw;           /* offset -> field width */
         std::map<int64_t,bool> fu, ff, fptr; /* offset -> unsigned / float / pointer */
         std::map<int64_t,std::string> fptr_tag; /* offset -> nested struct tag (field is `struct T*`) */
@@ -539,6 +540,11 @@
                 return;
             }
             L.tag = "s_" + self_fname + "_" + p;
+            /* A user-applied struct wins the TAG as well as the field names: the
+             * reader said what this pointer is, and the recovered `s_<fn>_<p>`
+             * layout is exactly the guess they were correcting. */
+            L.utag = user_struct_tag_of(p);
+            if (!L.utag.empty()) L.tag = L.utag;
         };
         for (auto& kv : fw) {
             const std::string& p = kv.first;
@@ -993,6 +999,17 @@
     /* Member name for a recovered struct field: an RTTI class's field_0 IS its vtable pointer
      * (see struct_typedef_str), so it prints `__vftable`; every other field is `field_<hex>`. */
     std::string fld(const ParamStruct& L, int64_t off) {
+        /* A user-applied layout names its own members. This is the whole point of
+         * applying a struct: `a1->health` instead of `a1->field_8`. Only an EXACT
+         * offset match is used — a hit in the middle of a member would be naming a
+         * different field than the code touches. */
+        if (!L.utag.empty()) {
+            auto ui = user_struct_fields.find(L.utag);
+            if (ui != user_struct_fields.end()) {
+                auto fi = ui->second.find(off);
+                if (fi != ui->second.end()) return fi->second;
+            }
+        }
         if (L.is_class && off == 0) return "__vftable";
         /* before the shared_typedef arm: std::string sets shared_typedef to guard its one
          * definition per TU, and that arm would otherwise rename _Bx to a Vec's `x`. */

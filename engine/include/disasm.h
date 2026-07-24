@@ -210,6 +210,21 @@ typedef struct {
     char var[64];
     char type[64];
 } ds_var_type;
+
+/* A user-supplied struct layout. */
+typedef struct {
+    char name[64];
+    char body[1024];   /* member list as C text: "int health; float x;" */
+} ds_user_struct;
+/* Define (or redefine) a struct the BINARY does not describe, so a variable typed
+ * `struct <name>*` by ds_engine_set_var_type both COMPILES — the definition is
+ * emitted ahead of the function — and reads with real member names instead of
+ * field_<off>. `body` is the member list as C text; an empty body clears it.
+ * This is the "apply a struct" half of interactive analysis. */
+void   ds_engine_define_struct(ds_engine* e, const char* name, const char* body);
+/* Copy the defined structs into `out` (up to `max`); returns how many exist.
+ * Pass out=NULL to count. */
+size_t ds_engine_get_structs(ds_engine* e, ds_user_struct* out, size_t max);
 /* Copy the type overrides recorded for the function at `rva` into `out` (up to
  * `max`); returns how many exist. Pass out=NULL to just count. Taken under the
  * annotation lock and COPIED, because a concurrent ds_engine_set_var_type may

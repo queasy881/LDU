@@ -293,6 +293,17 @@ impl Engine {
     }
 
     /// Rename a displayed local of the function at `rva` (`from` as printed).
+    /// Define a struct the binary does not describe, so a variable typed
+    /// `struct <name>*` both compiles and reads with real member names.
+    /// `body` is the member list as C text; empty clears it.
+    pub fn define_struct(&mut self, name: &str, body: &str) {
+        if self.ok() {
+            let n = cstring(name);
+            let b = cstring(body);
+            unsafe { ffi::ds_engine_define_struct(self.raw, n.as_ptr(), b.as_ptr()) };
+        }
+    }
+
     /// `set_var_type` through a SHARED handle.
     ///
     /// Every other engine mutator takes `&mut self`, which the shell cannot get:

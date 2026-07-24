@@ -5489,6 +5489,13 @@ struct Decompiler {
 
         /* recover per-function struct layouts for pointer params (conservative, with
          * raw fallback) so `*(int*)((char*)a1 + 0x140)` renders `a1->field_140`. */
+        /* BEFORE the struct pass: a user-applied layout replaces the recovered one,
+         * so recover_struct_layouts has to be able to see it while assigning tags.
+         * Safe this early because overrides are keyed by the DISPLAY name and the
+         * only display renaming that exists (autoname) never touches parameters —
+         * and it is re-run after compute_autonames for the local it does touch. */
+        load_user_types();
+        load_user_structs();
         recover_struct_layouts();
         detect_lock_fields();   /* CRITICAL_SECTION struct fields (needs param_structs) */
         detect_tls_index();     /* name the _tls_index global from the gs:[0x58]+G*8 pattern */
@@ -5514,6 +5521,7 @@ struct Decompiler {
         detect_for_loops();   /* after idioms so H.cond matches the emitted condition */
         compute_autonames();  /* after for-loops (consumes induction_var_of_header) */
         load_user_types();    /* after autoname: overrides are keyed by DISPLAY name */
+        load_user_structs();  /* layouts the user applied to those types */
         scrub_in_placeholders();     /* HARD GUARANTEE: no in_<X> phantom ever reaches output */
         narrow_temp_widths();        /* D1: long long -> int for provably-32-bit-value temps */
         compute_display_renumber();  /* v#/t# -> contiguous v1,v2,... (Hex-Rays naming) */
@@ -6291,6 +6299,9 @@ struct Decompiler {
             std::set<std::string> seen_tags;
             for (auto& kv : param_structs) {
                 const std::string& tag = kv.second.tag;
+                /* a user-applied layout is emitted from the user's own text above;
+                 * emitting the RECOVERED guess under the same tag would redefine it */
+                if (!kv.second.utag.empty()) continue;
                 if (!seen_tags.insert(tag).second) continue;
                 std::string def = struct_typedef_str(kv.second);
                 std::string norm = def;                      /* neutralise the tag */
@@ -6301,10 +6312,36 @@ struct Decompiler {
                 else            { alias_tag[tag] = ins.first->second; }
             }
         }
+        /* USER-DEFINED STRUCTS the binary does not describe.
+         *
+         * ds_engine_set_var_type can name a tag that exists only in the reader's
+         * head (`struct Player*`). Without its definition the output references an
+         * undefined tag and does not compile, which would make the retype feature
+         * look like it works and then fail at the first paste into a compiler.
+         * Emitted for every tag actually referenced by a type override in THIS
+         * function, ahead of the recovered structs so a field type can name one. */
+        for (auto& kv : var_user_type) {
+            std::string tag = user_struct_tag_of(kv.first);
+            if (tag.empty()) continue;
+            std::string guard = "__DS_US_" + tag;
+            if (protos.find(guard) != std::string::npos) continue;   /* once per fn */
+            protos += "#ifndef " + guard + "\n#define " + guard + "\nstruct " + tag + " {\n";
+            /* re-emit the member list one per line, exactly as given */
+            std::string body = user_struct_body[tag], cur;
+            for (char c : body) {
+                if (c == ';') {
+                    while (!cur.empty() && isspace((unsigned char)cur.front())) cur.erase(cur.begin());
+                    if (!cur.empty()) protos += "    " + cur + ";\n";
+                    cur.clear();
+                } else cur += c;
+            }
+            protos += "};\n#endif\n";
+        }
         for (auto& kv : alias_tag)
             protos += "#define " + kv.first + " " + kv.second + "\n";
         std::set<std::string> emitted_tags;
         for (auto& kv : param_structs) {
+            if (!kv.second.utag.empty()) continue;                  /* user-defined above */
             if (alias_tag.count(kv.second.tag)) continue;          /* the macro covers it */
             if (!emitted_tags.insert(kv.second.tag).second) continue;
             const char* kw = (kv.second.is_class && !kv.second.cls_kw_struct) ? "class " : "struct ";

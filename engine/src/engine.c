@@ -82,8 +82,40 @@ void ds_engine_destroy(ds_engine* e) {
     free(e->funcs);
     free(e->annos);
     free(e->anno_vars);
+    free(e->ustructs);
     free(e->pdb_dir);
     free(e);
+}
+
+void ds_engine_define_struct(ds_engine* e, const char* name, const char* body) {
+    size_t i;
+    ds_user_struct* u = NULL;
+    if (!e || !name || !name[0]) return;
+    for (i = 0; i < e->ustruct_len; ++i)
+        if (strcmp(e->ustructs[i].name, name) == 0) u = &e->ustructs[i];
+    if (!u) {
+        /* empty body + unknown name = nothing to forget */
+        if (!body || !body[0]) return;
+        if (!ds_vec_reserve((void**)&e->ustructs, &e->ustruct_cap,
+                            e->ustruct_len + 1, sizeof(ds_user_struct)))
+            return;
+        u = &e->ustructs[e->ustruct_len++];
+        memset(u, 0, sizeof(*u));
+        ds_strlcpy(u->name, name, sizeof(u->name));
+    }
+    /* an empty body clears the definition (the tag falls back to opaque) */
+    ds_strlcpy(u->body, body ? body : "", sizeof(u->body));
+}
+
+size_t ds_engine_get_structs(ds_engine* e, ds_user_struct* out, size_t max) {
+    size_t n;
+    if (!e) return 0;
+    n = e->ustruct_len;
+    if (out) {
+        size_t i, lim = n < max ? n : max;
+        for (i = 0; i < lim; ++i) out[i] = e->ustructs[i];
+    }
+    return n;
 }
 
 void ds_engine_set_pdb_dir(ds_engine* e, const char* dir) {

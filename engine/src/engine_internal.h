@@ -64,6 +64,9 @@ typedef struct {
     char     type[64];
 } ds_anno_var;
 
+/* ds_user_struct (a user-supplied struct layout) is part of the public ABI and
+ * is declared in disasm.h, which this header includes. */
+
 #define DS_ANNO_UNBOUND UINT64_MAX
 
 struct ds_engine {
@@ -109,6 +112,14 @@ struct ds_engine {
     size_t   anno_len, anno_cap;
     ds_anno_var* anno_vars;
     size_t       anno_var_len, anno_var_cap;
+
+    /* User-defined struct layouts (ds_engine_define_struct). A user type set with
+     * ds_engine_set_var_type names a struct the binary does not describe, so the
+     * decompiler has to be told what it looks like — otherwise the output
+     * references an undefined tag and does not compile, and no field name can be
+     * resolved. `body` is the member list as C text ("int health; float x;"). */
+    ds_user_struct* ustructs;
+    size_t          ustruct_len, ustruct_cap;
 
     /* directory the binary was loaded from, if the caller supplied it. Lets
      * ds_engine_load_pdb resolve a PDB whose CodeView record baked a relative

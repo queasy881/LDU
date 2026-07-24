@@ -44,6 +44,101 @@
      * what the output means. Empty for the overwhelming majority of functions, and
      * decl_type early-outs on that. */
     std::map<std::string, std::string> var_user_type;
+    /* User-defined struct layouts (ds_engine_define_struct), tag -> member list as
+     * C text, plus the offset->name map derived from it. */
+    std::map<std::string, std::string> user_struct_body;
+    std::map<std::string, std::map<int64_t, std::string>> user_struct_fields;
+
+    /* Parse a member list ("int health; float x; char* name;") into offsets using
+     * the platform's natural alignment, so a field at a known offset can be named.
+     *
+     * Deliberately handles only what a person actually types into a struct
+     * dialogue: the base scalar types, a pointer, and a `[N]` array. Anything it
+     * does not recognise ENDS the parse rather than guessing a size — every later
+     * offset would be wrong, and a wrong field name on a real access is exactly
+     * the confident lie the house rules forbid. */
+    static std::map<int64_t, std::string> parse_struct_body(const std::string& body) {
+        std::map<int64_t, std::string> out;
+        int64_t off = 0;
+        size_t i = 0;
+        while (i < body.size()) {
+            while (i < body.size() && (isspace((unsigned char)body[i]) || body[i] == ';')) ++i;
+            if (i >= body.size()) break;
+            size_t end = body.find(';', i);
+            std::string decl = body.substr(i, end == std::string::npos ? std::string::npos : end - i);
+            i = (end == std::string::npos) ? body.size() : end + 1;
+            /* split into type words + the declarator */
+            std::vector<std::string> tok;
+            std::string cur;
+            for (char c : decl) {
+                if (isspace((unsigned char)c)) { if (!cur.empty()) { tok.push_back(cur); cur.clear(); } }
+                else if (c == '*') { if (!cur.empty()) { tok.push_back(cur); cur.clear(); } tok.push_back("*"); }
+                else cur += c;
+            }
+            if (!cur.empty()) tok.push_back(cur);
+            if (tok.size() < 2) break;
+            std::string name = tok.back(); tok.pop_back();
+            int64_t count = 1;
+            size_t br = name.find('[');
+            if (br != std::string::npos) {
+                count = std::strtoll(name.c_str() + br + 1, nullptr, 0);
+                if (count <= 0) count = 1;
+                name = name.substr(0, br);
+            }
+            bool is_ptr = false;
+            std::string ty;
+            for (auto& t : tok) { if (t == "*") is_ptr = true; else { if (!ty.empty()) ty += " "; ty += t; } }
+            int64_t sz;
+            if (is_ptr) sz = 8;
+            else if (ty == "char" || ty == "signed char" || ty == "unsigned char" ||
+                     ty == "int8_t" || ty == "uint8_t" || ty == "bool") sz = 1;
+            else if (ty == "short" || ty == "unsigned short" || ty == "int16_t" || ty == "uint16_t") sz = 2;
+            else if (ty == "int" || ty == "unsigned" || ty == "unsigned int" ||
+                     ty == "int32_t" || ty == "uint32_t" || ty == "float" || ty == "long") sz = 4;
+            else if (ty == "long long" || ty == "unsigned long long" || ty == "int64_t" ||
+                     ty == "uint64_t" || ty == "double" || ty == "size_t") sz = 8;
+            else break;                       /* unknown type -> stop, do not guess */
+            if (name.empty()) break;
+            int64_t align = sz > 8 ? 8 : sz;
+            if (align > 1 && off % align) off += align - (off % align);
+            out[off] = name;
+            off += sz * count;
+        }
+        return out;
+    }
+
+    void load_user_structs() {
+        user_struct_body.clear();
+        user_struct_fields.clear();
+        if (!e) return;
+        size_t n = ds_engine_get_structs(e, nullptr, 0);
+        if (!n) return;
+        std::vector<ds_user_struct> tmp(n);
+        n = ds_engine_get_structs(e, tmp.data(), tmp.size());
+        for (size_t i = 0; i < n; ++i) {
+            if (!tmp[i].name[0] || !tmp[i].body[0]) continue;
+            user_struct_body[tmp[i].name] = tmp[i].body;
+            user_struct_fields[tmp[i].name] = parse_struct_body(tmp[i].body);
+        }
+    }
+
+    /* The user struct tag a variable was typed with, or "" — `struct Player*` -> Player. */
+    std::string user_struct_tag_of(const std::string& var) const {
+        auto it = var_user_type.find(var);
+        if (it == var_user_type.end()) {
+            auto ai = autoname.find(var);
+            if (ai == autoname.end()) return "";
+            it = var_user_type.find(ai->second);
+            if (it == var_user_type.end()) return "";
+        }
+        std::string t = it->second;
+        size_t p = t.find("struct ");
+        if (p == std::string::npos) return "";
+        t = t.substr(p + 7);
+        while (!t.empty() && (t.back() == '*' || isspace((unsigned char)t.back()))) t.pop_back();
+        return user_struct_body.count(t) ? t : "";
+    }
+
     /* Load the overrides recorded for THIS function. Annotations bind by content
      * hash (see annotations.cpp), and ds_anno_resolve has already published the
      * answer in `bound`, so this just reads it. */

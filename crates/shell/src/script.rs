@@ -175,6 +175,15 @@ fn run_cmd(engine: &mut Engine, msg: &Value) -> Result<Value, String> {
             engine.set_var_type(r, var, ty);
             Ok(json!({ "ok": true }))
         }
+        "define_struct" => {
+            let name = msg.get("name").and_then(Value::as_str).unwrap_or("");
+            let body = msg.get("body").and_then(Value::as_str).unwrap_or("");
+            if name.is_empty() {
+                return Err("define_struct: missing 'name'".into());
+            }
+            engine.define_struct(name, body);
+            Ok(json!({ "ok": true }))
+        }
         "save_annotations" => {
             let p = msg.get("path").and_then(Value::as_str).unwrap_or("");
             if p.is_empty() {
