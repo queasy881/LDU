@@ -55,12 +55,81 @@
      * is emitted. */
     long emit_work = 0;
 
+    /* Rendered-statement cache, keyed by (block, indent).
+     *
+     * The structurer explores alternative shapes and rolls back, so one block is
+     * rendered many times over — measured 27,494 renders of a SINGLE block in one
+     * ntdll function, each walking and stringifying its whole expression forest.
+     * By the emit phase everything the render reads is frozen: types, widths,
+     * pointer/float flags, the display names (compute_display_renumber runs
+     * pre-emit and publishes through `autoname`), and the suppressed-statement
+     * set. The only per-call variance is the leading indent, and opt_line_addr is
+     * fixed for the instance. So the render is a pure function of (id, indent).
+     *
+     * This was tried once before and rejected because output changed — but that
+     * was BEFORE the stale-flag ABA bug was fixed, when the engine was not
+     * deterministic run-to-run at all (21/600 functions differed between two
+     * identical runs). The "difference" was that bug, not this cache.
+     * DS_NO_STMTCACHE disables it for A/B. */
+    /* Rendering is ALMOST pure, but not quite: it also records what it saw, and
+     * those records feed the preamble. `named_globals[nm] = def` is a
+     * last-writer-wins map assignment, and `referenced_vtables` accumulates the
+     * vtable symbols that need an extern. Serving text from the cache skips those
+     * writes, so a different render ends up "winning" and the preamble changes
+     * (observed: `#define word_X (*(int16_t*)…)` flipping to `uint16_t`).
+     *
+     * So the cache stores the SIDE EFFECTS a render produced alongside its text
+     * and replays them on every hit. With that, a hit is indistinguishable from
+     * re-rendering — verified byte-identical against DS_NO_STMTCACHE. */
+    struct RenderedBlock {
+        std::string text;
+        std::vector<std::pair<std::string,std::string>> named_globals_delta;
+        std::vector<std::string> vtable_delta;
+    };
+    std::map<std::pair<int,int>, RenderedBlock> stmt_cache;
+    /* Non-null while a cache-miss render is in flight; the two side-effecting
+     * writers below append to it so the effect can be replayed on a later hit. */
+    RenderedBlock* render_recorder = nullptr;
+
+    void set_named_global(const std::string& nm, const std::string& def) {
+        named_globals[nm] = def;
+        if (render_recorder) render_recorder->named_globals_delta.emplace_back(nm, def);
+    }
+    void note_referenced_vtable(const std::string& sym) {
+        referenced_vtables.insert(sym);
+        if (render_recorder) render_recorder->vtable_delta.push_back(sym);
+    }
+
     void emit_stmts(int id, std::string& dst) {
         /* The deadline is sampled HERE too: a block render is the emitter's unit
          * of real work, and every emission path goes through it. Checking only in
          * the region walkers left paths (duplication, loop sinks, guard clauses)
          * that could render for a long time without ever consulting it. */
         if ((++emit_work & 0xFF) == 0) budget_spend(256);
+        static const bool no_cache = std::getenv("DS_NO_STMTCACHE") != nullptr;
+        if (no_cache) { render_stmts_into(id, dst); return; }
+
+        auto key = std::make_pair(id, indent_lvl);
+        auto it = stmt_cache.find(key);
+        if (it != stmt_cache.end()) {
+            for (auto& kv : it->second.named_globals_delta) named_globals[kv.first] = kv.second;
+            for (auto& v  : it->second.vtable_delta)        referenced_vtables.insert(v);
+            dst += it->second.text;
+            return;
+        }
+        /* Record the side effects AS THEY HAPPEN rather than diffing a before/after
+         * copy of the maps: copying named_globals per miss is O(globals) and was
+         * enough extra allocation to measurably hurt parallel scaling, which is the
+         * opposite of the point. */
+        RenderedBlock rb;
+        render_recorder = &rb;
+        render_stmts_into(id, rb.text);
+        render_recorder = nullptr;
+        dst += rb.text;
+        stmt_cache.emplace(key, std::move(rb));
+    }
+
+    void render_stmts_into(int id, std::string& dst) {
         if (iv_suppressed_stmts.empty()) {
             for (auto& s : blocks[id].stmts) {
                 emit_stmt(s, dst);
@@ -305,7 +374,7 @@
                         std::string vraw = class_for_vtable((uint64_t)rc->cval);
                         if (!vraw.empty()) {
                             std::string sym = sani(vraw) + "__vftable";
-                            r = "&" + sym; referenced_vtables.insert(sym);
+                            r = "&" + sym; note_referenced_vtable(sym);
                         }
                     }
                 }

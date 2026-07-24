@@ -1958,7 +1958,7 @@
                 std::string nm = tc + "__type_info";
                 char def[96]; std::snprintf(def, sizeof def, "(*(int8_t*)0x%llx)",
                                             (unsigned long long)v);
-                named_globals[nm] = def;
+                set_named_global(nm, def);
                 return "&" + nm;
             }
         }
@@ -2070,7 +2070,7 @@
                     char def[96];
                     std::snprintf(def, sizeof def, "(*(%s*)0x%llx)", t.c_str(),
                                   (unsigned long long)a->cval);
-                    named_globals[nm] = def;
+                    set_named_global(nm, def);
                     return nm;
                 }
                 /* a bare Var/param address needs no wrapping parens after the cast:
