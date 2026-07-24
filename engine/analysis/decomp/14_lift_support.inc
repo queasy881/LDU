@@ -412,6 +412,19 @@
             /* memory (kernel32) */
             {"LocalAlloc",2,2},{"LocalFree",1,2},{"LocalLock",1,2},{"LocalUnlock",1,1},
             {"GlobalAlloc",2,2},{"GlobalFree",1,2},{"GlobalLock",1,2},{"GlobalUnlock",1,1},
+            /* NT memory/string primitives. These are extremely common in system
+             * binaries and their arity is a fixed SDK fact, but they were absent, so
+             * the sig table's 0-param guess stood and every call rendered with NO
+             * arguments — `RtlMoveMemory();` at 8 sites in one kernel32 function,
+             * with rcx/rdx/r8 visibly loaded right before the call. */
+            {"RtlMoveMemory",3,0},{"RtlCopyMemory",3,0},{"RtlFillMemory",3,0},
+            {"RtlZeroMemory",2,0},{"RtlCompareMemory",3,2},{"RtlEqualMemory",3,1},
+            {"RtlSecureZeroMemory",2,2},
+            {"RtlInitUnicodeString",2,0},{"RtlInitAnsiString",2,0},
+            {"RtlInitString",2,0},{"RtlCopyUnicodeString",2,0},
+            {"RtlCompareUnicodeString",3,1},{"RtlEqualUnicodeString",3,1},
+            {"RtlAnsiStringToUnicodeString",3,1},{"RtlUnicodeStringToAnsiString",3,1},
+            {"RtlFreeUnicodeString",1,0},{"RtlFreeAnsiString",1,0},
             {"RtlCaptureContext",1,0},{"RaiseException",4,0},
             /* sync (kernel32) */
             {"WaitForSingleObject",2,1},{"WaitForMultipleObjects",4,1},

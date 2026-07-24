@@ -2339,12 +2339,60 @@ struct Decompiler {
                    c.rfind("__movs", 0) == 0 || c.rfind("__stos", 0) == 0 ||
                    c == "__fastfail" || c == "__rdtsc";
         };
+        /* The FLOOR below which this pass must not trim: the callee's KNOWN arity.
+         *
+         * A "phantom" here means a local that is never assigned — but that is only
+         * evidence of an uninitialised read when the dataflow that would have
+         * assigned it is trustworthy. In a large function it routinely is not: the
+         * value reaches the argument register from a distant block, the cross-block
+         * tracking loses it, and the argument arrives as an unassigned Var. Trimming
+         * then DELETES A REAL ARGUMENT and the call silently changes meaning:
+         *
+         *     0x5ee93  mov r8d, [rbx+0x50]
+         *     0x5ee97  mov rdx, [rbx+0x48]
+         *     0x5ee9b  mov rcx, [rsp+0xd0]
+         *     0x5eea3  call 0x56cb0
+         *   emitted as:  RtlMoveMemory();        <- all three arguments gone
+         *
+         * (kernel32 fn_0005ed50, at 8 call sites in that one function; every one of
+         * five independent auditors reported this class as the top correctness
+         * defect, and it is by far the most size-biased.)
+         *
+         * So where the arity is a FACT rather than an inference — a known Win32 API,
+         * or a local whose signature the sig table recovered — that count is a hard
+         * floor. Trimming may still remove residue beyond it, which is what the pass
+         * is actually for. Deleting an argument the callee is known to take is not a
+         * cosmetic choice; it is a wrong call. */
+        auto arity_floor = [&](const std::string& callee) -> size_t {
+            int argc = 0, rk = 0;
+            if (known_api(callee, argc, rk) && argc > 0) return (size_t)argc;
+            if (sigtab) {
+                uint64_t crva = 0;
+                if (callee_rva_of(callee, crva)) {
+                    auto it = sigtab->find(crva);
+                    if (it != sigtab->end() && it->second.param_count > 0)
+                        return (size_t)it->second.param_count;
+                }
+            }
+            return 0;
+        };
         std::function<void(ExprP&)> visit = [&](ExprP& e) {
             if (!e) return;
             if (e->kind == EK::Call && !fixed_arity_intrinsic(e->callee)) {
-                /* trailing phantoms: safe for ANY callee — a uniform arity reduction */
-                while (!e->args.empty() && is_phantom(e->args.back()))
-                    e->args.pop_back();
+                /* An OPAQUE stand-in's arguments are documentation (old-style decl, no
+                 * prototype to desync), so residue there is worth removing. A REAL
+                 * callee's arguments are its ABI: the lifter created exactly the args
+                 * whose argument registers it saw written before the call, so removing
+                 * one contradicts the evidence that produced it. Keep them, and let
+                 * `arity_floor` additionally pin the known-arity cases.
+                 * DS_LEGACY_ARGTRIM restores the old unconditional trailing trim. */
+                static const bool legacy_trim = std::getenv("DS_LEGACY_ARGTRIM") != nullptr;
+                const bool opaque = opaque_ops.count(e->callee) != 0;
+                const size_t floor = opaque ? 0 : arity_floor(e->callee);
+                if (opaque || legacy_trim) {
+                    while (e->args.size() > floor && is_phantom(e->args.back()))
+                        e->args.pop_back();
+                }
                 /* An OPAQUE intrinsic (the stand-in for an unmodeled op) is declared
                  * old-style — `int32_t __vpmovmskb();` — so it has no prototype to desync
                  * from and its arguments are documentation, not an ABI. Drop a phantom from
