@@ -38,6 +38,7 @@
         <button class="act" data-panel="exports" title="Exports"><span class="act-g">E</span></button>
         <button class="act" data-panel="strings" title="Strings"><span class="act-g">S</span></button>
         <button class="act" data-panel="segments" title="Segments"><span class="act-g">M</span></button>
+        <button class="act" data-panel="problems" title="Problems — unresolved indirect targets and un-analysed functions"><span class="act-g">P</span><span id="act-prob-badge" class="act-badge hide"></span></button>
         <span class="grow"></span>
       </nav>
 
@@ -73,6 +74,7 @@
           <button class="insp-tab" data-view="offsets">Offsets</button>
           <button class="insp-tab" data-view="hex">Hex</button>
           <button class="insp-tab" data-view="xrefs">Xrefs</button>
+          <button class="insp-tab" data-view="frame">Stack frame</button>
           <span class="grow"></span>
           <button id="insp-toggle" class="insp-x" title="Collapse inspector">›</button>
         </div>
@@ -116,6 +118,11 @@
 
           <div id="view-xrefs" class="insp-view hide">
             <div id="xrefs-host" class="xrefs-host"></div>
+          </div>
+          <!-- Stack frame: the recovered frame of the selected function, from the
+               same decompiler run as the pseudocode (get_stack_frame). -->
+          <div id="view-frame" class="insp-view hide">
+            <div id="frame-host" class="frame-host mono"></div>
           </div>
         </div>
       </section>

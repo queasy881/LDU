@@ -175,6 +175,40 @@ fn run_cmd(engine: &mut Engine, msg: &Value) -> Result<Value, String> {
             engine.set_var_type(r, var, ty);
             Ok(json!({ "ok": true }))
         }
+        // Same derivation as the GUI's get_problems, exposed here so the Problems
+        // pane's contents can be verified headlessly rather than by eye.
+        "problems" => {
+            let mut out: Vec<Value> = Vec::new();
+            let funcs = engine.functions();
+            for f in funcs.iter() {
+                if f.block_count == 0 || f.size == 0 {
+                    out.push(json!({ "kind": "no-code", "rva": f.rva, "func": f.name,
+                                     "text": format!("no basic block recovered for {}", f.name) }));
+                }
+            }
+            let total = engine.instruction_count();
+            for i in engine.disasm_range(0, total).iter() {
+                let m = i.mnemonic.as_str();
+                let indirect = (m == "call" || m == "jmp")
+                    && (i.operands.starts_with('[')
+                        || i.operands.starts_with("qword")
+                        || i.operands.starts_with("dword")
+                        || i.operands.starts_with('r')
+                        || i.operands.starts_with('e'));
+                if !matches!(i.ref_type, 1 | 2 | 4) && indirect && i.ref_target.is_none() {
+                    let fname = funcs
+                        .iter()
+                        .rev()
+                        .find(|f| i.rva >= f.rva && i.rva < f.rva + f.size.max(1))
+                        .map(|f| f.name.clone())
+                        .unwrap_or_else(|| "<no function>".into());
+                    out.push(json!({ "kind": "indirect-unresolved", "rva": i.rva, "func": fname,
+                                     "text": format!("indirect {m} target unresolved ({})", i.operands) }));
+                }
+            }
+            out.sort_by_key(|v| v.get("rva").and_then(Value::as_u64).unwrap_or(0));
+            Ok(json!({ "count": out.len(), "items": out }))
+        }
         "frame" => {
             let r = rva().ok_or("frame: missing/bad rva")?;
             let out: Vec<Value> = engine

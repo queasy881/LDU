@@ -447,3 +447,36 @@
 .ov-btn-accent { color: var(--ink); border-color: var(--sel); }
 .ov-err-label { color: var(--danger); font-size: 11px; letter-spacing: .1em; margin-bottom: 8px; }
 .ov-err-msg { color: var(--ink-2); font-size: 12px; margin-bottom: 14px; word-break: break-all; }
+
+/* ---- stack frame pane (inspector) ---------------------------------------
+   Recovered frame of the selected function: offset / name / type, one row per
+   slot, served by get_stack_frame off the same decompiler run as the
+   pseudocode. Incoming arguments (offset >= 0) are tinted so the split between
+   arguments and locals is visible without reading the numbers. */
+.frame-host { flex: 1; min-height: 0; overflow: auto; padding: 2px 0; }
+.frame-row {
+  display: flex; align-items: center; gap: 8px;
+  height: 18px; padding: 0 8px; white-space: pre; cursor: default;
+}
+.frame-row:hover { background: var(--row-hover, rgba(127,127,127,.10)); }
+.frame-row.sel   { background: var(--row-sel, rgba(90,140,220,.22)); }
+.frame-row.frame-arg .frame-off { color: var(--accent, #6ea8fe); }
+.frame-head {
+  height: 20px; font-weight: 600; opacity: .70; cursor: default;
+  border-bottom: 1px solid var(--line, rgba(127,127,127,.25));
+}
+.frame-head:hover { background: transparent; }
+.frame-off  { width: 74px; flex: none; text-align: right; opacity: .85; }
+.frame-name { width: 132px; flex: none; overflow: hidden; text-overflow: ellipsis; }
+.frame-type { flex: 1; min-width: 0; opacity: .80; overflow: hidden; text-overflow: ellipsis; }
+.frame-empty { padding: 10px 12px; opacity: .65; font-style: italic; }
+
+/* ---- problems badge on the activity rail -------------------------------- */
+#activity .act { position: relative; }
+.act-badge {
+  position: absolute; top: 2px; right: 2px; min-width: 14px; height: 14px;
+  padding: 0 3px; border-radius: 7px; font-size: 9px; line-height: 14px;
+  text-align: center; font-weight: 700;
+  background: var(--warn, #d08b2c); color: #10131a;
+}
+.act-badge.hide { display: none; }

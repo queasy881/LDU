@@ -17,7 +17,7 @@
 
   var S = {
     meta: null,
-    funcs: [], funcsSorted: [], imports: [], exports: [], strings: [], segs: [],
+    funcs: [], funcsSorted: [], imports: [], exports: [], strings: [], segs: [], problems: [],
     symByRva: new Map(), strByRva: new Map(), funcByRva: new Map(),
     listingLen: 0, vlist: null,
     cache: new Map(), reqPages: new Set(),
@@ -119,12 +119,15 @@
       DS.invoke("get_exports").catch(function () { return []; }),
       DS.invoke("get_strings").catch(function () { return []; }),
       DS.invoke("get_segments").catch(function () { return []; }),
-      DS.invoke("get_listing_len").catch(function () { return { len: 0 }; })
+      DS.invoke("get_listing_len").catch(function () { return { len: 0 }; }),
+      DS.invoke("get_problems").catch(function () { return { count: 0, items: [] }; })
     ]).then(function (r) {
       S.meta = r[0] || {};
       S.funcs = r[1] || []; S.imports = r[2] || []; S.exports = r[3] || [];
       S.strings = r[4] || []; S.segs = r[5] || [];
       S.listingLen = (r[6] && r[6].len) || 0;
+      S.problems = (r[7] && r[7].items) || [];
+      updateProblemBadge();
       index();
       renderMeta();
       buildListing();
@@ -436,6 +439,11 @@
       case "exports": return { title: "EXPORTS", items: S.exports.map(function (e) { return { rva: e.rva, name: e.name, sym: true }; }) };
       case "strings": return { title: "STRINGS", items: S.strings.map(function (s) { return { rva: s.rva, name: s.value, str: true }; }) };
       case "segments": return { title: "SEGMENTS", items: S.segs.map(function (g) { return { rva: g.rva, name: g.name, sub: (g.r ? "r" : "-") + (g.w ? "w" : "-") + (g.x ? "x" : "-") }; }) };
+      /* Problems: every entry is a fact the analysis established (an indirect
+         target it could not resolve, a function it recovered no block for), so
+         clicking one navigates to the exact address it is about. */
+      case "problems": return { title: "PROBLEMS", items: S.problems.map(function (p) {
+        return { rva: p.rva, name: p.text, sub: p.func || "", prob: true }; }) };
       default: {
         var maxSz = 1;
         for (var k = 0; k < S.funcs.length; k++) { var s = S.funcs[k].size || 0; if (s > maxSz) maxSz = s; }
@@ -568,6 +576,70 @@
     else if (S.inspView === "offsets") renderOffsets(f);
     else if (S.inspView === "hex") renderHex(f);
     else if (S.inspView === "xrefs") openXrefs(S.activeRva != null ? S.activeRva : f.rva, true);
+    else if (S.inspView === "frame") renderFrame(f);
+  }
+
+  /* Problems badge on the activity rail. Hidden at zero rather than showing a
+     "0" -- a permanent zero badge is chrome nobody reads, and the point of the
+     count is that a non-zero one draws the eye. */
+  function updateProblemBadge() {
+    var b = U.$("#act-prob-badge");
+    if (!b) return;
+    var n = S.problems.length;
+    b.textContent = n > 999 ? "999+" : String(n);
+    b.classList.toggle("hide", n === 0);
+    var btn = U.$('#activity [data-panel="problems"]');
+    if (btn) btn.title = n === 0
+      ? "Problems — none found"
+      : n + " problem" + (n === 1 ? "" : "s") + " — unresolved indirect targets and un-analysed functions";
+  }
+
+  /* ---- stack frame ------------------------------------------------------- *
+     The recovered frame of the selected function: offset, name, type, one row
+     per slot. Served by get_stack_frame, which reads the SAME decompiler run
+     the pseudocode comes from -- so this pane and the code beside it can never
+     disagree about a variable's type.
+     Negative offsets are locals below the frame pointer; the homed incoming
+     arguments sit above it. Clicking a row filters the pseudocode to that name. */
+  var frameSeq = 0;
+  function renderFrame(f) {
+    var host = U.$("#frame-host");
+    host.textContent = "recovering frame for " + (f.name || U.hex(f.rva)) + " …";
+    var seq = ++frameSeq;
+    DS.invoke("get_stack_frame", { rva: f.rva }).then(function (res) {
+      if (seq !== frameSeq) return;
+      var slots = (res && res.slots) || [];
+      host.innerHTML = "";
+      if (!slots.length) {
+        host.innerHTML = '<div class="frame-empty">no stack frame recovered ' +
+                         '(register-only function, or no frame could be proven)</div>';
+        return;
+      }
+      var head = document.createElement("div");
+      head.className = "frame-row frame-head";
+      head.innerHTML = '<span class="frame-off">Offset</span>' +
+                       '<span class="frame-name">Name</span>' +
+                       '<span class="frame-type">Type</span>';
+      host.appendChild(head);
+      slots.forEach(function (s) {
+        var row = document.createElement("div");
+        row.className = "frame-row";
+        var isArg = s.off >= 0;
+        if (isArg) row.classList.add("frame-arg");
+        row.innerHTML = '<span class="frame-off">' + U.esc(s.off_text) + "</span>" +
+                        '<span class="frame-name">' + U.esc(s.name) + "</span>" +
+                        '<span class="frame-type">' + U.esc(s.type) + "</span>";
+        row.title = (isArg ? "incoming argument" : "local") + " at frame " + s.off_text;
+        row.addEventListener("click", function () {
+          U.$all("#frame-host .frame-row").forEach(function (r) { r.classList.remove("sel"); });
+          row.classList.add("sel");
+        });
+        host.appendChild(row);
+      });
+    }).catch(function (e) {
+      if (seq !== frameSeq) return;
+      host.innerHTML = '<div class="frame-empty">' + U.esc(String(e.message || e)) + "</div>";
+    });
   }
 
   /* ---- decompile --------------------------------------------------------- */
