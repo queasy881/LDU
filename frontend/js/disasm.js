@@ -384,6 +384,7 @@
   }
   function selectRva(rva) {
     S.activeRva = Number(rva);
+    syncPseudoToRva(S.activeRva);   /* Sync views: keep the pseudocode on this address */
     U.$all("#listing .ln.sel").forEach(function (n) { n.classList.remove("sel"); });
     var el = U.$('#listing .ln[data-rva="' + rva + '"]');
     if (el) el.classList.add("sel");
@@ -579,6 +580,30 @@
     else if (S.inspView === "frame") renderFrame(f);
   }
 
+  /* Scroll the pseudocode to the line covering `rva` and highlight it.
+     decompile() already tagged each line with the addresses it came from
+     (data-addrs, from the decompiler's own /*@addr*\/ markers), so this is a
+     lookup, not a guess -- if no line claims the address, nothing moves rather
+     than scrolling somewhere approximate. */
+  function syncPseudoToRva(rva) {
+    if (!S.syncViews || rva == null) return;
+    var host = U.$("#decomp-code");
+    if (!host) return;
+    var want = Number(rva), hit = null;
+    U.$all("#decomp-code .dc-line[data-addrs]").forEach(function (el) {
+      if (hit) return;
+      var list = el.dataset.addrs.split(",");
+      for (var i = 0; i < list.length; i++) if (Number(list[i]) === want) { hit = el; return; }
+    });
+    if (!hit) return;
+    U.$all("#decomp-code .dc-line.dc-sync").forEach(function (e) { e.classList.remove("dc-sync"); });
+    hit.classList.add("dc-sync");
+    var box = host.parentNode && host.parentNode.scrollHeight > host.parentNode.clientHeight
+            ? host.parentNode : host;
+    var top = hit.offsetTop - box.clientHeight / 2;
+    box.scrollTop = top > 0 ? top : 0;
+  }
+
   /* Problems badge on the activity rail. Hidden at zero rather than showing a
      "0" -- a permanent zero badge is chrome nobody reads, and the point of the
      count is that a non-zero one draws the eye. */
@@ -588,6 +613,8 @@
     var n = S.problems.length;
     b.textContent = n > 999 ? "999+" : String(n);
     b.classList.toggle("hide", n === 0);
+    var tn = U.$("#tb-prob-n");
+    if (tn) { tn.textContent = n ? " " + n : ""; tn.classList.toggle("warn", n > 0); }
     var btn = U.$('#activity [data-panel="problems"]');
     if (btn) btn.title = n === 0
       ? "Problems — none found"
@@ -1375,6 +1402,39 @@
     var fi = U.$("#dc-finc"), fd = U.$("#dc-fdec");
     if (fi) fi.addEventListener("click", function () { applyFont((S.dcFs || 13) + 1); });
     if (fd) fd.addEventListener("click", function () { applyFont((S.dcFs || 13) - 1); });
+
+    /* Hexstrand action strip. Each button does a real thing; a control that
+       only looked like a button would be worse than not having it. */
+    var bx = U.$("#tb-xrefs");
+    if (bx) bx.addEventListener("click", function () {
+      var r = S.activeRva != null ? S.activeRva : (S.curFn && S.curFn.rva);
+      if (r != null) { setInspView("xrefs"); openXrefs(r, true); }
+    });
+    var bs = U.$("#tb-strings");
+    if (bs) bs.addEventListener("click", function () { pickPanel("strings"); });
+    var bp = U.$("#tb-problems");
+    if (bp) bp.addEventListener("click", function () { pickPanel("problems"); });
+    /* Sync views: when on, selecting an instruction scrolls the pseudocode to the
+       line that carries that address (the decompiler emits `/*@addr*\/` markers,
+       which decompile() has already turned into data-addrs). Persisted, because a
+       reading preference that resets every launch is an annoyance, not a feature. */
+    var bsy = U.$("#tb-sync");
+    if (bsy) {
+      S.syncViews = localStorage.getItem("ds.syncViews") !== "0";
+      var paint = function () {
+        bsy.classList.toggle("on", !!S.syncViews);
+        bsy.title = S.syncViews
+          ? "Listing and pseudocode follow each other — click to unlink"
+          : "Listing and pseudocode move independently — click to link";
+      };
+      paint();
+      bsy.addEventListener("click", function () {
+        S.syncViews = !S.syncViews;
+        localStorage.setItem("ds.syncViews", S.syncViews ? "1" : "0");
+        paint();
+        if (S.syncViews) syncPseudoToRva(S.activeRva);
+      });
+    }
 
     wireResizers();
     restoreLayout();

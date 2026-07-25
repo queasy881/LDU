@@ -480,3 +480,18 @@
   background: var(--warn, #d08b2c); color: #10131a;
 }
 .act-badge.hide { display: none; }
+
+/* ---- Hexstrand action strip (toolbar) ----------------------------------- */
+.tb-btn-sm { padding: 0 8px; height: 20px; font-size: 11px; }
+.tb-btn-sm.on {
+  background: var(--accent-bg, rgba(110,168,254,.18));
+  border-color: var(--accent, #6ea8fe);
+}
+.tb-count { font-weight: 700; opacity: .9; }
+.tb-count.warn { color: var(--warn, #d08b2c); }
+
+/* the pseudocode line the listing selection maps to (Sync views) */
+.dc-line.dc-sync {
+  background: var(--sync-bg, rgba(110,168,254,.16));
+  box-shadow: inset 2px 0 0 var(--accent, #6ea8fe);
+}

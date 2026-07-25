@@ -19,6 +19,13 @@
           <button id="tb-back" class="tb-icon" title="Back">←</button>
           <button id="tb-fwd" class="tb-icon" title="Forward">→</button>
           <div id="tb-loc" class="tb-loc mono"><span class="loc-fn">—</span></div>
+          <!-- action strip from the Hexstrand design. Every one of these performs a
+               real action; none is decorative. -->
+          <div class="tb-sep"></div>
+          <button id="tb-xrefs" class="tb-btn tb-btn-sm" title="Cross-references to the current address  (X)">Xrefs</button>
+          <button id="tb-strings" class="tb-btn tb-btn-sm" title="Strings recovered from the image  (Shift+S)">Strings</button>
+          <button id="tb-problems" class="tb-btn tb-btn-sm" title="Analysis problems">Problems<span id="tb-prob-n" class="tb-count"></span></button>
+          <button id="tb-sync" class="tb-btn tb-btn-sm" title="Keep the listing and the pseudocode on the same address">Sync views</button>
         </div>
         <div class="tb-right">
           <div id="tb-meta" class="tb-meta"></div>
