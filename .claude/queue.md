@@ -32,12 +32,16 @@ The user reads the commits; a summary is only wanted when the whole queue is emp
         * Stack frame inspector tab + Problems panel and activity-rail badge, both wired
         * both on the script surface (`frame`, `problems`) so they verify headlessly
           (kernel32: 12 real unresolved-indirect problems)
-      REMAINING - the larger half:
+      ALSO DONE (ea53d75, this commit): action strip (Reanalyze/Xrefs/Strings/Problems/
+        Sync views) all wired; `reanalyze` IPC clears the decomp cache + cancels the
+        in-flight run; Sync views scrolls the pseudocode by data-addrs lookup.
+        Audited: 17 buttons, 0 dead.
+      REMAINING - mostly cosmetic now:
         * apply the mockup's VISUAL design: menu bar, toolbar (Reanalyze/Xrefs/Strings/
           Problems/Sync views/Script), left nav tab strip, main tab strip (IDA View-A /
           Hex View-1 / Call tree), right side tabs, bottom console (Output/Problems/Python),
           segment dropdown, EA box
-        * wire EVERY button - no dead controls (explicit ask)
+        * Script button (needs a GUI script console; --script is headless-only)
         * call-tree view does not exist yet (derivable from xrefs)
         * exports + memory segments ALREADY exist in the real frontend and stay; they are
           only absent from the mockup. get_exports/get_segments already answer.
