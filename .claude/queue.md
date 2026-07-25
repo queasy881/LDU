@@ -23,13 +23,21 @@ The user reads the commits; a summary is only wanted when the whole queue is emp
 - [ ] GOTO-1 residual: 2879 reducible gotos (structurer re-emission efficiency)
 - [ ] IDA-3: ARM64 lifting (BLOCKED: capstone AArch64 backend not vendored - user decision)
 - [ ] UI-1: adopt the Hexstrand Workbench mockup as the real UI
-      source: "C:\Users\User\Downloads\Hexstrand Workbench (1).zip" (Claude design mockup,
-      knows nothing about our backend). Rewire EVERYTHING to real engine data and DELETE
-      every mock/placeholder. Specifics from the user:
-        * the mockup's frontend only has Functions / Imports / Strings panes. EXPORTS and
-          MEMORY SEGMENTS are NOT dropped - they simply are not in the mockup and must be
-          ADDED. Backend already answers get_exports and get_segments.
-        * KEEP the stack-frame pane the mockup introduced -> wire to real frame recovery
-        * add the graph, offsets, and the rest of the real views
-        * the mockup's Problems counter must be wired to a real backend problem list
-        * EVERY button must actually work - no dead controls
+      source zip is a .dc.html DESIGN-CANVAS file (<sc-for>/{{ }} bindings + support.js),
+      NOT plain HTML - the design must be reimplemented against the real frontend.
+      DONE (5ada37b, 78c66a8):
+        * backend get_problems + get_stack_frame / ds_decompile_frame (the frame comes from
+          the SAME decompiler run as the pseudocode, so the panes cannot disagree)
+        * mock host in frontend/js/ipc.js DELETED (139 -> 65 lines); off-host now rejects
+        * Stack frame inspector tab + Problems panel and activity-rail badge, both wired
+        * both on the script surface (`frame`, `problems`) so they verify headlessly
+          (kernel32: 12 real unresolved-indirect problems)
+      REMAINING - the larger half:
+        * apply the mockup's VISUAL design: menu bar, toolbar (Reanalyze/Xrefs/Strings/
+          Problems/Sync views/Script), left nav tab strip, main tab strip (IDA View-A /
+          Hex View-1 / Call tree), right side tabs, bottom console (Output/Problems/Python),
+          segment dropdown, EA box
+        * wire EVERY button - no dead controls (explicit ask)
+        * call-tree view does not exist yet (derivable from xrefs)
+        * exports + memory segments ALREADY exist in the real frontend and stay; they are
+          only absent from the mockup. get_exports/get_segments already answer.
