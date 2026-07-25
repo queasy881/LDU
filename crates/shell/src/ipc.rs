@@ -302,6 +302,95 @@ fn dispatch_disasm(ctx: &RoleCtx, win: WindowId, id: &Value, cmd: &str, msg: &Va
                 None => reply_err(ctx, win, id, "analysis not ready"),
             }
         }
+        // Recovered stack frame of one function, for the Stack frame pane.
+        // Computed off the same Decompiler run as the pseudocode, so the two
+        // panes can never show different frames. Runs OFF the IPC thread because
+        // it decompiles.
+        "get_stack_frame" => {
+            let r = rva();
+            let engine = lock(&session).engine.clone();
+            let engine = match engine {
+                Some(e) => e,
+                None => {
+                    reply_err(ctx, win, id, "no analysis loaded");
+                    return;
+                }
+            };
+            let proxy = ctx.proxy().clone();
+            let id = id.clone();
+            std::thread::spawn(move || {
+                let _guard = ondemand_guard();
+                let slots = engine.frame(r);
+                let arr: Vec<Value> = slots
+                    .iter()
+                    .map(|(off, name, ty)| {
+                        json!({
+                            "off": off,
+                            "off_text": if *off < 0 { format!("-{:#x}", -off) } else { format!("{:#x}", off) },
+                            "name": name,
+                            "type": ty,
+                        })
+                    })
+                    .collect();
+                send_reply(&proxy, win, &id, Ok(json!({ "rva": r, "slots": arr })));
+            });
+        }
+        // Real analysis problems, for the Problems pane + its counter.
+        //
+        // Every entry is a FACT the analysis already established, never a guess:
+        // an indirect call/branch whose target could not be resolved is genuinely
+        // an edge the CFG is missing, and a function the sweep found but recovered
+        // no basic block for is genuinely un-analysed. Reporting anything softer
+        // would make the counter noise, and a counter nobody trusts is worse than
+        // no counter.
+        "get_problems" => {
+            let s = lock(&session);
+            let mut out: Vec<Value> = Vec::new();
+            // rva -> function name, for attributing each problem to its function
+            let mut fn_at = |rva: u64| -> Option<(u64, String)> {
+                s.funcs
+                    .iter()
+                    .rev()
+                    .find(|f| rva >= f.rva && rva < f.rva + f.size.max(1))
+                    .map(|f| (f.rva, f.name.clone()))
+            };
+            for f in s.funcs.iter() {
+                if f.block_count == 0 || f.size == 0 {
+                    out.push(json!({
+                        "kind": "no-code", "severity": "warn", "rva": f.rva,
+                        "func": f.name, "func_rva": f.rva,
+                        "text": format!("no basic block recovered for {}", f.name),
+                    }));
+                }
+            }
+            if let Some(engine) = s.engine.clone() {
+                let total = engine.instruction_count();
+                let all = engine.disasm_range(0, total);
+                for i in all.iter() {
+                    // DS_REF_CALL=1, DS_REF_JMP=2, DS_REF_BRANCH=4
+                    let is_flow = matches!(i.ref_type, 1 | 2 | 4);
+                    let m = i.mnemonic.as_str();
+                    let indirect_shape = (m == "call" || m == "jmp")
+                        && (i.operands.starts_with('[')
+                            || i.operands.starts_with("qword")
+                            || i.operands.starts_with("dword")
+                            || i.operands.starts_with('r')
+                            || i.operands.starts_with('e'));
+                    if !is_flow && indirect_shape && i.ref_target.is_none() {
+                        let (frva, fname) =
+                            fn_at(i.rva).unwrap_or((0, String::from("<no function>")));
+                        out.push(json!({
+                            "kind": "indirect-unresolved", "severity": "warn", "rva": i.rva,
+                            "func": fname, "func_rva": frva,
+                            "text": format!("indirect {m} target unresolved ({})", i.operands),
+                        }));
+                    }
+                }
+            }
+            out.sort_by_key(|v| v.get("rva").and_then(Value::as_u64).unwrap_or(0));
+            let count = out.len();
+            reply_ok(ctx, win, id, json!({ "count": count, "items": out }));
+        }
         "get_functions" => {
             let s = lock(&session);
             let arr: Vec<Value> = s

@@ -293,6 +293,29 @@ impl Engine {
     }
 
     /// Rename a displayed local of the function at `rva` (`from` as printed).
+    /// Recovered stack frame of one function: `(offset, name, type)` per slot,
+    /// ordered by offset. Comes from the same Decompiler run that produces the
+    /// pseudocode, so the frame pane and the code can never disagree.
+    pub fn frame(&self, rva: u64) -> Vec<(i64, String, String)> {
+        if !self.ok() {
+            return Vec::new();
+        }
+        let n = unsafe { ffi::ds_decompile_frame(self.raw, rva, std::ptr::null_mut(), 0) };
+        if n == 0 {
+            return Vec::new();
+        }
+        let mut raw: Vec<ffi::ds_frame_slot> = Vec::with_capacity(n);
+        let got = unsafe {
+            let w = ffi::ds_decompile_frame(self.raw, rva, raw.as_mut_ptr(), n);
+            raw.set_len(w.min(n));
+            w.min(n)
+        };
+        raw.iter()
+            .take(got)
+            .map(|s| (s.off, cstr_field(&s.name), cstr_field(&s.type_)))
+            .collect()
+    }
+
     /// Define a struct the binary does not describe, so a variable typed
     /// `struct <name>*` both compiles and reads with real member names.
     /// `body` is the member list as C text; empty clears it.

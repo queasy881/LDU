@@ -175,6 +175,15 @@ fn run_cmd(engine: &mut Engine, msg: &Value) -> Result<Value, String> {
             engine.set_var_type(r, var, ty);
             Ok(json!({ "ok": true }))
         }
+        "frame" => {
+            let r = rva().ok_or("frame: missing/bad rva")?;
+            let out: Vec<Value> = engine
+                .frame(r)
+                .iter()
+                .map(|(off, name, ty)| json!({ "off": off, "name": name, "type": ty }))
+                .collect();
+            Ok(Value::Array(out))
+        }
         "define_struct" => {
             let name = msg.get("name").and_then(Value::as_str).unwrap_or("");
             let body = msg.get("body").and_then(Value::as_str).unwrap_or("");

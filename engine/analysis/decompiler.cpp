@@ -143,6 +143,11 @@ extern "C" char* ds_decompile(ds_engine* e, uint64_t func_rva) {
     s += "void " + name + "(void) {\n}\n";
     return dup_to_c(s);
 }
+extern "C" size_t ds_decompile_frame(ds_engine* e, uint64_t rva,
+                                     ds_frame_slot* out, size_t max) {
+    (void)e; (void)rva; (void)out; (void)max;
+    return 0;   /* no frame without a decompiler */
+}
 
 #else /* DS_USE_CAPSTONE ================================================= */
 
@@ -8290,6 +8295,65 @@ extern "C" char* ds_decompile(ds_engine* e, uint64_t func_rva) {
                  fname + "(void) {\n}\n";
     }
     return dup_to_c(result);
+}
+
+/* Recovered stack frame of one function.
+ *
+ * Runs the SAME Decompiler the pseudocode comes from and then reads its frame
+ * state, rather than re-deriving a frame independently or scraping the emitted
+ * declarations. That is the point: a frame pane that disagreed with the code
+ * beside it would be worse than no pane, and any separate derivation drifts the
+ * moment either side changes.
+ *
+ * Slots come from stack_slot_name (offset -> local) plus param_home_off (the
+ * homed incoming arguments), each typed by the same decl_type() that types the
+ * declaration in the body. Offsets are frame-relative, negatives first. */
+extern "C" size_t ds_decompile_frame(ds_engine* e, uint64_t rva,
+                                     ds_frame_slot* out, size_t max) {
+    if (!e) return 0;
+    const ds_func* f = nullptr;
+    for (size_t i = 0; i < e->func_len; ++i)
+        if (e->funcs[i].rva == rva) { f = &e->funcs[i]; break; }
+    if (!f) return 0;
+
+    std::vector<std::pair<int64_t, std::pair<std::string, std::string>>> slots;
+    try {
+        std::map<uint64_t, FuncSig> sig;
+        build_sig_table(e, sig);
+        Decompiler dc(e, f, &sig);
+        (void)dc.run();                     /* populates the frame state */
+        /* Spell types the way the BODY spells them (int -> int32_t): the emitted
+         * code runs decl_type's output through apply_stdint_types, and a pane that
+         * said `int` beside a body saying `int32_t` is the disagreement this API
+         * exists to prevent. */
+        auto ty_of = [&](const std::string& nm) {
+            return Decompiler::apply_stdint_types(dc.decl_type(nm));
+        };
+        for (auto& kv : dc.param_home_off)  /* incoming args, homed to the frame */
+            slots.push_back({kv.first, {dc.disp(kv.second), ty_of(kv.second)}});
+        for (auto& kv : dc.stack_slot_name) {
+            bool dup = false;
+            for (auto& s : slots) if (s.first == kv.first) { dup = true; break; }
+            if (!dup) slots.push_back({kv.first, {dc.disp(kv.second), ty_of(kv.second)}});
+        }
+    } catch (...) {
+        return 0;                           /* never throw across the C boundary */
+    }
+    std::sort(slots.begin(), slots.end(),
+              [](const std::pair<int64_t, std::pair<std::string,std::string>>& a,
+                 const std::pair<int64_t, std::pair<std::string,std::string>>& b) {
+                  return a.first < b.first;
+              });
+    if (out) {
+        size_t n = slots.size() < max ? slots.size() : max;
+        for (size_t i = 0; i < n; ++i) {
+            std::memset(&out[i], 0, sizeof(out[i]));
+            out[i].off = slots[i].first;
+            ds_strlcpy(out[i].name, slots[i].second.first.c_str(), sizeof(out[i].name));
+            ds_strlcpy(out[i].type, slots[i].second.second.c_str(), sizeof(out[i].type));
+        }
+    }
+    return slots.size();
 }
 
 #endif /* DS_USE_CAPSTONE */

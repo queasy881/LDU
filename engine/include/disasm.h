@@ -211,6 +211,19 @@ typedef struct {
     char type[64];
 } ds_var_type;
 
+/* One recovered stack-frame slot of a function: its frame-relative offset, the
+ * name the decompiler gave it, and its recovered C type. */
+typedef struct {
+    int64_t off;
+    char    name[64];
+    char    type[64];
+} ds_frame_slot;
+/* Recover the stack frame of the function at `rva` (the same frame the decompiler
+ * itself uses, so the pane and the pseudocode can never disagree). Writes up to
+ * `max` slots, ordered by offset; returns how many exist. out=NULL counts.
+ * Returns 0 for an unknown rva or a function with no recovered frame. */
+size_t ds_decompile_frame(ds_engine* e, uint64_t rva, ds_frame_slot* out, size_t max);
+
 /* A user-supplied struct layout. */
 typedef struct {
     char name[64];
