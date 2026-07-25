@@ -26,7 +26,9 @@ The user reads the commits; a summary is only wanted when the whole queue is emp
       source: "C:\Users\User\Downloads\Hexstrand Workbench (1).zip" (Claude design mockup,
       knows nothing about our backend). Rewire EVERYTHING to real engine data and DELETE
       every mock/placeholder. Specifics from the user:
-        * Functions / Imports / Strings panes are real; there are NO exports (drop that idea)
+        * the mockup's frontend only has Functions / Imports / Strings panes. EXPORTS and
+          MEMORY SEGMENTS are NOT dropped - they simply are not in the mockup and must be
+          ADDED. Backend already answers get_exports and get_segments.
         * KEEP the stack-frame pane the mockup introduced -> wire to real frame recovery
         * add the graph, offsets, and the rest of the real views
         * the mockup's Problems counter must be wired to a real backend problem list
