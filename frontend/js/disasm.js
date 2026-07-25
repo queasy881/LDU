@@ -1405,6 +1405,21 @@
 
     /* Hexstrand action strip. Each button does a real thing; a control that
        only looked like a button would be worse than not having it. */
+    /* Reanalyze re-runs the pipeline and throws away every decompiled body, so
+       it is confirmed first -- an accidental click on a large binary costs a
+       long wait, and the button sits next to ones that are instant. */
+    var br = U.$("#tb-reanalyze");
+    if (br) br.addEventListener("click", function () {
+      if (!window.confirm("Re-run the full analysis on this binary?\n\n" +
+                          "Cached decompilation is discarded and the current run is cancelled.")) return;
+      br.disabled = true;
+      var old = br.textContent; br.textContent = "Reanalyzing…";
+      DS.invoke("reanalyze").catch(function (e) {
+        window.alert("reanalyze failed: " + (e.message || e));
+      }).then(function () {
+        br.disabled = false; br.textContent = old;
+      });
+    });
     var bx = U.$("#tb-xrefs");
     if (bx) bx.addEventListener("click", function () {
       var r = S.activeRva != null ? S.activeRva : (S.curFn && S.curFn.rva);

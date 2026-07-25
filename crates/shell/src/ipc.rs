@@ -302,6 +302,27 @@ fn dispatch_disasm(ctx: &RoleCtx, win: WindowId, id: &Value, cmd: &str, msg: &Va
                 None => reply_err(ctx, win, id, "analysis not ready"),
             }
         }
+        // Re-run the whole analysis pipeline on the already-open binary.
+        //
+        // A re-entry, not a second code path: start_analysis reads the session's
+        // own binary_path and pushes the same progress/done events the first run
+        // does, so the UI needs no special case. The decompile cache is dropped
+        // first -- it is keyed by rva, and serving a cached body from the previous
+        // engine after a reanalysis is exactly how stale output survives a fix.
+        // The in-flight run is cancelled so two workers cannot both commit.
+        "reanalyze" => {
+            {
+                let mut s = lock(&session);
+                s.cancel.store(true, std::sync::atomic::Ordering::SeqCst);
+                s.decomp_cache.clear();
+            }
+            {
+                let mut s = lock(&session);
+                s.cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            }
+            crate::session::start_analysis(&session);
+            reply_ok(ctx, win, id, json!({ "ok": true }));
+        }
         // Recovered stack frame of one function, for the Stack frame pane.
         // Computed off the same Decompiler run as the pseudocode, so the two
         // panes can never show different frames. Runs OFF the IPC thread because
